@@ -1,0 +1,59 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+    provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+
+model Ibadah {
+  id_ibadah     String      @id
+  jenis_kebaktian String
+  sesi_ibadah    Int
+  tanggal_ibadah DateTime
+
+  Kehadiran     Kehadiran[]
+}
+
+model Kehadiran {
+  id_kehadiran String  @id
+  id_ibadah    String
+  id_jemaat    String
+
+  ibadah Ibadah @relation(fields: [id_ibadah], references: [id_ibadah])
+  jemaat Jemaat @relation(fields: [id_jemaat], references: [id_jemaat])
+}
+
+model Jemaat {
+  id_jemaat    String   @id
+  name         String
+  jabatan      String
+  status       String
+  tanggal_lahir DateTime
+  gender       String
+  email        String
+
+  kehadiran    Kehadiran[]
+}
+
+model Statistics {
+  stat_id String @id
+  title   String
+  text    String
+}
+
+model User {
+  user_id      Int      @id @default(autoincrement())
+  nama         String
+  tanggal_lahir DateTime
+  gender       String
+  email        String
+  jabatan      String
+  isVerified   Boolean
+  role         String
+}
