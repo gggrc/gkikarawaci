@@ -66,7 +66,7 @@ export default function Home() {
           }`}
         >
           <div className="flex items-center space-x-4">
-            <Image src="/LOGOGKI.png" alt="Logo" width={48} height={48} className="h-12 w-12" />
+            <Image src="/" alt="Logo" width={48} height={48} className="h-12 w-12" />
             <span className="text-white font-semibold text-xl">GKI Karawaci</span>
           </div>
 
