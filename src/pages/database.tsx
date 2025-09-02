@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { Plus, Filter, Download, Info } from "lucide-react";
+import { Plus, Filter, Download, Info, X } from "lucide-react";
 import Link from "next/link";
 import { UserButton, SignedIn } from "@clerk/nextjs";
 
@@ -12,23 +12,39 @@ import AccordionSummary from "@mui/material/AccordionSummary";
 import Typography from "@mui/material/Typography";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
+import Dialog from "@mui/material/Dialog";
+import DialogTitle from "@mui/material/DialogTitle";
+import DialogContent from "@mui/material/DialogContent";
+import DialogActions from "@mui/material/DialogActions";
+import Button from "@mui/material/Button";
+
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
+import type { UserOptions } from "jspdf-autotable";
+
+
 type Selection = {
   year: number;
   selectedMonth: number;
   selectedDate: number | null;
 };
 
+type Jemaat = {
+  foto: string;
+  nama: string;
+  kehadiran: string;
+  jabatan: string;
+  status: string;
+};
+
 export default function DatabaseTablePage() {
   const [selection, setSelection] = useState<Selection | null>(null);
   const [checkedAll, setCheckedAll] = useState(false);
   const [checkedRows, setCheckedRows] = useState<boolean[]>([]);
+  const [openDrawer, setOpenDrawer] = useState(false);
+  const [openDialog, setOpenDialog] = useState(false);
 
-  useEffect(() => {
-    const data = localStorage.getItem("ibadahSelection");
-    if (data) setSelection(JSON.parse(data) as Selection);
-  }, []);
-
-  const jemaat = [
+  const jemaat: Jemaat[] = [
     { foto: "/avatar1.png", nama: "Toing Sidayat", kehadiran: "Hadir", jabatan: "Pendeta", status: "Aktif" },
     { foto: "/avatar2.png", nama: "Abdul Sulaiman", kehadiran: "Hadir", jabatan: "Pengurus A", status: "Aktif" },
     { foto: "/avatar3.png", nama: "Steve Johnson", kehadiran: "Tidak Hadir", jabatan: "Pengurus B", status: "Aktif" },
@@ -39,7 +55,11 @@ export default function DatabaseTablePage() {
     { foto: "/avatar8.png", nama: "Indah Purnawisari", kehadiran: "Hadir", jabatan: "Jemaat", status: "Tidak Aktif" },
   ];
 
-  // inisialisasi checkbox per baris
+  useEffect(() => {
+    const data = localStorage.getItem("ibadahSelection");
+    if (data) setSelection(JSON.parse(data) as Selection);
+  }, []);
+
   useEffect(() => {
     setCheckedRows(new Array(jemaat.length).fill(false));
   }, [jemaat.length]);
@@ -57,35 +77,70 @@ export default function DatabaseTablePage() {
     setCheckedAll(newRows.every((v) => v));
   };
 
-  const [open, setOpen] = useState(false);
+  const downloadCSV = () => {
+    if (jemaat.length === 0) return;
+
+    const firstRow = jemaat[0]!; 
+    const headers = Object.keys(firstRow).join(",");
+    const rows = jemaat.map((row) => Object.values(row).join(",")).join("\n");
+
+    const csvContent = [headers, rows].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.setAttribute("download", "data.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+
+    setOpenDialog(false);
+  };
+
+  const downloadPDF = () => {
+    try {
+      const doc = new jsPDF();
+
+      const tableColumn = ["No", "Nama", "Kehadiran", "Jabatan", "Status"];
+      const tableRows = jemaat.map((row, idx) => [idx + 1, row.nama, row.kehadiran, row.jabatan, row.status]);
+
+      autoTable(doc, {
+        head: [tableColumn],
+        body: tableRows,
+        startY: 10,
+      } as UserOptions);
+
+      doc.save("data.pdf");
+      setOpenDialog(false);
+    } catch (err: unknown) {
+      console.error("PDF generation failed:", err);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gray-200 flex flex-col">
+      {/* HEADER */}
       <div className="bg-indigo-900 text-white flex items-center justify-between px-4 py-2">
         <div className="flex items-center space-x-2">
-          <Image src="/LOGOGKI.png" alt="Logo" width={48} height={48} className="h-12 w-12"/>
-        <span className="ml-3 text-2xl font-bold">Data Jemaat GKI Karawaci</span>
+          <Image src="/LOGOGKI.png" alt="Logo" width={48} height={48} className="h-12 w-12" />
+          <span className="ml-3 text-2xl font-bold">Data Jemaat GKI Karawaci</span>
         </div>
         <div className="flex space-x-2">
           <div className="group relative inline-block">
-            {/* Tombol Info */}
             <button
-              onClick={() => setOpen(true)}
+              onClick={() => setOpenDrawer(true)}
               className="rounded-full p-2 transition-colors duration-300 hover:bg-indigo-600"
             >
               <Info size={25} />
             </button>
-
-            <div className="absolute left-1/2 mt-2 -translate-x-1/2 scale-75 rounded-lg bg-gray-800 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 shadow-lg transition-all duration-300 group-hover:scale-100 group-hover:opacity-100"> 
-              Info 
+            <div className="absolute left-1/2 mt-2 -translate-x-1/2 scale-75 rounded-lg bg-gray-800 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 shadow-lg transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
+              Info
             </div>
 
-            <Drawer anchor="right" open={open} onClose={() => setOpen(false)}>
+            <Drawer anchor="right" open={openDrawer} onClose={() => setOpenDrawer(false)}>
               <div style={{ width: 320, padding: "16px" }}>
                 <Typography variant="h6" gutterBottom>
                   Help
                 </Typography>
-
                 <Accordion>
                   <AccordionSummary expandIcon={<ExpandMoreIcon />}>
                     <Typography>How to use?</Typography>
@@ -98,30 +153,6 @@ export default function DatabaseTablePage() {
                     </Typography>
                   </AccordionDetails>
                 </Accordion>
-
-                <Accordion>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Typography>How to change password?</Typography>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    <Typography variant="body2">
-                      - Go to settings <br />
-                      - Select account <br />
-                    </Typography>
-                  </AccordionDetails>
-                </Accordion>
-
-                <Accordion>
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-                    <Typography>How to contact support?</Typography>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    <Typography variant="body2">
-                      - Email: support@example.com <br />
-                      - Phone: +62 812-3456-7890
-                    </Typography>
-                  </AccordionDetails>
-                </Accordion>
               </div>
             </Drawer>
           </div>
@@ -131,25 +162,28 @@ export default function DatabaseTablePage() {
         </div>
       </div>
 
+      {/* ACTION BAR */}
       <div className="bg-white shadow px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <button className="px-3 py-1 border rounded flex items-center gap-1 text-sm">
+          <button className="px-3 py-1 border rounded flex items-center gap-1 text-sm transition-colors duration-300 hover:bg-black hover:text-white">
             <Filter size={14} /> Filter
           </button>
-          <button className="px-3 py-1 border rounded flex items-center gap-1 text-sm">
+
+          <button
+            onClick={() => setOpenDialog(true)}
+            className="px-3 py-1 border rounded flex items-center gap-1 text-sm transition-colors duration-300 hover:bg-black hover:text-white"
+          >
             <Download size={14} /> Download
           </button>
           <Link
             href="/selectDate"
-            className="px-3 py-1.5 bg-indigo-500 text-white rounded inline-flex items-center gap-1 text-sm 
-                      hover:bg-indigo-800 transition-colors duration-200"
+            className="px-3 py-1.5 bg-indigo-500 text-white rounded inline-flex items-center gap-1 text-sm hover:bg-indigo-800 transition-colors duration-200"
           >
             <Plus size={14} /> Lihat Tanggal Lain
           </Link>
           <Link
             href="/statistic"
-            className="px-3 py-1.5 bg-indigo-500 text-white rounded inline-flex items-center gap-1 text-sm 
-                      hover:bg-indigo-800 transition-colors duration-200"
+            className="px-3 py-1.5 bg-indigo-500 text-white rounded inline-flex items-center gap-1 text-sm hover:bg-indigo-800 transition-colors duration-200"
           >
             Lihat Statistik
           </Link>
@@ -157,12 +191,31 @@ export default function DatabaseTablePage() {
         <span className="text-sm text-gray-700">Total: {jemaat.length} Jemaat</span>
       </div>
 
+      <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
+        <DialogTitle>
+          Download Tabel
+          <button className="float-right" onClick={() => setOpenDialog(false)}>
+            <X size={20} />
+          </button>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Typography>Pilih format file yang ingin diunduh:</Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={downloadCSV}>CSV</Button>
+          <Button onClick={downloadPDF}>PDF</Button>
+          <Button onClick={() => setOpenDialog(false)} color="secondary">
+            Cancel
+          </Button>
+        </DialogActions>
+      </Dialog>
+
       {/* TABLE */}
       <div className="m-4 overflow-x-auto bg-white rounded-2xl shadow">
         <div className="flex justify-between items-center px-4 py-2 text-lg font-bold text-gray-600 border-b">
           <span>
             {selection
-              ? ` ${selection.selectedDate ?? ""} ${new Date(
+              ? `${selection.selectedDate ?? ""} ${new Date(
                   0,
                   selection.selectedMonth
                 ).toLocaleString("id-ID", { month: "long" })} ${selection.year}`
@@ -174,11 +227,7 @@ export default function DatabaseTablePage() {
           <thead className="bg-indigo-900 text-white">
             <tr>
               <th className="px-3 py-2 border text-center">
-                <input
-                  type="checkbox"
-                  checked={checkedAll}
-                  onChange={toggleCheckAll}
-                />
+                <input type="checkbox" checked={checkedAll} onChange={toggleCheckAll} />
               </th>
               <th className="px-3 py-2 border">No.</th>
               <th className="px-3 py-2 border">Foto</th>
@@ -192,21 +241,11 @@ export default function DatabaseTablePage() {
             {jemaat.map((j, idx) => (
               <tr key={idx} className="odd:bg-purple-50">
                 <td className="px-3 py-2 border text-center">
-                  <input
-                    type="checkbox"
-                    checked={checkedRows[idx] ?? false}
-                    onChange={() => toggleRow(idx)}
-                  />
+                  <input type="checkbox" checked={checkedRows[idx] ?? false} onChange={() => toggleRow(idx)} />
                 </td>
                 <td className="px-3 py-2 border">{idx + 1}.</td>
                 <td className="px-3 py-2 border">
-                  <Image
-                    src={j.foto}
-                    alt={j.nama}
-                    width={40}
-                    height={40}
-                    className="rounded-full"
-                  />
+                  <Image src={j.foto} alt={j.nama} width={40} height={40} className="rounded-full" />
                 </td>
                 <td className="px-3 py-2 border">{j.nama}</td>
                 <td className="px-3 py-2 border">{j.kehadiran}</td>
