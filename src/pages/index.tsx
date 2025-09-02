@@ -25,7 +25,6 @@ export default function Home() {
     return () => window.removeEventListener("scroll", handleScroll);
   }, [lastScrollY]);
 
-
   useEffect(() => {
     const sections = document.querySelectorAll("section");
     const observer = new IntersectionObserver(
@@ -59,9 +58,9 @@ export default function Home() {
           className="absolute inset-0 bg-cover bg-center"
           style={{ backgroundImage: "url('/backgroundHome.jpg')" }}
         />
-        <div className="absolute inset-0 bg-[#0f172a]/80" />
+        <div className="absolute inset-0 bg-black/75" />
         <nav
-          className={`fixed top-0 left-0 z-50 flex w-full items-center justify-center px-8 py-6 bg-[#0f172a]/60 backdrop-blur-sm transition-transform duration-300 ${
+          className={`fixed top-0 left-0 z-50 flex w-full items-center justify-center px-8 py-6 bg-black/40 backdrop-blur-sm transition-transform duration-300 ${
             showNavbar ? "translate-y-0" : "-translate-y-full"
           }`}
         >
@@ -70,7 +69,7 @@ export default function Home() {
             <span className="text-white font-semibold text-xl">GKI Karawaci</span>
           </div>
 
-          <ul className="hidden md:flex items-center space-x-8 text-white font-medium ml-120">
+          <ul className="hidden md:flex items-center space-x-8 text-white font-medium ml-140">
             <li
               className={`cursor-pointer transition ${
                 activeSection === "home"

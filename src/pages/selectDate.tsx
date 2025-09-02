@@ -5,6 +5,13 @@ import Image from "next/image";
 import { useRouter } from "next/router";
 import { UserButton, SignedIn } from "@clerk/nextjs";
 
+import Drawer from "@mui/material/Drawer";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
+import Typography from "@mui/material/Typography";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+
 const monthNames = [
   "Januari",
   "Februari",
@@ -61,6 +68,9 @@ export default function DatabasePage() {
     void router.push("/database");
   };
 
+  const [open, setOpen] = useState(false);
+
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-200">
       <div className="flex items-center justify-between bg-indigo-900 px-4 py-2 text-white">
@@ -78,13 +88,62 @@ export default function DatabasePage() {
         </div>
         <div className="flex space-x-2">
           <div className="group relative inline-block">
-            <button className="rounded-full p-2 transition-colors duration-300 hover:bg-indigo-600">
+            {/* Tombol Info */}
+            <button
+              onClick={() => setOpen(true)}
+              className="rounded-full p-2 transition-colors duration-300 hover:bg-indigo-600"
+            >
               <Info size={25} />
             </button>
 
-            <div className="absolute left-1/2 mt-2 -translate-x-1/2 scale-75 rounded-lg bg-gray-800 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 shadow-lg transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
-              Info
+            <div className="absolute left-1/2 mt-2 -translate-x-1/2 scale-75 rounded-lg bg-gray-800 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 shadow-lg transition-all duration-300 group-hover:scale-100 group-hover:opacity-100"> 
+              Info 
             </div>
+
+            <Drawer anchor="right" open={open} onClose={() => setOpen(false)}>
+              <div style={{ width: 320, padding: "16px" }}>
+                <Typography variant="h6" gutterBottom>
+                  Help
+                </Typography>
+
+                <Accordion>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography>How to use?</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="body2">
+                      - Open the app <br />
+                      - Navigate through the menu <br />
+                      - Select the feature you want to use
+                    </Typography>
+                  </AccordionDetails>
+                </Accordion>
+
+                <Accordion>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography>How to change password?</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="body2">
+                      - Go to settings <br />
+                      - Select account <br />
+                    </Typography>
+                  </AccordionDetails>
+                </Accordion>
+
+                <Accordion>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography>How to contact support?</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="body2">
+                      - Email: support@example.com <br />
+                      - Phone: +62 812-3456-7890
+                    </Typography>
+                  </AccordionDetails>
+                </Accordion>
+              </div>
+            </Drawer>
           </div>
           <SignedIn>
             <UserButton afterSignOutUrl="/" />
