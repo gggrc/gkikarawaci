@@ -18,10 +18,9 @@ import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
 
-import jsPDF from "jspdf";
+import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
-
 
 type Selection = {
   year: number;
@@ -57,7 +56,13 @@ export default function DatabaseTablePage() {
 
   useEffect(() => {
     const data = localStorage.getItem("ibadahSelection");
-    if (data) setSelection(JSON.parse(data) as Selection);
+    if (data) {
+      try {
+        setSelection(JSON.parse(data) as Selection);
+      } catch (error) {
+        console.error("Failed to parse selection:", error);
+      }
+    }
   }, []);
 
   useEffect(() => {
@@ -71,17 +76,18 @@ export default function DatabaseTablePage() {
   };
 
   const toggleRow = (index: number) => {
-    const newRows = [...checkedRows];
-    newRows[index] = !newRows[index];
-    setCheckedRows(newRows);
-    setCheckedAll(newRows.every((v) => v));
+    setCheckedRows((prev) => {
+      const newRows = [...prev];
+      newRows[index] = !newRows[index];
+      setCheckedAll(newRows.every((v) => v));
+      return newRows;
+    });
   };
 
   const downloadCSV = () => {
     if (jemaat.length === 0) return;
 
-    const firstRow = jemaat[0]!; 
-    const headers = Object.keys(firstRow).join(",");
+    const headers = Object.keys(jemaat[0]!).join(",");
     const rows = jemaat.map((row) => Object.values(row).join(",")).join("\n");
 
     const csvContent = [headers, rows].join("\n");
@@ -101,17 +107,24 @@ export default function DatabaseTablePage() {
       const doc = new jsPDF();
 
       const tableColumn = ["No", "Nama", "Kehadiran", "Jabatan", "Status"];
-      const tableRows = jemaat.map((row, idx) => [idx + 1, row.nama, row.kehadiran, row.jabatan, row.status]);
+      const tableRows = jemaat.map((row, idx) => [
+        (idx + 1).toString(),
+        row.nama,
+        row.kehadiran,
+        row.jabatan,
+        row.status,
+      ]);
 
-      autoTable(doc, {
+      const options: UserOptions = {
         head: [tableColumn],
         body: tableRows,
         startY: 10,
-      } as UserOptions);
+      };
+
+      autoTable(doc, options);
 
       doc.save("data.pdf");
-      setOpenDialog(false);
-    } catch (err: unknown) {
+    } catch (err) {
       console.error("PDF generation failed:", err);
     }
   };
@@ -191,6 +204,7 @@ export default function DatabaseTablePage() {
         <span className="text-sm text-gray-700">Total: {jemaat.length} Jemaat</span>
       </div>
 
+      {/* DOWNLOAD DIALOG */}
       <Dialog open={openDialog} onClose={() => setOpenDialog(false)}>
         <DialogTitle>
           Download Tabel
@@ -239,9 +253,13 @@ export default function DatabaseTablePage() {
           </thead>
           <tbody>
             {jemaat.map((j, idx) => (
-              <tr key={idx} className="odd:bg-purple-50">
+              <tr key={j.nama} className="odd:bg-purple-50">
                 <td className="px-3 py-2 border text-center">
-                  <input type="checkbox" checked={checkedRows[idx] ?? false} onChange={() => toggleRow(idx)} />
+                  <input
+                    type="checkbox"
+                    checked={checkedRows[idx] ?? false}
+                    onChange={() => toggleRow(idx)}
+                  />
                 </td>
                 <td className="px-3 py-2 border">{idx + 1}.</td>
                 <td className="px-3 py-2 border">
