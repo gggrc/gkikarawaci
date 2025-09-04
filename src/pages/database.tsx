@@ -43,6 +43,13 @@ export default function DatabaseTablePage() {
   const [openDrawer, setOpenDrawer] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
 
+  //state baru
+  const [filterStatus, setFilterStatus] = useState("");
+  const [filterJabatan, setFilterJabatan] = useState("");
+  const [filterKehadiran, setFilterKehadiran] = useState("");
+//changed ^
+
+
   const jemaat: Jemaat[] = [
     { foto: "/avatar1.png", nama: "Toing Sidayat", kehadiran: "Hadir", jabatan: "Pendeta", status: "Aktif" },
     { foto: "/avatar2.png", nama: "Abdul Sulaiman", kehadiran: "Hadir", jabatan: "Pengurus A", status: "Aktif" },
@@ -53,6 +60,16 @@ export default function DatabaseTablePage() {
     { foto: "/avatar7.png", nama: "Putri Elizabeth", kehadiran: "Hadir", jabatan: "Jemaat", status: "Aktif" },
     { foto: "/avatar8.png", nama: "Indah Purnawisari", kehadiran: "Hadir", jabatan: "Jemaat", status: "Tidak Aktif" },
   ];
+
+//hasil filter
+  const filteredJemaat = jemaat.filter((j) => {
+    return (
+      (filterStatus === "" || j.status === filterStatus) &&
+      (filterJabatan === "" || j.jabatan === filterJabatan) &&
+      (filterKehadiran === "" || j.kehadiran === filterKehadiran)
+    );
+  });
+//changed^
 
   useEffect(() => {
     const data = localStorage.getItem("ibadahSelection");
@@ -85,10 +102,10 @@ export default function DatabaseTablePage() {
   };
 
   const downloadCSV = () => {
-    if (jemaat.length === 0) return;
+    if (filteredJemaat.length === 0) return;
 
-    const headers = Object.keys(jemaat[0]!).join(",");
-    const rows = jemaat.map((row) => Object.values(row).join(",")).join("\n");
+    const headers = Object.keys(filteredJemaat[0]!).join(",");
+    const rows = filteredJemaat.map((row) => Object.values(row).join(",")).join("\n");
 
     const csvContent = [headers, rows].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
@@ -107,7 +124,7 @@ export default function DatabaseTablePage() {
       const doc = new jsPDF();
 
       const tableColumn = ["No", "Nama", "Kehadiran", "Jabatan", "Status"];
-      const tableRows = jemaat.map((row, idx) => [
+      const tableRows = filteredJemaat.map((row, idx) => [
         (idx + 1).toString(),
         row.nama,
         row.kehadiran,
@@ -178,13 +195,40 @@ export default function DatabaseTablePage() {
       {/* ACTION BAR */}
       <div className="bg-white shadow px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <button className="px-3 py-1 border rounded flex items-center gap-1 text-sm transition-colors duration-300 hover:bg-black hover:text-white">
-            <Filter size={14} /> Filter
-          </button>
+          {/* FILTER AREA */} 
+          <select
+            className="border border-indigo-500 bg-indigo-500 text-white px-2 py-1 rounded hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}>
+            <option value="">Semua Status</option>
+            <option value="Aktif">Aktif</option>
+            <option value="Tidak Aktif">Tidak Aktif</option>
+          </select>
+
+          <select
+            className="border border-indigo-500 bg-indigo-500 text-white px-2 py-1 rounded hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            value={filterJabatan}
+            onChange={(e) => setFilterJabatan(e.target.value)}>
+            <option value="">Semua Jabatan</option>
+            {[...new Set(jemaat.map((j) => j.jabatan))].map((jab) => (
+              <option key={jab} value={jab}>
+                {jab}
+              </option>
+            ))}
+          </select>
+
+          <select
+            className="border border-indigo-500 bg-indigo-500 text-white px-2 py-1 rounded hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-400"
+            value={filterKehadiran}
+            onChange={(e) => setFilterKehadiran(e.target.value)}>
+            <option value="">Semua Kehadiran</option>
+            <option value="Hadir">Hadir</option>
+            <option value="Tidak Hadir">Tidak Hadir</option>
+          </select>
 
           <button
             onClick={() => setOpenDialog(true)}
-            className="px-3 py-1 border rounded flex items-center gap-1 text-sm transition-colors duration-300 hover:bg-black hover:text-white"
+            className="px-3 py-1.5 bg-indigo-500 text-white rounded inline-flex items-center gap-1 text-sm hover:bg-indigo-800 transition-colors duration-200"
           >
             <Download size={14} /> Download
           </button>
@@ -201,7 +245,7 @@ export default function DatabaseTablePage() {
             Lihat Statistik
           </Link>
         </div>
-        <span className="text-sm text-gray-700">Total: {jemaat.length} Jemaat</span>
+        <span className="text-sm text-gray-700">Total: {filteredJemaat.length} Jemaat</span>
       </div>
 
       {/* DOWNLOAD DIALOG */}
@@ -252,11 +296,12 @@ export default function DatabaseTablePage() {
             </tr>
           </thead>
           <tbody>
-            {jemaat.map((j, idx) => (
+            {filteredJemaat.map((j, idx) => (
               <tr key={j.nama} className="odd:bg-purple-50">
                 <td className="px-3 py-2 border text-center">
                   <input
                     type="checkbox"
+                    // indexnya skrg dr filteredJemaat
                     checked={checkedRows[idx] ?? false}
                     onChange={() => toggleRow(idx)}
                   />

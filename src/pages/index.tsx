@@ -2,14 +2,14 @@ import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
 import { SignedOut, UserButton, SignedIn } from "@clerk/nextjs";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 
 export default function Home() {
   const [activeSection, setActiveSection] = useState<string>("home");
   const [showNavbar, setShowNavbar] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     if (window.scrollY > lastScrollY) {
       // Scroll ke bawah
       setShowNavbar(false);
@@ -18,12 +18,12 @@ export default function Home() {
       setShowNavbar(true);
     }
     setLastScrollY(window.scrollY);
-  };
+  }, [lastScrollY]);
 
   useEffect(() => {
     window.addEventListener("scroll", handleScroll);
     return () => window.removeEventListener("scroll", handleScroll);
-  }, [lastScrollY]);
+  }, [handleScroll]);
 
   useEffect(() => {
     const sections = document.querySelectorAll("section");
