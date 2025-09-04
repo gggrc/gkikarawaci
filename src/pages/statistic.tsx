@@ -26,7 +26,6 @@ import {
 export default function Statistic() {
   const [open, setOpen] = useState(false);
 
-  // 🟦 data dummy
   const jemaat = [
     { nama: "Toing Sidayat", kehadiran: "Hadir", jabatan: "Pendeta" },
     { nama: "Abdul Sulaiman", kehadiran: "Hadir", jabatan: "Pengurus A" },
@@ -50,7 +49,7 @@ export default function Statistic() {
     const acc: Record<string, number> = {};
     jemaat.forEach((j) => {
       if (j.kehadiran === "Hadir") {
-        acc[j.jabatan] = (acc[j.jabatan] || 0) + 1;
+        acc[j.jabatan] = (acc[j.jabatan] ?? 0) + 1;
       }
     });
     return Object.entries(acc).map(([jabatan, jumlah]) => ({
