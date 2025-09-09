@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { Plus, Filter, Download, Info, X } from "lucide-react";
+import { Plus, Download, Info, X } from "lucide-react";
 import Link from "next/link";
 import { UserButton, SignedIn } from "@clerk/nextjs";
 
