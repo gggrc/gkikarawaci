@@ -115,8 +115,8 @@ export default function DatabasePage() {
                   <AccordionDetails>
                     <Typography variant="body2">
                       - Open the app <br />
-                      - Navigate through the menu <br />
-                      - Select the feature you want to use
+                      - Navigate through the menu <br />- Select the feature you
+                      want to use
                     </Typography>
                   </AccordionDetails>
                 </Accordion>
@@ -139,8 +139,8 @@ export default function DatabasePage() {
                   </AccordionSummary>
                   <AccordionDetails>
                     <Typography variant="body2">
-                      - Email: support@example.com <br />
-                      - Phone: +62 812-3456-7890
+                      - Email: support@example.com <br />- Phone: +62
+                      812-3456-7890
                     </Typography>
                   </AccordionDetails>
                 </Accordion>
@@ -190,7 +190,7 @@ export default function DatabasePage() {
 
           const daysArray: (number | null)[] = [
             ...Array<number | null>(firstDay).fill(null),
-            ...Array.from({ length: daysInMonth }, (_, i) => i + 1)
+            ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
           ];
 
           const monthIsFuture =
@@ -207,7 +207,7 @@ export default function DatabasePage() {
               <h3
                 className={`mb-2 text-center font-semibold ${
                   monthIsFuture
-                    ? "text-gray-400 cursor-not-allowed"
+                    ? "cursor-not-allowed text-gray-400"
                     : "cursor-pointer hover:text-indigo-600"
                 } ${selectedMonth === monthIndex ? "text-indigo-600" : ""}`}
                 onClick={() => !monthIsFuture && handleSelectMonth(monthIndex)}
@@ -241,10 +241,12 @@ export default function DatabasePage() {
                       key={i}
                       className={`rounded-lg p-1 ${
                         isFuture
-                          ? "text-gray-400 cursor-not-allowed"
+                          ? "cursor-not-allowed text-gray-400"
                           : "cursor-pointer hover:bg-indigo-200"
                       } ${isSelected ? "bg-indigo-600 text-white" : ""}`}
-                      onClick={() => !isFuture && handleSelectDate(day, monthIndex)}
+                      onClick={() =>
+                        !isFuture && handleSelectDate(day, monthIndex)
+                      }
                     >
                       {day}
                     </div>
@@ -267,8 +269,8 @@ export default function DatabasePage() {
                   year: "numeric",
                 })}`
               : selectedMonth !== null
-              ? `Bulan terpilih: ${monthNames[selectedMonth]} ${year}`
-              : ""}
+                ? `Bulan terpilih: ${monthNames[selectedMonth]} ${year}`
+                : ""}
           </p>
           <button
             onClick={handleNext}

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Image from "next/image";
 import { UserButton, SignedIn } from "@clerk/nextjs";
 import Link from "next/link";
@@ -32,28 +32,59 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
+// 🟦 Definisikan tipe data jemaat
+type Jemaat = {
+  nama: string;
+  kehadiran: "Hadir" | "Tidak Hadir";
+  jabatan: string;
+};
+
 export default function Statistic() {
   const [open, setOpen] = useState(false);
   const [openDialog, setOpenDialog] = useState(false);
 
-  // 🟦 data dummy jemaat
-  const jemaat = useMemo(
-    () => [
-      { nama: "Toing Sidayat", kehadiran: "Hadir", jabatan: "Pendeta" },
-      { nama: "Abdul Sulaiman", kehadiran: "Hadir", jabatan: "Pengurus A" },
-      { nama: "Steve Johnson", kehadiran: "Tidak Hadir", jabatan: "Pengurus B" },
-      { nama: "Supriad Ismail", kehadiran: "Hadir", jabatan: "Pengurus C" },
-      { nama: "Suti Sutantari", kehadiran: "Hadir", jabatan: "Jemaat" },
-      { nama: "Siti Andarasari", kehadiran: "Tidak Hadir", jabatan: "Jemaat" },
-      { nama: "Putri Elizabeth", kehadiran: "Hadir", jabatan: "Jemaat" },
-      { nama: "Indah Purnawisari", kehadiran: "Hadir", jabatan: "Jemaat" },
-    ],
-    []
-  );
+  // 🟦 State jemaat bertipe aman
+  const [jemaat, setJemaat] = useState<Jemaat[]>([]);
 
-  // 🟦 data grafik
+  // 🟦 ambil data dari API / database
+  const isJemaat = (obj: unknown): obj is Jemaat => {
+    if (typeof obj !== "object" || obj === null) return false;
+
+    const o = obj as Record<string, unknown>;
+    return (
+      typeof o.nama === "string" &&
+      (o.kehadiran === "Hadir" || o.kehadiran === "Tidak Hadir") &&
+      typeof o.jabatan === "string"
+    );
+  };
+
+  useEffect(() => {
+    const fetchData = async () => {
+      try {
+        const res = await fetch("/api/jemaat", { cache: "no-store" });
+        if (!res.ok) throw new Error("Gagal fetch data jemaat");
+
+        const json: unknown = await res.json();
+
+        if (Array.isArray(json) && json.every(isJemaat)) {
+          setJemaat(json);
+        } else {
+          throw new Error("Data jemaat tidak valid");
+        }
+      } catch (err) {
+        console.error("Error fetch jemaat:", err);
+      }
+    };
+
+    void fetchData(); // hindari warning unused promise
+  }, []);
+
+  // 🟦 data grafik dihitung ulang setiap jemaat berubah
   const hadirCount = jemaat.filter((j) => j.kehadiran === "Hadir").length;
-  const tidakHadirCount = jemaat.filter((j) => j.kehadiran === "Tidak Hadir").length;
+  const tidakHadirCount = jemaat.filter(
+    (j) => j.kehadiran === "Tidak Hadir",
+  ).length;
+
   const kehadiranData = [
     { name: "Hadir", jumlah: hadirCount },
     { name: "Tidak Hadir", jumlah: tidakHadirCount },
@@ -80,9 +111,7 @@ export default function Statistic() {
 
   const toggleChart = (chart: string) => {
     setSelectedCharts((prev) =>
-      prev.includes(chart)
-        ? prev.filter((c) => c !== chart)
-        : [...prev, chart]
+      prev.includes(chart) ? prev.filter((c) => c !== chart) : [...prev, chart],
     );
   };
 
@@ -93,15 +122,16 @@ export default function Statistic() {
 
     if (selectedCharts.includes("total")) {
       const totalColumn = ["Status", "Jumlah"];
-      const totalRows = kehadiranData.map((row) => [row.name, row.jumlah.toString()]);
+      const totalRows = kehadiranData.map((row) => [
+        row.name,
+        row.jumlah.toString(),
+      ]);
 
-      autoTable(doc, {
-        head: [totalColumn],
-        body: totalRows,
-        startY,
-      });
+      autoTable(doc, { head: [totalColumn], body: totalRows, startY });
 
-      const lastTable = (doc as unknown as { lastAutoTable?: { finalY: number } }).lastAutoTable;
+      const lastTable = (
+        doc as unknown as { lastAutoTable?: { finalY: number } }
+      ).lastAutoTable;
       if (lastTable?.finalY) {
         startY = lastTable.finalY + 10;
       }
@@ -109,13 +139,12 @@ export default function Statistic() {
 
     if (selectedCharts.includes("perJabatan")) {
       const jabColumn = ["Jabatan", "Jumlah"];
-      const jabRows = perJabatan.map((row) => [row.name, row.jumlah.toString()]);
+      const jabRows = perJabatan.map((row) => [
+        row.name,
+        row.jumlah.toString(),
+      ]);
 
-      autoTable(doc, {
-        head: [jabColumn],
-        body: jabRows,
-        startY,
-      });
+      autoTable(doc, { head: [jabColumn], body: jabRows, startY });
     }
 
     doc.save("statistik.pdf");
@@ -157,8 +186,16 @@ export default function Statistic() {
       {/* header */}
       <div className="flex items-center justify-between bg-indigo-900 px-4 py-2 text-white">
         <div className="flex items-center space-x-2">
-          <Image src="/LOGOGKI.png" alt="Logo" width={48} height={48} className="h-12 w-12" />
-          <span className="ml-3 text-2xl font-bold">Data Jemaat GKI Karawaci</span>
+          <Image
+            src="/LOGOGKI.png"
+            alt="Logo"
+            width={48}
+            height={48}
+            className="h-12 w-12"
+          />
+          <span className="ml-3 text-2xl font-bold">
+            Data Jemaat GKI Karawaci
+          </span>
         </div>
         <div className="flex space-x-2">
           <div className="group relative inline-block">
@@ -201,7 +238,7 @@ export default function Statistic() {
           {/* tombol toggle */}
           <button
             onClick={() => toggleChart("total")}
-            className={`px-3 py-1.5 rounded text-sm ${
+            className={`rounded px-3 py-1.5 text-sm ${
               selectedCharts.includes("total")
                 ? "bg-indigo-500 text-white"
                 : "bg-gray-200 text-gray-700"
@@ -211,7 +248,7 @@ export default function Statistic() {
           </button>
           <button
             onClick={() => toggleChart("perJabatan")}
-            className={`px-3 py-1.5 rounded text-sm ${
+            className={`rounded px-3 py-1.5 text-sm ${
               selectedCharts.includes("perJabatan")
                 ? "bg-indigo-500 text-white"
                 : "bg-gray-200 text-gray-700"
@@ -223,7 +260,7 @@ export default function Statistic() {
           {/* tombol download */}
           <button
             onClick={() => setOpenDialog(true)}
-            className="px-3 py-1.5 bg-indigo-500 text-white rounded inline-flex items-center gap-1 text-sm hover:bg-indigo-800 transition-colors duration-200"
+            className="inline-flex items-center gap-1 rounded bg-indigo-500 px-3 py-1.5 text-sm text-white transition-colors duration-200 hover:bg-indigo-800"
           >
             <Download size={14} /> Download
           </button>
@@ -249,8 +286,22 @@ export default function Statistic() {
           <Typography>Pilih format file yang ingin diunduh:</Typography>
         </DialogContent>
         <DialogActions>
-          <Button onClick={() => { downloadCSV(); setOpenDialog(false); }}>CSV</Button>
-          <Button onClick={() => { downloadPDF(); setOpenDialog(false); }}>PDF</Button>
+          <Button
+            onClick={() => {
+              downloadCSV();
+              setOpenDialog(false);
+            }}
+          >
+            CSV
+          </Button>
+          <Button
+            onClick={() => {
+              downloadPDF();
+              setOpenDialog(false);
+            }}
+          >
+            PDF
+          </Button>
           <Button onClick={() => setOpenDialog(false)} color="secondary">
             Cancel
           </Button>
@@ -258,10 +309,10 @@ export default function Statistic() {
       </Dialog>
 
       {/* tampilkan grafik sesuai filter */}
-      <div className="p-6 space-y-8">
+      <div className="space-y-8 p-6">
         {selectedCharts.includes("total") && (
-          <div className="bg-white rounded-2xl shadow p-4">
-            <h2 className="text-xl font-semibold mb-4">Total Kehadiran</h2>
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <h2 className="mb-4 text-xl font-semibold">Total Kehadiran</h2>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={kehadiranData}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -276,8 +327,8 @@ export default function Statistic() {
         )}
 
         {selectedCharts.includes("perJabatan") && (
-          <div className="bg-white rounded-2xl shadow p-4">
-            <h2 className="text-xl font-semibold mb-4">Hadir per Jabatan</h2>
+          <div className="rounded-2xl bg-white p-4 shadow">
+            <h2 className="mb-4 text-xl font-semibold">Hadir per Jabatan</h2>
             <ResponsiveContainer width="100%" height={300}>
               <BarChart data={perJabatan}>
                 <CartesianGrid strokeDasharray="3 3" />

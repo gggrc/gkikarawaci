@@ -1,19 +1,21 @@
 "use client";
 import { useEffect, useState } from "react";
 import Image from "next/image";
-import { Plus, Download, X, Settings } from "lucide-react";
+import { Plus, Download, X, Info } from "lucide-react";
 import Link from "next/link";
 import { UserButton, SignedIn } from "@clerk/nextjs";
 
+import Drawer from "@mui/material/Drawer";
+import Accordion from "@mui/material/Accordion";
+import AccordionDetails from "@mui/material/AccordionDetails";
+import AccordionSummary from "@mui/material/AccordionSummary";
 import Typography from "@mui/material/Typography";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
 import Button from "@mui/material/Button";
-import TextField from "@mui/material/TextField";
-import MenuItem from "@mui/material/MenuItem";
-import Drawer from "@mui/material/Drawer";
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
@@ -37,10 +39,7 @@ export default function DatabaseTablePage() {
   const [checkedAll, setCheckedAll] = useState(false);
   const [checkedRows, setCheckedRows] = useState<boolean[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
-
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
-  const [editMode, setEditMode] = useState(false);
-  const [draftJemaat, setDraftJemaat] = useState<Jemaat[]>([]);
   const [openDrawer, setOpenDrawer] = useState(false);
   const [selectedRow, setSelectedRow] = useState<Jemaat | null>(null);
 
@@ -50,6 +49,7 @@ export default function DatabaseTablePage() {
   const [selectedIbadah, setSelectedIbadah] = useState<IbadahSelection | null>(
     null,
   );
+
   const monthNames: string[] = [
     "Januari",
     "Februari",
@@ -69,33 +69,49 @@ export default function DatabaseTablePage() {
     const saved = localStorage.getItem("ibadahSelection");
     if (saved) {
       try {
-        const parsed: IbadahSelection = JSON.parse(saved) as IbadahSelection;
-        setSelectedIbadah(parsed);
-      } catch (err) {
-        console.error("Failed to parse ibadahSelection from localStorage", err);
-      }
+        setSelectedIbadah(JSON.parse(saved) as IbadahSelection);
+      } catch {}
     }
   }, []);
 
   useEffect(() => {
     const fetchData = async () => {
-      const res = await fetch("/api/jemaat", { cache: "no-store" });
-      if (!res.ok) throw new Error("Gagal fetch data jemaat");
-      return (await res.json()) as Jemaat[];
+      try {
+        const res = await fetch("/api/jemaat", { cache: "no-store" });
+        if (!res.ok) throw new Error("Gagal fetch data jemaat");
+
+        const data: unknown = await res.json();
+
+        if (
+          Array.isArray(data) &&
+          data.every(
+            (item) =>
+              item &&
+              typeof (item as Jemaat).foto === "string" &&
+              typeof (item as Jemaat).nama === "string" &&
+              typeof (item as Jemaat).kehadiran === "string" &&
+              typeof (item as Jemaat).jabatan === "string" &&
+              typeof (item as Jemaat).status === "string",
+          )
+        ) {
+          setJemaat(data as Jemaat[]);
+        } else {
+          throw new Error("Data jemaat tidak valid");
+        }
+      } catch (err) {
+        console.error("Error fetch jemaat:", err);
+      }
     };
 
-    fetchData()
-      .then((data) => setJemaat(data))
-      .catch((err) => console.error("Error fetch jemaat:", err));
+    void fetchData(); 
   }, []);
 
-  const filteredJemaat = (editMode ? draftJemaat : jemaat).filter((j) => {
-    return (
+  const filteredJemaat = jemaat.filter(
+    (j) =>
       (filterStatus === "" || j.status === filterStatus) &&
       (filterJabatan === "" || j.jabatan === filterJabatan) &&
-      (filterKehadiran === "" || j.kehadiran === filterKehadiran)
-    );
-  });
+      (filterKehadiran === "" || j.kehadiran === filterKehadiran),
+  );
 
   useEffect(() => {
     setCheckedRows(new Array(filteredJemaat.length).fill(false));
@@ -112,17 +128,24 @@ export default function DatabaseTablePage() {
     setCheckedRows((prev) => {
       const newRows = [...prev];
       newRows[index] = !newRows[index];
-      setCheckedAll(newRows.every((v) => v));
+      setCheckedAll(newRows.every(Boolean));
       return newRows;
     });
   };
 
   const downloadCSV = () => {
     if (filteredJemaat.length === 0) return;
-    const headers = Object.keys(filteredJemaat[0]!).join(",");
+
+    const firstItem = filteredJemaat[0];
+    if (!firstItem) return;
+
+    const headers = Object.keys(firstItem).join(",");
+
     const rows = filteredJemaat
+      .filter((row): row is Jemaat => row !== undefined)
       .map((row) => Object.values(row).join(","))
       .join("\n");
+
     const csvContent = [headers, rows].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const link = document.createElement("a");
@@ -131,70 +154,25 @@ export default function DatabaseTablePage() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+
     setOpenDialog(false);
   };
 
   const downloadPDF = () => {
-    try {
-      const doc = new jsPDF();
-      const tableColumn = ["No", "Nama", "Kehadiran", "Jabatan", "Status"];
-      const tableRows = filteredJemaat.map((row, idx) => [
-        (idx + 1).toString(),
-        row.nama,
-        row.kehadiran,
-        row.jabatan,
-        row.status,
-      ]);
-      autoTable(doc, {
-        head: [tableColumn],
-        body: tableRows,
-        startY: 10,
-      } as UserOptions);
-      doc.save("data.pdf");
-    } catch (err) {
-      console.error("PDF generation failed:", err);
-    }
-  };
-
-  const handleEnterEdit = () => {
-    const copy = filteredJemaat.map((j) => ({ ...j }));
-    setDraftJemaat(copy);
-    setEditMode(true);
-  };
-
-  const handleCancel = () => {
-    setDraftJemaat([]);
-    setEditMode(false);
-  };
-
-  type UpdateResponse = {
-    data: Jemaat[];
-  };
-
-  const handleSave = async () => {
-    try {
-      const res = await fetch("/api/jemaat", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(draftJemaat),
-      });
-
-      if (!res.ok) throw new Error("Gagal update data");
-
-      const result = (await res.json()) as UpdateResponse;
-
-      if (!Array.isArray(result.data)) throw new Error("Response tidak valid");
-
-      setJemaat(result.data);
-      setEditMode(false);
-      setDraftJemaat([]);
-    } catch (err) {
-      console.error("Error update jemaat:", err);
-    }
+    const doc = new jsPDF();
+    const tableColumn = ["No", "Nama", "Kehadiran", "Jabatan", "Status"];
+    const tableRows = filteredJemaat.map((row, idx) => [
+      (idx + 1).toString(),
+      row.nama,
+      row.kehadiran,
+      row.jabatan,
+      row.status,
+    ]);
+    autoTable(doc, { head: [tableColumn], body: tableRows } as UserOptions);
+    doc.save("data.pdf");
   };
 
   const handleRowClick = (row: Jemaat) => {
-    if (editMode) return;
     setSelectedRow(row);
     setOpenDrawer(true);
   };
@@ -215,28 +193,42 @@ export default function DatabaseTablePage() {
             Data Jemaat GKI Karawaci
           </span>
         </div>
-        <div className="flex items-center space-x-2">
-          {!editMode ? (
+        <div className="flex space-x-2">
+          <div className="group relative inline-block">
             <button
-              onClick={handleEnterEdit}
-              className="rounded-full p-2 hover:bg-indigo-600"
+              onClick={() => setOpenDrawer(true)}
+              className="rounded-full p-2 transition-colors duration-300 hover:bg-indigo-600"
             >
-              <Settings size={25} />
+              <Info size={25} />
             </button>
-          ) : (
-            <div className="flex gap-2">
-              <Button variant="contained" color="primary" onClick={handleSave}>
-                Save
-              </Button>
-              <Button
-                variant="outlined"
-                color="secondary"
-                onClick={handleCancel}
-              >
-                Cancel
-              </Button>
+            <div className="absolute left-1/2 mt-2 -translate-x-1/2 scale-75 rounded-lg bg-gray-800 px-2 py-1 text-xs whitespace-nowrap text-white opacity-0 shadow-lg transition-all duration-300 group-hover:scale-100 group-hover:opacity-100">
+              Info
             </div>
-          )}
+
+            <Drawer
+              anchor="right"
+              open={openDrawer}
+              onClose={() => setOpenDrawer(false)}
+            >
+              <div style={{ width: 320, padding: "16px" }}>
+                <Typography variant="h6" gutterBottom>
+                  Help
+                </Typography>
+                <Accordion>
+                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                    <Typography>How to use?</Typography>
+                  </AccordionSummary>
+                  <AccordionDetails>
+                    <Typography variant="body2">
+                      - Open the app <br />
+                      - Navigate through the menu <br />- Select the feature you
+                      want to use
+                    </Typography>
+                  </AccordionDetails>
+                </Accordion>
+              </div>
+            </Drawer>
+          </div>
           <SignedIn>
             <UserButton afterSignOutUrl="/" />
           </SignedIn>
@@ -321,18 +313,11 @@ export default function DatabaseTablePage() {
       </Dialog>
 
       {/* TABLE */}
-
       <div className="m-4 overflow-x-auto rounded-2xl bg-white shadow">
         {selectedIbadah && (
           <div className="mb-2 rounded bg-yellow-100 px-4 py-2 text-sm text-gray-700">
             {selectedIbadah.selectedDate
-              ? `Tanggal terpilih: ${new Date(
-                  selectedIbadah.selectedDate,
-                ).toLocaleDateString("id-ID", {
-                  day: "2-digit",
-                  month: "long",
-                  year: "numeric",
-                })}`
+              ? `Tanggal terpilih: ${new Date(selectedIbadah.selectedDate).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })}`
               : selectedIbadah.selectedMonth !== null
                 ? `Bulan terpilih: ${monthNames[selectedIbadah.selectedMonth]} ${selectedIbadah.year}`
                 : ""}
@@ -383,74 +368,10 @@ export default function DatabaseTablePage() {
                     className="rounded-full"
                   />
                 </td>
-                <td className="border px-3 py-2">
-                  {editMode && draftJemaat[idx] ? (
-                    <TextField
-                      size="small"
-                      value={draftJemaat[idx].nama}
-                      onChange={(e) => {
-                        const updated = [...draftJemaat];
-                        updated[idx]!.nama = e.target.value;
-                        setDraftJemaat(updated);
-                      }}
-                    />
-                  ) : (
-                    j.nama
-                  )}
-                </td>
-                <td className="border px-3 py-2">
-                  {editMode && draftJemaat[idx] ? (
-                    <TextField
-                      select
-                      size="small"
-                      value={draftJemaat[idx].kehadiran}
-                      onChange={(e) => {
-                        const updated = [...draftJemaat];
-                        updated[idx]!.kehadiran = e.target.value;
-                        setDraftJemaat(updated);
-                      }}
-                    >
-                      <MenuItem value="Hadir">Hadir</MenuItem>
-                      <MenuItem value="Tidak Hadir">Tidak Hadir</MenuItem>
-                    </TextField>
-                  ) : (
-                    j.kehadiran
-                  )}
-                </td>
-                <td className="border px-3 py-2">
-                  {editMode && draftJemaat[idx] ? (
-                    <TextField
-                      size="small"
-                      value={draftJemaat[idx].jabatan}
-                      onChange={(e) => {
-                        const updated = [...draftJemaat];
-                        updated[idx]!.jabatan = e.target.value;
-                        setDraftJemaat(updated);
-                      }}
-                    />
-                  ) : (
-                    j.jabatan
-                  )}
-                </td>
-                <td className="border px-3 py-2">
-                  {editMode && draftJemaat[idx] ? (
-                    <TextField
-                      select
-                      size="small"
-                      value={draftJemaat[idx].status}
-                      onChange={(e) => {
-                        const updated = [...draftJemaat];
-                        updated[idx]!.status = e.target.value;
-                        setDraftJemaat(updated);
-                      }}
-                    >
-                      <MenuItem value="Aktif">Aktif</MenuItem>
-                      <MenuItem value="Tidak Aktif">Tidak Aktif</MenuItem>
-                    </TextField>
-                  ) : (
-                    j.status
-                  )}
-                </td>
+                <td className="border px-3 py-2">{j.nama}</td>
+                <td className="border px-3 py-2">{j.kehadiran}</td>
+                <td className="border px-3 py-2">{j.jabatan}</td>
+                <td className="border px-3 py-2">{j.status}</td>
               </tr>
             ))}
           </tbody>
