@@ -260,14 +260,14 @@ export default function Statistic() {
           {/* tombol download */}
           <button
             onClick={() => setOpenDialog(true)}
-            className="inline-flex items-center gap-1 rounded bg-indigo-500 px-3 py-1.5 text-sm text-white transition-colors duration-200 hover:bg-indigo-800"
+            className="inline-flex items-center gap-1 rounded border-1 bg-white px-3 py-1.5 text-sm text-black transition-colors duration-200 hover:bg-gray-700 hover:text-white"
           >
             <Download size={14} /> Download
           </button>
 
           <Link
             href="/database"
-            className="inline-flex items-center gap-1 rounded bg-indigo-500 px-3 py-1.5 text-sm text-white transition-colors duration-200 hover:bg-indigo-800"
+            className="inline-flex items-center gap-1 rounded border-1 bg-white px-3 py-1.5 text-sm text-black transition-colors duration-200 hover:bg-gray-700 hover:text-white"
           >
             Kembali ke Tabel Data
           </Link>
