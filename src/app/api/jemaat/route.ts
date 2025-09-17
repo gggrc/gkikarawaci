@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 // 1. Tipe data
 // ----------------------
 export type Jemaat = {
+  id: string; // tambahkan id unik
   foto: string;
   nama: string;
   kehadiran: "Hadir" | "Tidak Hadir";
@@ -18,6 +19,8 @@ function isJemaat(obj: unknown): obj is Jemaat {
   if (typeof obj !== "object" || obj === null) return false;
 
   return (
+    "id" in obj &&
+    typeof (obj as { id: unknown }).id === "string" &&
     "foto" in obj &&
     typeof (obj as { foto: unknown }).foto === "string" &&
     "nama" in obj &&
@@ -41,14 +44,70 @@ function isJemaatArray(data: unknown): data is Jemaat[] {
 // 3. Data awal
 // ----------------------
 let jemaat: Jemaat[] = [
-  { foto: "/avatar1.png", nama: "Toing Sidayat", kehadiran: "Hadir", jabatan: "Pendeta", status: "Aktif" },
-  { foto: "/avatar2.png", nama: "Abdul Sulaiman", kehadiran: "Hadir", jabatan: "Pengurus A", status: "Aktif" },
-  { foto: "/avatar3.png", nama: "Steve Johnson", kehadiran: "Tidak Hadir", jabatan: "Pengurus B", status: "Aktif" },
-  { foto: "/avatar4.png", nama: "Supriad Ismail", kehadiran: "Hadir", jabatan: "Pengurus C", status: "Aktif" },
-  { foto: "/avatar5.png", nama: "Suti Sutantari", kehadiran: "Hadir", jabatan: "Jemaat", status: "Tidak Aktif" },
-  { foto: "/avatar6.png", nama: "Siti Andarasari", kehadiran: "Tidak Hadir", jabatan: "Jemaat", status: "Aktif" },
-  { foto: "/avatar7.png", nama: "Putri Elizabeth", kehadiran: "Hadir", jabatan: "Jemaat", status: "Aktif" },
-  { foto: "/avatar8.png", nama: "Indah Purnawisari", kehadiran: "Hadir", jabatan: "Jemaat", status: "Tidak Aktif" },
+  {
+    id: "GKI_01",
+    foto: "/avatar1.png",
+    nama: "Toing Sidayat",
+    kehadiran: "Hadir",
+    jabatan: "Pendeta",
+    status: "Aktif",
+  },
+  {
+    id: "GKI_02",
+    foto: "/avatar2.png",
+    nama: "Abdul Sulaiman",
+    kehadiran: "Hadir",
+    jabatan: "Pengurus A",
+    status: "Aktif",
+  },
+  {
+    id: "GKI_03",
+    foto: "/avatar3.png",
+    nama: "Steve Johnson",
+    kehadiran: "Tidak Hadir",
+    jabatan: "Pengurus B",
+    status: "Aktif",
+  },
+  {
+    id: "GKI_04",
+    foto: "/avatar4.png",
+    nama: "Supriad Ismail",
+    kehadiran: "Hadir",
+    jabatan: "Pengurus C",
+    status: "Aktif",
+  },
+  {
+    id: "GKI_05",
+    foto: "/avatar5.png",
+    nama: "Suti Sutantari",
+    kehadiran: "Hadir",
+    jabatan: "Jemaat",
+    status: "Tidak Aktif",
+  },
+  {
+    id: "GKI_06",
+    foto: "/avatar6.png",
+    nama: "Siti Andarasari",
+    kehadiran: "Tidak Hadir",
+    jabatan: "Jemaat",
+    status: "Aktif",
+  },
+  {
+    id: "GKI_07",
+    foto: "/avatar7.png",
+    nama: "Putri Elizabeth",
+    kehadiran: "Hadir",
+    jabatan: "Jemaat",
+    status: "Aktif",
+  },
+  {
+    id: "GKI_08",
+    foto: "/avatar8.png",
+    nama: "Indah Purnawisari",
+    kehadiran: "Hadir",
+    jabatan: "Jemaat",
+    status: "Tidak Aktif",
+  },
 ];
 
 // ----------------------
@@ -69,5 +128,8 @@ export async function PUT(req: Request) {
   }
 
   jemaat = json;
-  return NextResponse.json({ message: "Data berhasil diperbarui", data: jemaat });
+  return NextResponse.json({
+    message: "Data berhasil diperbarui",
+    data: jemaat,
+  });
 }

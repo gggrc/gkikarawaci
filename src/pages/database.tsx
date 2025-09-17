@@ -20,12 +20,13 @@ import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
 
 type Jemaat = {
+  id: number;    
   foto: string;
   nama: string;
   kehadiran: string;
   jabatan: string;
   status: string;
-};
+}
 
 type IbadahSelection = {
   year: number;
@@ -247,11 +248,28 @@ export default function DatabaseTablePage() {
     }
   };
 
-  const handleRowClick = (row: Jemaat) => {
-    if (editMode) return;
-    setSelectedRow(row);
-    setOpenDrawer(true);
-  };
+const handleRowClick = (
+  row: Jemaat,
+  e: React.MouseEvent<HTMLTableRowElement>
+) => {
+  if (editMode || openDrawer) return;
+
+  let target = e.target as HTMLElement | null;
+
+  while (target && target !== e.currentTarget) {
+  if (
+    target.tagName === "BUTTON" &&
+    target.textContent &&
+    ["dokumen", "add more info"].includes(target.textContent.trim().toLowerCase())
+  ) {
+    return; // Jangan buka drawer
+  }
+  target = target.parentElement;
+}
+
+  setSelectedRow(row);
+  setOpenDrawer(true);
+};
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-200">
@@ -409,6 +427,7 @@ export default function DatabaseTablePage() {
                 />
               </th>
               <th className="border px-3 py-2">No.</th>
+              <th className="border px-3 py-2">ID</th>
               <th className="border px-3 py-2">Foto</th>
               <th className="border px-3 py-2">Nama</th>
               <th className="border px-3 py-2">Kehadiran</th>
@@ -423,7 +442,7 @@ export default function DatabaseTablePage() {
               <tr
                 key={j.nama + idx}
                 className="cursor-pointer transition odd:bg-purple-50 hover:bg-indigo-100"
-                onClick={() => handleRowClick(j)}
+                onClick={(e) => handleRowClick(j, e)}
               >
                 <td
                   className="border px-3 py-2 text-center"
@@ -436,6 +455,7 @@ export default function DatabaseTablePage() {
                   />
                 </td>
                 <td className="border px-3 py-2">{idx + 1}.</td>
+                <td className="border px-3 py-2">{j.id}</td> 
                 <td className="border px-3 py-2">
                   <Image
                     src={j.foto}
@@ -682,6 +702,9 @@ export default function DatabaseTablePage() {
                   className="rounded-full"
                 />
               </div>
+              <p>
+                <strong>Nama:</strong> {selectedRow.id}
+              </p>
               <p>
                 <strong>Nama:</strong> {selectedRow.nama}
               </p>
