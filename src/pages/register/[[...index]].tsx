@@ -3,15 +3,12 @@ import { SignUp, SignedIn, UserButton, SignedOut } from "@clerk/nextjs";
 
 export default function RegisterPage() {
   return (
-    <div className="flex items-center justify-center min-h-screen bg-cover bg-center bg-[url('/backgroundLogin.jpeg')]">
+    <div className="flex min-h-screen items-center justify-center bg-[url('/backgroundLogin.jpg')] bg-cover bg-center">
       <div className="absolute inset-0 bg-black/30" />
-      <div className="relative flex w-full max-w-4xl mx-auto px-4">
-        
-        <div className="flex-1 text-white pr-8">
-          <h1 className="text-4xl font-bold mb-3 mt-25">Selamat Datang</h1>
-          <p className="text-lg">
-            Mulailah perjalananmu bersama kami.
-          </p>
+      <div className="relative mx-auto flex w-full max-w-4xl px-4">
+        <div className="flex-1 pr-8 text-white">
+          <h1 className="mt-25 mb-3 text-4xl font-bold">Selamat Datang</h1>
+          <p className="text-lg">Mulailah perjalananmu bersama kami.</p>
         </div>
 
         <SignedIn>
@@ -19,11 +16,11 @@ export default function RegisterPage() {
         </SignedIn>
 
         <SignedOut>
-          <SignUp 
-            path="/register" 
-            routing="path" 
+          <SignUp
+            path="/register"
+            routing="path"
             signInUrl="/login"
-            redirectUrl="/selectDate" 
+            redirectUrl="/selectDate"
           />
         </SignedOut>
       </div>
