@@ -5,28 +5,37 @@ import { Plus, Download, X, Settings } from "lucide-react";
 import Link from "next/link";
 import { UserButton, SignedIn } from "@clerk/nextjs";
 
-import Typography from "@mui/material/Typography";
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
 import DialogContent from "@mui/material/DialogContent";
 import DialogActions from "@mui/material/DialogActions";
-import Button from "@mui/material/Button";
-import TextField from "@mui/material/TextField";
 import MenuItem from "@mui/material/MenuItem";
-import Drawer from "@mui/material/Drawer";
+import {
+  Button,
+  Drawer,
+  Box,
+  Typography,
+  TextField,
+  Stack,
+} from "@mui/material";
 
 import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
 
 type Jemaat = {
-  id: number;    
+  id: number;
   foto: string;
   nama: string;
   kehadiran: string;
   jabatan: string;
   status: string;
-}
+  tanggalLahir?: string;
+  umur?: string;
+  keluarga?: string;
+  email?: string;
+  telepon?: string;
+};
 
 type IbadahSelection = {
   year: number;
@@ -78,6 +87,40 @@ export default function DatabaseTablePage() {
   useEffect(() => {
     setUploadedDocs(loadDocsFromStorage());
   }, []);
+
+  const [open, setOpen] = useState(false);
+
+  const [formData, setFormData] = useState<Jemaat>({
+    id: 0,
+    foto: "",
+    nama: "",
+    kehadiran: "",
+    jabatan: "",
+    status: "",
+    tanggalLahir: "",
+    umur: "",
+    keluarga: "",
+    email: "",
+    telepon: "",
+  });
+
+  const handleChange = (
+    e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>
+  ) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value,
+    });
+  };
+
+  const handleSaveForm = () => {
+  setJemaat((prev) =>
+    prev.map((item) =>
+      item.id === formData.id ? { ...item, ...formData } : item
+    )
+  );
+  setOpen(false);
+};
 
   // saat upload
   const handleFileUpload = (idx: number, file: File) => {
@@ -252,24 +295,53 @@ const handleRowClick = (
   row: Jemaat,
   e: React.MouseEvent<HTMLTableRowElement>
 ) => {
-  if (editMode || openDrawer) return;
+  // Jangan buka drawer detail kalau sedang edit (editMode),
+  // drawer detail sudah terbuka (openDrawer), atau drawer Add More Info terbuka (open)
+  if (editMode || openDrawer || open) return;
 
   let target = e.target as HTMLElement | null;
 
   while (target && target !== e.currentTarget) {
-  if (
-    target.tagName === "BUTTON" &&
-    target.textContent &&
-    ["dokumen", "add more info"].includes(target.textContent.trim().toLowerCase())
-  ) {
-    return; // Jangan buka drawer
+    if (
+      target.tagName === "BUTTON" &&
+      target.textContent &&
+      ["dokumen", "add more info"].includes(
+        target.textContent.trim().toLowerCase()
+      )
+    ) {
+      return; // Jangan buka drawer
+    }
+    target = target.parentElement;
   }
-  target = target.parentElement;
-}
 
   setSelectedRow(row);
   setOpenDrawer(true);
 };
+
+const handleOpenDrawer = (jemaat?: Jemaat) => {
+  if (jemaat) {
+    // kalau edit jemaat yang sudah ada
+    setFormData(jemaat);
+  } else {
+    // kalau tambah jemaat baru
+    setFormData({
+      id: Date.now(), // atau generate ID unik
+      foto: "",
+      nama: "",
+      kehadiran: "",
+      jabatan: "",
+      status: "",
+      tanggalLahir: "",
+      umur: "",
+      keluarga: "",
+      email: "",
+      telepon: "",
+    });
+  }
+  setOpen(true);
+};
+
+
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-200">
@@ -662,15 +734,88 @@ const handleRowClick = (
 
                 {/* Kolom Button Add More Info */}
                 <td className="border px-3 py-2 text-center">
-                  <button
-                    className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-700"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      alert(`Add more info untuk ${j.nama}`);
-                    }}
-                  >
-                    Add More Info
-                  </button>
+                  {/* Tombol untuk buka Drawer */}
+      <Button
+  variant="contained"
+  color="primary"
+  onClick={(e) => {
+    e.stopPropagation();
+    handleOpenDrawer(j); // buka drawer isi data jemaat j
+  }}
+>
+  Add More Info
+</Button>
+
+      {/* Drawer dari kanan */}
+      <Drawer
+  anchor="right"
+  open={open}
+  onClose={() => setOpen(false)}
+  BackdropProps={{
+    style: { backgroundColor: "rgba(0,0,0,0.1)" },
+  }}
+  PaperProps={{
+    style: {
+      boxShadow: "none",
+      border: "1px solid #ddd",
+      width: "100%", 
+      maxWidth: "480px", 
+    },
+  }}
+>
+        <Box sx={{ width: "100%", p: 3 }}>
+          <Typography variant="h6" gutterBottom>
+            Edit Info Jemaat: {formData.nama}
+          </Typography>
+
+          <Stack spacing={2}>
+            <TextField
+              label="Tanggal Lahir"
+              type="date"
+              name="tanggalLahir"
+              InputLabelProps={{ shrink: true }}
+              value={formData.tanggalLahir}
+              onChange={handleChange}
+            />
+            <TextField
+              label="Umur"
+              type="number"
+              name="umur"
+              value={formData.umur}
+              onChange={handleChange}
+            />
+            <TextField
+              label="Keluarga"
+              name="keluarga"
+              value={formData.keluarga}
+              onChange={handleChange}
+            />
+            <TextField
+              label="Email"
+              type="email"
+              name="email"
+              value={formData.email}
+              onChange={handleChange}
+            />
+            <TextField
+              label="No. Telp"
+              type="tel"
+              name="telepon"
+              value={formData.telepon}
+              onChange={handleChange}
+            />
+
+            <Stack direction="row" spacing={2} justifyContent="flex-end" mt={2}>
+              <Button variant="outlined" onClick={() => setOpen(false)}>
+                Batal
+              </Button>
+              <Button variant="contained" onClick={handleSaveForm}>
+                Simpan
+              </Button>
+            </Stack>
+          </Stack>
+        </Box>
+      </Drawer>
                 </td>
               </tr>
             ))}
@@ -716,6 +861,21 @@ const handleRowClick = (
               </p>
               <p>
                 <strong>Status:</strong> {selectedRow.status}
+              </p>
+               <p>
+                <strong>Tanggal Lahir:</strong> {selectedRow.tanggalLahir}
+              </p>
+              <p>
+                <strong>Umur:</strong> {selectedRow.umur}
+              </p>
+              <p>
+                <strong>Keluarga:</strong> {selectedRow.keluarga}
+              </p>
+              <p>
+                <strong>Email:</strong> {selectedRow.email}
+              </p>
+              <p>
+                <strong>Telepon:</strong> {selectedRow.telepon}
               </p>
             </>
           )}
