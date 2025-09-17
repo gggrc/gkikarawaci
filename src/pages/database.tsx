@@ -33,6 +33,25 @@ type IbadahSelection = {
   selectedDate: string | null;
 };
 
+export const saveDocsToStorage = (docs: Record<number, string>) => {
+  localStorage.setItem("uploadedDocs", JSON.stringify(docs));
+};
+
+export const loadDocsFromStorage = (): Record<number, string> => {
+  const data = localStorage.getItem("uploadedDocs");
+  if (!data) return {};
+
+  try {
+    const parsed: unknown = JSON.parse(data);
+    if (typeof parsed === "object" && parsed !== null) {
+      return parsed as Record<number, string>;
+    }
+  } catch (e) {
+    console.error("Failed to parse uploadedDocs:", e);
+  }
+  return {};
+};
+
 export default function DatabaseTablePage() {
   const [checkedAll, setCheckedAll] = useState(false);
   const [checkedRows, setCheckedRows] = useState<boolean[]>([]);
@@ -50,6 +69,41 @@ export default function DatabaseTablePage() {
   const [selectedIbadah, setSelectedIbadah] = useState<IbadahSelection | null>(
     null,
   );
+
+  const [successDialog, setSuccessDialog] = useState(false);
+  const [uploadedDocs, setUploadedDocs] = useState<Record<number, string>>({});
+  const [viewDoc, setViewDoc] = useState<string | null>(null);
+
+  useEffect(() => {
+    setUploadedDocs(loadDocsFromStorage());
+  }, []);
+
+  // saat upload
+  const handleFileUpload = (idx: number, file: File) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const base64 = reader.result as string;
+      setUploadedDocs((prev) => {
+        const updated = { ...prev, [idx]: base64 };
+        saveDocsToStorage(updated);
+        return updated;
+      });
+      setSuccessDialog(true);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // saat delete
+  const handleDeleteFile = (idx: number) => {
+    setUploadedDocs((prev) => {
+      const updated = { ...prev };
+      delete updated[idx];
+      saveDocsToStorage(updated);
+      return updated;
+    });
+    setViewDoc(null);
+  };
+
   const monthNames: string[] = [
     "Januari",
     "Februari",
@@ -229,8 +283,14 @@ export default function DatabaseTablePage() {
                 Save
               </Button>
               <Button
-                variant="outlined"
-                color="secondary"
+                variant="contained" // ganti dari outlined ke contained biar bisa pakai background color
+                sx={{
+                  backgroundColor: "red",
+                  color: "white",
+                  "&:hover": {
+                    backgroundColor: "darkred", // warna saat hover
+                  },
+                }}
                 onClick={handleCancel}
               >
                 Cancel
@@ -354,6 +414,8 @@ export default function DatabaseTablePage() {
               <th className="border px-3 py-2">Kehadiran</th>
               <th className="border px-3 py-2">Jabatan</th>
               <th className="border px-3 py-2">Status</th>
+              <th className="border px-3 py-2">Dokumen</th>{" "}
+              <th className="border px-3 py-2">Add more Info</th>{" "}
             </tr>
           </thead>
           <tbody>
@@ -450,6 +512,145 @@ export default function DatabaseTablePage() {
                   ) : (
                     j.status
                   )}
+                </td>
+
+                {/* Kolom Upload Dokumen */}
+                <td className="border px-3 py-2 text-center">
+                  {!uploadedDocs[idx] ? (
+                    <label className="inline-block cursor-pointer rounded bg-green-600 px-3 py-1 text-white hover:bg-green-800">
+                      Add Document
+                      <input
+                        type="file"
+                        className="hidden"
+                        accept=".pdf,.doc,.docx,.jpg,.png"
+                        onChange={(e) => {
+                          const file = e.target.files?.[0];
+                          if (file) handleFileUpload(idx, file);
+                        }}
+                      />
+                    </label>
+                  ) : (
+                    <div className="flex items-center justify-center gap-2">
+                      <Button
+                        variant="contained"
+                        color="primary"
+                        onClick={() => setViewDoc(uploadedDocs[idx] ?? null)}
+                      >
+                        View Document
+                      </Button>
+                    </div>
+                  )}
+                </td>
+
+                <Dialog
+                  open={successDialog}
+                  onClose={() => setSuccessDialog(false)}
+                  BackdropProps={{
+                    style: {
+                      backgroundColor: "rgba(0, 0, 0, 0)",
+                    },
+                  }}
+                  PaperProps={{
+                    style: {
+                      boxShadow: "none",
+                      border: "1px solid #ddd",
+                    },
+                  }}
+                >
+                  <DialogTitle>
+                    Upload Berhasil
+                    <button
+                      className="float-right"
+                      onClick={() => setSuccessDialog(false)}
+                    >
+                      <X size={20} />
+                    </button>
+                  </DialogTitle>
+                  <DialogContent dividers>
+                    <Typography>Dokumen berhasil diunggah.</Typography>
+                  </DialogContent>
+                  <DialogActions>
+                    <Button
+                      onClick={() => setSuccessDialog(false)}
+                      color="primary"
+                    >
+                      Close
+                    </Button>
+                  </DialogActions>
+                </Dialog>
+
+                <Dialog
+                  open={!!viewDoc}
+                  onClose={() => setViewDoc(null)}
+                  maxWidth="md"
+                  fullWidth
+                  BackdropProps={{
+                    style: { backgroundColor: "rgba(0,0,0,0)" },
+                  }}
+                  PaperProps={{
+                    style: { boxShadow: "none", border: "1px solid #ddd" },
+                  }}
+                >
+                  <DialogTitle>
+                    Preview Document
+                    <button
+                      className="float-right"
+                      onClick={() => setViewDoc(null)}
+                    >
+                      <X size={20} />
+                    </button>
+                  </DialogTitle>
+                  <DialogContent dividers style={{ minHeight: "400px" }}>
+                    {viewDoc ? (
+                      viewDoc.startsWith("data:application/pdf") ? (
+                        <iframe src={viewDoc} className="h-[70vh] w-full" />
+                      ) : viewDoc.startsWith("data:image/") ? (
+                        <Image
+                          src={viewDoc}
+                          alt="Uploaded"
+                          width={600}
+                          height={400}
+                          className="mx-auto rounded object-contain"
+                          unoptimized
+                        />
+                      ) : (
+                        <Typography>
+                          File tidak dapat dipreview. Silakan download.
+                        </Typography>
+                      )
+                    ) : null}
+                  </DialogContent>
+
+                  <DialogActions>
+                    <Button
+                      onClick={() => {
+                        const idx = Object.entries(uploadedDocs).find(
+                          ([, file]) => file === viewDoc,
+                        )?.[0];
+                        if (idx) handleDeleteFile(Number(idx));
+                      }}
+                      color="error"
+                      variant="outlined"
+                    >
+                      Delete
+                    </Button>
+                    <Button onClick={() => setViewDoc(null)} color="secondary">
+                      Close
+                    </Button>
+                  </DialogActions>
+                </Dialog>
+
+                {/* Kolom Button Add More Info */}
+                <td className="border px-3 py-2 text-center">
+                  <button
+                    className="rounded bg-blue-600 px-3 py-1 text-white hover:bg-blue-700"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      alert(`Add more info untuk ${j.nama}`);
+                    }}
+                  >
+                    Add More Info
+                  </button>
                 </td>
               </tr>
             ))}
