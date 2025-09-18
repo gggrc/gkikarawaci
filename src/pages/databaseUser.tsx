@@ -27,6 +27,7 @@ type Jemaat = {
   kehadiran: string;
   jabatan: string;
   status: string;
+  kehadiranSesi: "Pagi" | "Siang" | "Sore";
 };
 
 type IbadahSelection = {
@@ -36,6 +37,7 @@ type IbadahSelection = {
 };
 
 export default function DatabaseTablePage() {
+  const [filterSessions, setFilterSessions] = useState<string[]>([]);
   const [checkedAll, setCheckedAll] = useState(false);
   const [checkedRows, setCheckedRows] = useState<boolean[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
@@ -91,7 +93,9 @@ export default function DatabaseTablePage() {
               typeof (item as Jemaat).nama === "string" &&
               typeof (item as Jemaat).kehadiran === "string" &&
               typeof (item as Jemaat).jabatan === "string" &&
-              typeof (item as Jemaat).status === "string",
+              typeof (item as Jemaat).status === "string" &&
+              typeof (item as Jemaat).kehadiranSesi === "string" &&
+              ["Pagi","Siang","Sore"].includes((item as Jemaat).kehadiranSesi)
           )
         ) {
           setJemaat(data as Jemaat[]);
@@ -106,12 +110,15 @@ export default function DatabaseTablePage() {
     void fetchData(); 
   }, []);
 
-  const filteredJemaat = jemaat.filter(
-    (j) =>
+  const filteredJemaat = jemaat.filter((j) => {
+    return (
       (filterStatus === "" || j.status === filterStatus) &&
       (filterJabatan === "" || j.jabatan === filterJabatan) &&
-      (filterKehadiran === "" || j.kehadiran === filterKehadiran),
-  );
+      (filterKehadiran === "" || j.kehadiran === filterKehadiran) &&
+      (filterSessions.length === 0 || filterSessions.includes(j.kehadiranSesi))
+    );
+  });
+
 
   useEffect(() => {
     setCheckedRows(new Array(filteredJemaat.length).fill(false));
@@ -239,20 +246,20 @@ export default function DatabaseTablePage() {
       <div className="flex items-center justify-between bg-white px-4 py-3 shadow">
         <div className="flex items-center gap-2">
           <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
+            value={filterKehadiran}
+            onChange={(e) => setFilterKehadiran(e.target.value)}
+            className="rounded border border-indigo-500 bg-indigo-500 px-1 py-1 text-white"
           >
-            <option value="">Semua Status</option>
-            <option value="Aktif">Aktif</option>
-            <option value="Tidak Aktif">Tidak Aktif</option>
+            <option value="">Kehadiran</option>
+            <option value="Hadir">Hadir</option>
+            <option value="Tidak Hadir">Tidak Hadir</option>
           </select>
           <select
             value={filterJabatan}
             onChange={(e) => setFilterJabatan(e.target.value)}
-            className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
+            className="rounded border border-indigo-500 bg-indigo-500 px-1 py-1 text-white"
           >
-            <option value="">Semua Jabatan</option>
+            <option value="">Jabatan</option>
             {[...new Set(jemaat.map((j) => j.jabatan))].map((jab) => (
               <option key={jab} value={jab}>
                 {jab}
@@ -260,14 +267,30 @@ export default function DatabaseTablePage() {
             ))}
           </select>
           <select
-            value={filterKehadiran}
-            onChange={(e) => setFilterKehadiran(e.target.value)}
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="rounded border border-indigo-500 bg-indigo-500 px-1 py-1 text-white"
+          >
+            <option value="">Status</option>
+            <option value="Aktif">Aktif</option>
+            <option value="Tidak Aktif">Tidak Aktif</option>
+          </select>
+          
+          {/* ✅ Dropdown multiple filter sesi */}
+          <select
+            multiple
+            value={filterSessions}
+            onChange={(e) => {
+              const selected = Array.from(e.target.selectedOptions).map((o) => o.value);
+              setFilterSessions(selected);
+            }}
             className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
           >
-            <option value="">Semua Kehadiran</option>
-            <option value="Hadir">Hadir</option>
-            <option value="Tidak Hadir">Tidak Hadir</option>
+            <option value="Pagi">Pagi</option>
+            <option value="Siang">Siang</option>
+            <option value="Sore">Sore</option>
           </select>
+
           <Link
             href="/selectDate"
             className="inline-flex items-center gap-1 rounded bg-indigo-500 px-3 py-1.5 text-sm text-white hover:bg-indigo-800"
@@ -339,6 +362,7 @@ export default function DatabaseTablePage() {
               <th className="border px-3 py-2">Kehadiran</th>
               <th className="border px-3 py-2">Jabatan</th>
               <th className="border px-3 py-2">Status</th>
+              <th className="border px-3 py-2">Sesi Ibadah</th>
             </tr>
           </thead>
           <tbody>
@@ -372,6 +396,7 @@ export default function DatabaseTablePage() {
                 <td className="border px-3 py-2">{j.kehadiran}</td>
                 <td className="border px-3 py-2">{j.jabatan}</td>
                 <td className="border px-3 py-2">{j.status}</td>
+                <td className="border px-3 py-2">{j.kehadiranSesi}</td>
               </tr>
             ))}
           </tbody>
@@ -413,6 +438,9 @@ export default function DatabaseTablePage() {
               </p>
               <p>
                 <strong>Status:</strong> {selectedRow.status}
+              </p>
+              <p>
+                <strong>Sesi Ibadah:</strong> {selectedRow.kehadiranSesi}
               </p>
             </>
           )}

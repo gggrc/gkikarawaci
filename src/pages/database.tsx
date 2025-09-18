@@ -23,6 +23,10 @@ import { jsPDF } from "jspdf";
 import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
 
+import Menu from "@mui/material/Menu";
+import Checkbox from "@mui/material/Checkbox";
+
+
 type Jemaat = {
   id: number;
   foto: string;
@@ -35,6 +39,7 @@ type Jemaat = {
   keluarga?: string;
   email?: string;
   telepon?: string;
+  kehadiranSesi: string;
 };
 
 type IbadahSelection = {
@@ -63,6 +68,8 @@ export const loadDocsFromStorage = (): Record<number, string> => {
 };
 
 export default function DatabaseTablePage() {
+  const [filterSessions, setFilterSessions] = useState<string[]>([]);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
   const [checkedAll, setCheckedAll] = useState(false);
   const [checkedRows, setCheckedRows] = useState<boolean[]>([]);
   const [openDialog, setOpenDialog] = useState(false);
@@ -79,6 +86,9 @@ export default function DatabaseTablePage() {
   const [selectedIbadah, setSelectedIbadah] = useState<IbadahSelection | null>(
     null,
   );
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
 
   const [successDialog, setSuccessDialog] = useState(false);
   const [uploadedDocs, setUploadedDocs] = useState<Record<number, string>>({});
@@ -102,6 +112,7 @@ export default function DatabaseTablePage() {
     keluarga: "",
     email: "",
     telepon: "",
+    kehadiranSesi: "",
   });
 
   const handleChange = (
@@ -191,9 +202,21 @@ export default function DatabaseTablePage() {
     return (
       (filterStatus === "" || j.status === filterStatus) &&
       (filterJabatan === "" || j.jabatan === filterJabatan) &&
-      (filterKehadiran === "" || j.kehadiran === filterKehadiran)
+      (filterKehadiran === "" || j.kehadiran === filterKehadiran) &&
+      (filterSessions.length === 0 || filterSessions.includes(j.kehadiranSesi))
     );
   });
+  
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filterStatus, filterJabatan, filterKehadiran, filterSessions]);
+
+
+  const indexOfLast = currentPage * itemsPerPage;
+  const indexOfFirst = indexOfLast - itemsPerPage;
+  const currentData = filteredJemaat.slice(indexOfFirst, indexOfLast);
+  const totalPages = Math.ceil(filteredJemaat.length / itemsPerPage);
+
 
   useEffect(() => {
     setCheckedRows(new Array(filteredJemaat.length).fill(false));
@@ -336,6 +359,7 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
       keluarga: "",
       email: "",
       telepon: "",
+      kehadiranSesi:"",
     });
   }
   setOpen(true);
@@ -397,20 +421,20 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
       <div className="flex items-center justify-between bg-white px-4 py-3 shadow">
         <div className="flex items-center gap-2">
           <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
+            value={filterKehadiran}
+            onChange={(e) => setFilterKehadiran(e.target.value)}
+            className="rounded border border-indigo-500 bg-indigo-500 px-1 py-1 text-white"
           >
-            <option value="">Semua Status</option>
-            <option value="Aktif">Aktif</option>
-            <option value="Tidak Aktif">Tidak Aktif</option>
+            <option value="">Kehadiran</option>
+            <option value="Hadir">Hadir</option>
+            <option value="Tidak Hadir">Tidak Hadir</option>
           </select>
           <select
             value={filterJabatan}
             onChange={(e) => setFilterJabatan(e.target.value)}
-            className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
+            className="rounded border border-indigo-500 bg-indigo-500 px-1 py-1 text-white"
           >
-            <option value="">Semua Jabatan</option>
+            <option value="">Jabatan</option>
             {[...new Set(jemaat.map((j) => j.jabatan))].map((jab) => (
               <option key={jab} value={jab}>
                 {jab}
@@ -418,29 +442,61 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
             ))}
           </select>
           <select
-            value={filterKehadiran}
-            onChange={(e) => setFilterKehadiran(e.target.value)}
-            className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
+            value={filterStatus}
+            onChange={(e) => setFilterStatus(e.target.value)}
+            className="rounded border border-indigo-500 bg-indigo-500 px-1 py-1 text-white"
           >
-            <option value="">Semua Kehadiran</option>
-            <option value="Hadir">Hadir</option>
-            <option value="Tidak Hadir">Tidak Hadir</option>
+            <option value="">Status</option>
+            <option value="Aktif">Aktif</option>
+            <option value="Tidak Aktif">Tidak Aktif</option>
           </select>
+
+          {/* 🆕 Filter Sesi Ibadah dengan checkbox dropdown */}
+          <div>
+            <Button
+              onClick={(e) => setAnchorEl(e.currentTarget)}
+              className="rounded border border-indigo-500 bg-indigo-500 px-2 py-1 text-white"
+            >
+              Sesi Ibadah
+            </Button>
+            <Menu
+              anchorEl={anchorEl}
+              open={Boolean(anchorEl)}
+              onClose={() => setAnchorEl(null)}
+            >
+              {["Pagi", "Siang", "Sore"].map((sesi) => (
+                <MenuItem
+                  key={sesi}
+                  onClick={() => {
+                    setFilterSessions((prev) =>
+                      prev.includes(sesi)
+                        ? prev.filter((v) => v !== sesi) 
+                        : [...prev, sesi]               
+                    );
+                  }}
+                >
+                  <Checkbox checked={filterSessions.includes(sesi)} />
+                  {sesi}
+                </MenuItem>
+              ))}
+            </Menu>
+          </div>
+
           <Link
             href="/selectDate"
-            className="inline-flex items-center gap-1 rounded bg-indigo-500 px-3 py-1.5 text-sm text-white hover:bg-indigo-800"
+            className="inline-flex items-center gap-1 rounded bg-indigo-500 px-3 py-2 text-sm text-white hover:bg-indigo-800"
           >
             <Plus size={14} /> Lihat Tanggal Lain
           </Link>
           <button
             onClick={() => setOpenDialog(true)}
-            className="inline-flex items-center gap-1 rounded border bg-white px-3 py-1.5 text-sm text-black hover:bg-gray-700 hover:text-white"
+            className="inline-flex items-center gap-1 rounded border bg-white px-3 py-2 text-sm text-black hover:bg-gray-700 hover:text-white"
           >
             <Download size={14} /> Download
           </button>
           <Link
             href="/statistic"
-            className="inline-flex items-center gap-1 rounded border bg-white px-3 py-1.5 text-sm text-black hover:bg-gray-700 hover:text-white"
+            className="inline-flex items-center gap-1 rounded border bg-white px-3 py-2 text-sm text-black hover:bg-gray-700 hover:text-white"
           >
             Lihat Statistik
           </Link>
@@ -505,12 +561,13 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
               <th className="border px-3 py-2">Kehadiran</th>
               <th className="border px-3 py-2">Jabatan</th>
               <th className="border px-3 py-2">Status</th>
+              <th className="border px-3 py-2">Sesi Ibadah</th>
               <th className="border px-3 py-2">Dokumen</th>{" "}
               <th className="border px-3 py-2">Add more Info</th>{" "}
             </tr>
           </thead>
           <tbody>
-            {filteredJemaat.map((j, idx) => (
+            {currentData.map((j, idx) => (
               <tr
                 key={j.nama + idx}
                 className="cursor-pointer transition odd:bg-purple-50 hover:bg-indigo-100"
@@ -526,7 +583,7 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
                     onChange={() => toggleRow(idx)}
                   />
                 </td>
-                <td className="border px-3 py-2">{idx + 1}.</td>
+                <td className="border px-3 py-2">{indexOfFirst + idx + 1}.</td>
                 <td className="border px-3 py-2">{j.id}</td> 
                 <td className="border px-3 py-2">
                   <Image
@@ -603,6 +660,28 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
                     </TextField>
                   ) : (
                     j.status
+                  )}
+                </td>
+
+                {/* ✅ Kolom baru sesi ibadah */}
+                <td className="border px-3 py-2">
+                  {editMode && draftJemaat[idx] ? (
+                    <TextField
+                      select
+                      size="small"
+                      value={draftJemaat[idx].kehadiranSesi}
+                      onChange={(e) => {
+                        const updated = [...draftJemaat];
+                        updated[idx]!.kehadiranSesi = e.target.value;
+                        setDraftJemaat(updated);
+                      }}
+                    >
+                      <MenuItem value="Pagi">Pagi</MenuItem>
+                      <MenuItem value="Siang">Siang</MenuItem>
+                      <MenuItem value="Sore">Sore</MenuItem>
+                    </TextField>
+                  ) : (
+                    j.kehadiranSesi
                   )}
                 </td>
 
@@ -821,6 +900,38 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
             ))}
           </tbody>
         </table>
+        {/* PAGINATION */}
+        <div className="flex justify-center items-center gap-2 my-4">
+          <button
+            disabled={currentPage === 1}
+            onClick={() => setCurrentPage((p) => p - 1)}
+            className="rounded border border-gray-400 px-2 py-1 text-sm disabled:opacity-50"
+          >
+            Prev
+          </button>
+
+          {Array.from({ length: totalPages }, (_, i) => (
+            <button
+              key={i}
+              onClick={() => setCurrentPage(i + 1)}
+              className={`rounded border px-3 py-1 text-sm ${
+                currentPage === i + 1
+                  ? "bg-indigo-500 text-white border-indigo-500"
+                  : "border-gray-400"
+              }`}
+            >
+              {i + 1}
+            </button>
+          ))}
+
+          <button
+            disabled={currentPage === totalPages}
+            onClick={() => setCurrentPage((p) => p + 1)}
+            className="rounded border border-gray-400 px-2 py-1 text-sm disabled:opacity-50"
+          >
+            Next
+          </button>
+        </div>
       </div>
 
       {/* DRAWER */}

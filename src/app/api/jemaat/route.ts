@@ -4,12 +4,13 @@ import { NextResponse } from "next/server";
 // 1. Tipe data
 // ----------------------
 export type Jemaat = {
-  id: string; // tambahkan id unik
+  id: string;                             // id unik
   foto: string;
   nama: string;
   kehadiran: "Hadir" | "Tidak Hadir";
   jabatan: string;
   status: "Aktif" | "Tidak Aktif";
+  kehadiranSesi: "Pagi" | "Siang" | "Sore"; // ✅ tambahkan field sesi ibadah
 };
 
 // ----------------------
@@ -18,21 +19,17 @@ export type Jemaat = {
 function isJemaat(obj: unknown): obj is Jemaat {
   if (typeof obj !== "object" || obj === null) return false;
 
+  const o = obj as Record<string, unknown>;
   return (
-    "id" in obj &&
-    typeof (obj as { id: unknown }).id === "string" &&
-    "foto" in obj &&
-    typeof (obj as { foto: unknown }).foto === "string" &&
-    "nama" in obj &&
-    typeof (obj as { nama: unknown }).nama === "string" &&
-    "kehadiran" in obj &&
-    ((obj as { kehadiran: unknown }).kehadiran === "Hadir" ||
-      (obj as { kehadiran: unknown }).kehadiran === "Tidak Hadir") &&
-    "jabatan" in obj &&
-    typeof (obj as { jabatan: unknown }).jabatan === "string" &&
-    "status" in obj &&
-    ((obj as { status: unknown }).status === "Aktif" ||
-      (obj as { status: unknown }).status === "Tidak Aktif")
+    typeof o.id === "string" &&
+    typeof o.foto === "string" &&
+    typeof o.nama === "string" &&
+    (o.kehadiran === "Hadir" || o.kehadiran === "Tidak Hadir") &&
+    typeof o.jabatan === "string" &&
+    (o.status === "Aktif" || o.status === "Tidak Aktif") && // ✅ pastikan ada &&
+    (o.kehadiranSesi === "Pagi" ||
+     o.kehadiranSesi === "Siang" ||
+     o.kehadiranSesi === "Sore")
   );
 }
 
@@ -41,7 +38,7 @@ function isJemaatArray(data: unknown): data is Jemaat[] {
 }
 
 // ----------------------
-// 3. Data awal
+// 3. Data awal (contoh dummy)
 // ----------------------
 let jemaat: Jemaat[] = [
   {
@@ -51,6 +48,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Hadir",
     jabatan: "Pendeta",
     status: "Aktif",
+    kehadiranSesi: "Pagi",
   },
   {
     id: "GKI_02",
@@ -59,6 +57,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Hadir",
     jabatan: "Pengurus A",
     status: "Aktif",
+    kehadiranSesi: "Siang",
   },
   {
     id: "GKI_03",
@@ -67,6 +66,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Tidak Hadir",
     jabatan: "Pengurus B",
     status: "Aktif",
+    kehadiranSesi: "Pagi",
   },
   {
     id: "GKI_04",
@@ -75,6 +75,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Hadir",
     jabatan: "Pengurus C",
     status: "Aktif",
+    kehadiranSesi: "Sore",
   },
   {
     id: "GKI_05",
@@ -83,6 +84,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Hadir",
     jabatan: "Jemaat",
     status: "Tidak Aktif",
+    kehadiranSesi: "Sore",
   },
   {
     id: "GKI_06",
@@ -91,6 +93,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Tidak Hadir",
     jabatan: "Jemaat",
     status: "Aktif",
+    kehadiranSesi: "Pagi",
   },
   {
     id: "GKI_07",
@@ -99,6 +102,7 @@ let jemaat: Jemaat[] = [
     kehadiran: "Hadir",
     jabatan: "Jemaat",
     status: "Aktif",
+    kehadiranSesi: "Siang",
   },
   {
     id: "GKI_08",
@@ -107,6 +111,70 @@ let jemaat: Jemaat[] = [
     kehadiran: "Hadir",
     jabatan: "Jemaat",
     status: "Tidak Aktif",
+    kehadiranSesi: "Pagi",
+  },
+  {
+    id: "GKI_09",
+    foto: "/avatar9.png",
+    nama: "Kathleen Jo",
+    kehadiran: "Hadir",
+    jabatan: "Pengurus A",
+    status: "Aktif",
+    kehadiranSesi: "Siang",
+  },
+  {
+    id: "GKI_10",
+    foto: "/avatar10.png",
+    nama: "Carl Stevens",
+    kehadiran: "Tidak Hadir",
+    jabatan: "Pengurus B",
+    status: "Aktif",
+    kehadiranSesi: "Pagi",
+  },
+  {
+    id: "GKI_11",
+    foto: "/avatar11.png",
+    nama: "Benaya Suwilis",
+    kehadiran: "Hadir",
+    jabatan: "Pengurus C",
+    status: "Aktif",
+    kehadiranSesi: "Sore",
+  },
+  {
+    id: "GKI_12",
+    foto: "/avatar12.png",
+    nama: "Siti Bandarwih",
+    kehadiran: "Hadir",
+    jabatan: "Jemaat",
+    status: "Tidak Aktif",
+    kehadiranSesi: "Sore",
+  },
+  {
+    id: "GKI_13",
+    foto: "/avatar13.png",
+    nama: "Lia Manoban",
+    kehadiran: "Tidak Hadir",
+    jabatan: "Jemaat",
+    status: "Aktif",
+    kehadiranSesi: "Pagi",
+  },
+  {
+    id: "GKI_14",
+    foto: "/avatar14.png",
+    nama: "Tofik",
+    kehadiran: "Hadir",
+    jabatan: "Jemaat",
+    status: "Aktif",
+    kehadiranSesi: "Siang",
+  },
+  {
+    id: "GKI_15",
+    foto: "/avatar15.png",
+    nama: "Adi",
+    kehadiran: "Hadir",
+    jabatan: "Jemaat",
+    status: "Tidak Aktif",
+    kehadiranSesi: "Pagi",
   },
 ];
 
