@@ -134,12 +134,12 @@ export default function DatabaseTablePage() {
 };
 
   // saat upload
-  const handleFileUpload = (idx: number, file: File) => {
+  const handleFileUpload = (id: number, file: File) => {
     const reader = new FileReader();
     reader.onload = () => {
       const base64 = reader.result as string;
       setUploadedDocs((prev) => {
-        const updated = { ...prev, [idx]: base64 };
+        const updated = { ...prev, [id]: base64 };
         saveDocsToStorage(updated);
         return updated;
       });
@@ -149,10 +149,10 @@ export default function DatabaseTablePage() {
   };
 
   // saat delete
-  const handleDeleteFile = (idx: number) => {
+  const handleDeleteFile = (id: number) => {
     setUploadedDocs((prev) => {
       const updated = { ...prev };
-      delete updated[idx];
+      delete updated[id];
       saveDocsToStorage(updated);
       return updated;
     });
@@ -206,7 +206,7 @@ export default function DatabaseTablePage() {
       (filterSessions.length === 0 || filterSessions.includes(j.kehadiranSesi))
     );
   });
-  
+
   useEffect(() => {
     setCurrentPage(1);
   }, [filterStatus, filterJabatan, filterKehadiran, filterSessions]);
@@ -687,7 +687,7 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
 
                 {/* Kolom Upload Dokumen */}
                 <td className="border px-3 py-2 text-center">
-                  {!uploadedDocs[idx] ? (
+                  {!uploadedDocs[j.id] ? (
                     <label className="inline-block cursor-pointer rounded bg-green-600 px-3 py-1 text-white hover:bg-green-800">
                       Add Document
                       <input
@@ -696,7 +696,7 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
                         accept=".pdf,.doc,.docx,.jpg,.png"
                         onChange={(e) => {
                           const file = e.target.files?.[0];
-                          if (file) handleFileUpload(idx, file);
+                          if (file) handleFileUpload(j.id, file);
                         }}
                       />
                     </label>
@@ -705,7 +705,7 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
                       <Button
                         variant="contained"
                         color="primary"
-                        onClick={() => setViewDoc(uploadedDocs[idx] ?? null)}
+                        onClick={() => setViewDoc(uploadedDocs[j.id] ?? null)}
                       >
                         View Document
                       </Button>
@@ -795,10 +795,10 @@ const handleOpenDrawer = (jemaat?: Jemaat) => {
                   <DialogActions>
                     <Button
                       onClick={() => {
-                        const idx = Object.entries(uploadedDocs).find(
+                        const id = Object.entries(uploadedDocs).find(
                           ([, file]) => file === viewDoc,
                         )?.[0];
-                        if (idx) handleDeleteFile(Number(idx));
+                        if (id) handleDeleteFile(Number(id));
                       }}
                       color="error"
                       variant="outlined"
