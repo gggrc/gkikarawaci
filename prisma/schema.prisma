@@ -1,8 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
-    provider = "prisma-client-js"
+  provider = "prisma-client-js"
 }
 
 datasource db {
@@ -10,35 +7,34 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-
 model Ibadah {
-  id_ibadah     String      @id
+  id_ibadah       String      @id
   jenis_kebaktian String
-  sesi_ibadah    Int
-  tanggal_ibadah DateTime
-
-  Kehadiran     Kehadiran[]
+  sesi_ibadah     Int
+  tanggal_ibadah  DateTime
+  Kehadiran       Kehadiran[]
 }
 
 model Kehadiran {
-  id_kehadiran String  @id
+  id_kehadiran String @id
   id_ibadah    String
   id_jemaat    String
-
-  ibadah Ibadah @relation(fields: [id_ibadah], references: [id_ibadah])
-  jemaat Jemaat @relation(fields: [id_jemaat], references: [id_jemaat])
+  ibadah       Ibadah @relation(fields: [id_ibadah], references: [id_ibadah])
+  jemaat       Jemaat @relation(fields: [id_jemaat], references: [id_jemaat])
 }
 
 model Jemaat {
-  id_jemaat    String   @id
-  name         String
-  jabatan      String
-  status       String
+  id_jemaat     String      @id
+  name          String
+  jabatan       String
+  status        String
   tanggal_lahir DateTime
-  gender       String
-  email        String
-
-  kehadiran    Kehadiran[]
+  gender        String
+  email         String
+  dateOfBirth   DateTime
+  age           Int
+  handphone     String
+  kehadiran     Kehadiran[]
 }
 
 model Statistics {
@@ -48,13 +44,13 @@ model Statistics {
 }
 
 model User {
-  user_id      Int      @id @default(autoincrement())
-  clerkId      String   @unique 
-  nama         String
+  user_id       Int      @id @default(autoincrement())
+  clerkId       String   @unique
+  nama          String
   tanggal_lahir DateTime
-  gender       String
-  email        String
-  jabatan      String
-  isVerified   Boolean
-  role         String
+  gender        String  @default("unknown")
+  email         String
+  jabatan       String
+  isVerified    Boolean
+  role          String
 }
