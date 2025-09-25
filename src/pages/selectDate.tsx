@@ -1,9 +1,17 @@
 "use client";
+import React from "react";
 import { useState } from "react";
 import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/router";
 import { UserButton, SignedIn } from "@clerk/nextjs";
+
+// Extend Window type for __addEventDateKey
+declare global {
+  interface Window {
+    __addEventDateKey?: string;
+  }
+}
 
 import Drawer from "@mui/material/Drawer";
 import Accordion from "@mui/material/Accordion";
@@ -29,8 +37,33 @@ const monthNames: string[] = [
 
 export default function DatabasePage() {
   const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [selectedDate, setSelectedDate] = useState<Date | null>(null);
+  const [selectedDates, setSelectedDates] = useState<Date[]>([]);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
+  // For each selected date, store selected events: { 'YYYY-MM-DD': [event1, event2] }
+  const [selectedEventsByDate, setSelectedEventsByDate] = useState<Record<string, string[]>>({});
+  // Local event state: Record<string, string[]>
+  const [events, setEvents] = useState<Record<string, string[]>>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = localStorage.getItem('events');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored) as unknown;
+          if (parsed && typeof parsed === 'object') {
+            return parsed as Record<string, string[]>;
+          }
+        } catch {
+          // ignore parse error
+        }
+      }
+      return {};
+    }
+    return {};
+  });
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [newEventName, setNewEventName] = useState('');
+  // For event deletion UI: which date and event is being deleted
+  const [deleteTarget, setDeleteTarget] = useState<{dateKey: string, event: string} | null>(null);
+  const [addEventDateKey, setAddEventDateKey] = useState<string | null>(null);
 
   const today = new Date();
 
@@ -42,29 +75,96 @@ export default function DatabasePage() {
     return new Date(year, month, 1).getDay();
   };
 
+  // Multi-select date logic
   const handleSelectDate = (day: number, month: number) => {
     setSelectedMonth(null);
-    setSelectedDate(new Date(year, month, day));
+    const clickedDate = new Date(year, month, day);
+    const key = clickedDate.toISOString().slice(0,10);
+    setSelectedDates(prev => {
+      const exists = prev.some(d => d.toISOString().slice(0,10) === key);
+      if (exists) {
+        // Remove date if already selected
+        return prev.filter(d => d.toISOString().slice(0,10) !== key);
+      } else {
+        // Add date
+        // Check if this date is Saturday or Sunday
+        const dayOfWeek = clickedDate.getDay(); // 0 = Sunday, 6 = Saturday
+        let defaultEvents: string[] = [];
+        if (dayOfWeek === 5) {
+          // Saturday
+          defaultEvents = [
+            "Ibadah Dewasa : Sabtu, 17:00",
+            "Ibadah Lansia : Sabtu, 10:00"
+          ];
+        } else if (dayOfWeek === 6) {
+          // Sunday
+          defaultEvents = [
+            "Kebaktian I : 07:00",
+            "Kebaktian II : 10:00",
+            "Kebaktian III : 17:00",
+            "Ibadah Anak : Minggu, 10:00",
+            "Ibadah Remaja : Minggu, 10:00",
+            "Ibadah Pemuda : Minggu, 10:00"
+          ];
+        }
+        // Only add defaults if not already present
+        setEvents(prevEvents => {
+          const existing = prevEvents[key] ?? [];
+          const merged = [...existing];
+          defaultEvents.forEach(ev => {
+            if (!existing.includes(ev)) merged.push(ev);
+          });
+          if (merged.length > 0) {
+            const updated = { ...prevEvents, [key]: merged };
+            localStorage.setItem('events', JSON.stringify(updated));
+            return updated;
+          }
+          return prevEvents;
+        });
+        return [...prev, clickedDate];
+      }
+    });
   };
 
   const handleSelectMonth = (month: number) => {
-    setSelectedDate(null);
     setSelectedMonth(month);
+  };
+
+  // Delete event logic for multi-date selection
+  const handleDeleteEvent = () => {
+    if (!deleteTarget) return;
+    const { dateKey, event } = deleteTarget;
+    const filtered = (events[dateKey] ?? []).filter((ev: string) => ev !== event);
+    const updated = { ...events, [dateKey]: filtered };
+    setEvents(updated);
+    localStorage.setItem('events', JSON.stringify(updated));
+    setDeleteTarget(null);
+    setSelectedEventsByDate(prev => {
+      const current = prev[dateKey] ?? [];
+      return { ...prev, [dateKey]: current.filter((e: string) => e !== event) };
+    });
   };
 
   const router = useRouter();
 
   const handleNext = () => {
-    if (selectedDate === null && selectedMonth === null) {
-      return alert("Pilih bulan atau tanggal dulu!");
+    if (!selectedDates.length && selectedMonth === null) {
+      return alert("Pilih tanggal dulu!");
     }
-
+    // Validate at least one event selected for each date
+    for (const date of selectedDates) {
+      const key = date.toISOString().slice(0,10);
+      if (!selectedEventsByDate[key]?.length) {
+        return alert(`Pilih event untuk ${date.toLocaleDateString("id-ID")}`);
+      }
+    }
     localStorage.setItem(
       "ibadahSelection",
       JSON.stringify({
         year,
         selectedMonth,
-        selectedDate,
+        selectedDates: selectedDates.map(d => d.toISOString().slice(0,10)),
+        selectedEventsByDate,
       }),
     );
     void router.push("/database");
@@ -72,8 +172,46 @@ export default function DatabasePage() {
 
   const [open, setOpen] = useState(false);
 
+  // Add Event Modal logic (fix possible undefined)
+  const handleAddEvent = () => {
+    if (!selectedDates.length) return alert('Pilih tanggal dulu!');
+    const lastDate = selectedDates[selectedDates.length-1];
+    if (!lastDate) return;
+    const key = lastDate.toISOString().slice(0,10);
+    const updated = { ...events, [key]: [...(events[key]??[]), newEventName.trim()] };
+    setEvents(updated);
+    localStorage.setItem('events', JSON.stringify(updated));
+    setShowEventModal(false);
+    setNewEventName('');
+  };
+
   return (
     <div className="flex min-h-screen flex-col bg-gray-200">
+      {/* Event Modal */}
+      {showEventModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+          <div className="rounded-lg bg-white p-6 shadow-lg w-80">
+            <h2 className="mb-4 text-lg font-bold">Add Event</h2>
+            <input
+              type="text"
+              className="w-full rounded border px-3 py-2 mb-4"
+              placeholder="Event name"
+              value={newEventName}
+              onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEventName(e.target.value)}
+            />
+            <div className="flex justify-end space-x-2">
+              <button
+                className="px-4 py-2 rounded bg-gray-300"
+                onClick={() => { setShowEventModal(false); setNewEventName(''); }}
+              >Cancel</button>
+              <button
+                className="px-4 py-2 rounded bg-indigo-600 text-white"
+                onClick={handleAddEvent}
+              >Add</button>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Header */}
       <div className="flex items-center justify-between bg-indigo-900 px-4 py-2 text-white">
         <div className="flex items-center space-x-2">
@@ -226,16 +364,10 @@ export default function DatabasePage() {
               <div className="grid grid-cols-7 gap-1 text-center text-sm">
                 {daysArray.map((day, i) => {
                   if (day === null) return <div key={i}></div>;
-
                   const thisDate = new Date(year, monthIndex, day);
                   const isFuture = thisDate > today;
-
-                  const isSelected =
-                    selectedDate &&
-                    selectedDate.getDate() === day &&
-                    selectedDate.getMonth() === monthIndex &&
-                    selectedDate.getFullYear() === year;
-
+                  const key = thisDate.toISOString().slice(0,10);
+                  const isSelected = selectedDates.some(d => d.toISOString().slice(0,10) === key);
                   return (
                     <div
                       key={i}
@@ -258,26 +390,185 @@ export default function DatabasePage() {
         })}
       </div>
 
-      {/* Info tanggal/bulan terpilih */}
-      {(selectedDate ?? selectedMonth !== null) && (
-        <div className="mb-6 flex items-center justify-between px-6">
-          <p className="ml-130 font-bold">
-            {selectedDate
-              ? `Tanggal terpilih: ${selectedDate.toLocaleDateString("id-ID", {
-                  day: "2-digit",
-                  month: "long",
-                  year: "numeric",
-                })}`
-              : selectedMonth !== null
-                ? `Bulan terpilih: ${monthNames[selectedMonth]} ${year}`
-                : ""}
-          </p>
-          <button
-            onClick={handleNext}
-            className="rounded-xl bg-indigo-600 px-6 py-2 font-semibold text-white shadow-lg hover:bg-indigo-700"
-          >
-            Next →
-          </button>
+      {/* Info tanggal/bulan terpilih & Event List (single block, cleaned) */}
+      {selectedDates.length > 0 && (
+        <div className="mb-6 flex flex-col gap-2 px-6">
+          <div className="flex items-center justify-between">
+            <p className="ml-130 font-bold">
+              {selectedDates.length > 0
+                ? `Tanggal terpilih: ${selectedDates.map((d: Date) => d.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })).join(", ")}`
+                : selectedMonth !== null
+                  ? `Bulan terpilih: ${monthNames[selectedMonth]} ${year}`
+                  : ""}
+            </p>
+          </div>
+          {/* Event List for each selected date, with event selection */}
+          {selectedDates.map((date: Date) => {
+            const key = date.toISOString().slice(0,10);
+            return (
+              <div key={key} className="flex flex-col gap-2 mt-2 border-b pb-2">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-semibold">Events for {date.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })}:</span>
+                  <button
+                    className="rounded bg-green-600 px-3 py-1 text-white text-sm font-semibold shadow hover:bg-green-700"
+                    onClick={() => {
+                      setShowEventModal(true);
+                      setNewEventName("");
+                      setAddEventDateKey(key);
+                    }}
+                  >+ Add Events</button>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  {(events[key] ?? []).map((ev: string, idx: number) => (
+                    <div key={ev+idx} className="flex items-center gap-1">
+                      <button
+                        className={`px-3 py-1 rounded ${selectedEventsByDate[key]?.includes(ev) ? 'bg-indigo-600 text-white' : 'bg-gray-200'}`}
+                        onClick={() => {
+                          setSelectedEventsByDate(prev => {
+                            const current = prev[key] ?? [];
+                            if (current.includes(ev)) {
+                              // Remove event
+                              return { ...prev, [key]: current.filter((e: string) => e !== ev) };
+                            } else {
+                              // Add event
+                              return { ...prev, [key]: [...current, ev] };
+                            }
+                          });
+                        }}
+                      >{ev}</button>
+                      <button
+                        className="px-2 py-1 rounded bg-red-500 text-white text-xs"
+                        title="Delete Event"
+                        onClick={() => setDeleteTarget({ dateKey: key, event: ev })}
+                      >🗑</button>
+                    </div>
+                  ))}
+                  {!(events[key] ?? []).length && (
+                    <span className="text-gray-500">No events yet.</span>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex justify-end mt-2">
+            <button
+              onClick={handleNext}
+              className="rounded-xl bg-indigo-600 px-6 py-2 font-semibold text-white shadow-lg hover:bg-indigo-700"
+            >
+              Next →
+            </button>
+          </div>
+          {/* Delete Event Modal */}
+          {deleteTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+              <div className="rounded-lg bg-white p-6 shadow-lg w-80">
+                <h2 className="mb-4 text-lg font-bold">Delete Event</h2>
+                <p>Are you sure you want to delete <b>{deleteTarget.event}</b> from <b>{selectedDates.find(d => d.toISOString().slice(0,10) === deleteTarget.dateKey)?.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })}</b>?</p>
+                <div className="flex justify-end space-x-2 mt-4">
+                  <button
+                    className="px-4 py-2 rounded bg-gray-300"
+                    onClick={() => setDeleteTarget(null)}
+                  >Cancel</button>
+                  <button
+                    className="px-4 py-2 rounded bg-red-600 text-white"
+                    onClick={handleDeleteEvent}
+                  >Delete</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Add Event Modal (per date) */}
+          {showEventModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+              <div className="rounded-lg bg-white p-6 shadow-lg w-80">
+                <h2 className="mb-4 text-lg font-bold">Add Event</h2>
+                <input
+                  type="text"
+                  className="w-full rounded border px-3 py-2 mb-4"
+                  placeholder="Event name"
+                  value={newEventName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEventName(e.target.value)}
+                />
+                <div className="flex justify-end space-x-2">
+                  <button
+                    className="px-4 py-2 rounded bg-gray-300"
+                    onClick={() => { setShowEventModal(false); setNewEventName(''); }}
+                  >Cancel</button>
+                  <button
+                    className="px-4 py-2 rounded bg-indigo-600 text-white"
+                    onClick={() => {
+                      const key = addEventDateKey ?? (selectedDates[selectedDates.length-1]?.toISOString().slice(0,10));
+                      if (!key || typeof key !== 'string' || !newEventName.trim()) return;
+                      const updated = { ...events, [key]: [...(events[key]??[]), newEventName.trim()] };
+                      setEvents(updated);
+                      localStorage.setItem('events', JSON.stringify(updated));
+                      setShowEventModal(false);
+                      setNewEventName('');
+                      setAddEventDateKey(null);
+                    }}
+                  >Add</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {selectedDates.length > 0 && (
+        <div className="mb-6 flex flex-col gap-2 px-6">
+          
+          {/* Delete Event Modal */}
+          {deleteTarget && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+              <div className="rounded-lg bg-white p-6 shadow-lg w-80">
+                <h2 className="mb-4 text-lg font-bold">Delete Event</h2>
+                <p>Are you sure you want to delete <b>{deleteTarget.event}</b> from <b>{selectedDates.find(d => d.toISOString().slice(0,10) === deleteTarget.dateKey)?.toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })}</b>?</p>
+                <div className="flex justify-end space-x-2 mt-4">
+                  <button
+                    className="px-4 py-2 rounded bg-gray-300"
+                    onClick={() => setDeleteTarget(null)}
+                  >Cancel</button>
+                  <button
+                    className="px-4 py-2 rounded bg-red-600 text-white"
+                    onClick={handleDeleteEvent}
+                  >Delete</button>
+                </div>
+              </div>
+            </div>
+          )}
+          {/* Add Event Modal (per date) */}
+          {showEventModal && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-40">
+              <div className="rounded-lg bg-white p-6 shadow-lg w-80">
+                <h2 className="mb-4 text-lg font-bold">Add Event</h2>
+                <input
+                  type="text"
+                  className="w-full rounded border px-3 py-2 mb-4"
+                  placeholder="Event name"
+                  value={newEventName}
+                  onChange={(e: React.ChangeEvent<HTMLInputElement>) => setNewEventName(e.target.value)}
+                />
+                <div className="flex justify-end space-x-2">
+                  <button
+                    className="px-4 py-2 rounded bg-gray-300"
+                    onClick={() => { setShowEventModal(false); setNewEventName(''); }}
+                  >Cancel</button>
+                  <button
+                    className="px-4 py-2 rounded bg-indigo-600 text-white"
+                    onClick={() => {
+                      const key = addEventDateKey ?? (selectedDates[selectedDates.length-1]?.toISOString().slice(0,10));
+                      if (!key || typeof key !== 'string' || !newEventName.trim()) return;
+                      const updated = { ...events, [key]: [...(events[key]??[]), newEventName.trim()] };
+                      setEvents(updated);
+                      localStorage.setItem('events', JSON.stringify(updated));
+                      setShowEventModal(false);
+                      setNewEventName('');
+                      setAddEventDateKey(null);
+                    }}
+                  >Add</button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>
