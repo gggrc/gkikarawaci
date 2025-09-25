@@ -29,7 +29,7 @@ interface ClerkUser {
   first_name?: string | null;
   last_name?: string | null;
   email_addresses?: ClerkEmailAddress[] | null;
-  gender?: string | null;
+  gender?: string | null; 
 }
 interface ClerkUserDeleted { id: string; }
 type ClerkWebhookData = ClerkUser | ClerkUserDeleted;
@@ -114,6 +114,7 @@ export async function POST(req: Request): Promise<Response> {
         const userData = eventData as ClerkUser;
         const email = primaryEmail(userData);
         const name = fullName(userData);
+        const genderValue = userData.gender ?? "unknown"; // Menggunakan "unknown" jika tidak ada
 
         // NOTE: saya pakai cast ke Prisma.*Input untuk menghindari type-checking mismatch
         // Jika model Prisma-mu punya field unique selain 'clerkId', ganti di sini.
@@ -122,17 +123,17 @@ export async function POST(req: Request): Promise<Response> {
           update: {
             nama: name,
             email,
-            gender: userData.gender ?? "",
+            gender: genderValue, // Menggunakan nilai yang diperbaiki
           } as unknown as Prisma.UserUpdateInput,
           create: {
             clerkId: userData.id,
             nama: name,
             email,
-            gender: userData.gender ?? "",
+            gender: genderValue, // Menggunakan nilai yang diperbaiki
             jabatan: "Jemaat",
             isVerified: true,
             role: "user",
-            tanggal_lahir: new Date(),
+            tanggal_lahir: null, // Menggunakan null untuk tanggal_lahir yang opsional
           } as unknown as Prisma.UserCreateInput,
         });
 

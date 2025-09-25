@@ -1,14 +1,21 @@
-import { createClient } from '@supabase/supabase-js'
-import type { Database } from "src/lib/database.types"
+import { createClient } from "@supabase/supabase-js";
+import type { Database } from "src/types/database.types"; // pastikan path sesuai
 
-const supabaseUrl = process.env.SUPABASE_URL!
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY!
+const supabaseUrl = process.env.SUPABASE_URL!;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-// Masih bisa cek runtime juga
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error("Missing Supabase environment variables")
+// Cek runtime (optional, biar gampang debug di dev)
+if (!supabaseUrl || !supabaseServiceRoleKey) {
+  throw new Error("❌ Missing Supabase environment variables");
 }
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-export const supabase = createClient<Database>(supabaseUrl, supabaseKey)
-
+// Hanya untuk server-side (jangan expose service role key ke client!)
+export const supabase = createClient<Database>(
+  supabaseUrl,
+  supabaseServiceRoleKey,
+  {
+    auth: {
+      persistSession: false,
+    },
+  }
+);
