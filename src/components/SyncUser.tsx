@@ -1,29 +1,19 @@
-// src/components/SyncUser.tsx
-"use client";
+// src/pages/api/syncUser.ts
+import type { NextApiRequest, NextApiResponse } from "next";
+import { getAuth } from "@clerk/nextjs/server";
 
-import { useEffect, useState } from "react";
-import { useUser } from "@clerk/nextjs";
+export default async function handler(req: NextApiRequest, res: NextApiResponse) {
+  // Logic sinkronisasi (upsert ke Prisma) telah dihapus dari sini.
+  // Sinkronisasi kini sepenuhnya ditangani oleh CLERK WEBHOOK.
 
-type SyncUserProps = {
-  onSynced?: () => void;
-};
+  try {
+    const { userId } = getAuth(req);
+    if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-export default function SyncUser({ onSynced }: SyncUserProps) {
-  const { user } = useUser();
-  const [synced, setSynced] = useState(false);
-
-  useEffect(() => {
-    if (!user || synced) return;
-
-    fetch("/api/syncUser", { method: "POST" })
-      .then(res => res.json())
-      .then(data => {
-        console.log("User synced:", data);
-        setSynced(true);
-        onSynced?.();
-      })
-      .catch(err => console.error("SyncUser error:", err));
-  }, [user, synced, onSynced]);
-
-  return null;
+    // Cukup kembalikan sukses, mengindikasikan bahwa user telah terotentikasi.
+    res.status(200).json({ message: "User sync process initiated (delegated to Webhook)" });
+  } catch (error) {
+    console.error("syncUser error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
 }

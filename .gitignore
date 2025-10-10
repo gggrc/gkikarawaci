@@ -1,46 +1,48 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
+### Dependencies ###
 /node_modules
 /.pnp
 .pnp.js
 
-# testing
+### Testing and Build Artifacts ###
 /coverage
+/build
+/out/
+# Next.js specific build files
+/.next/
+# TypeScript build info
+*.tsbuildinfo
 
-# database
+### Local/Environment Files ###
+# Jangan pernah commit file rahasia .env
+.env
+.env.local
+.env.*.local
+.env.development.local
+.env.production.local
+
+### Database/Prisma ###
+# Database lokal untuk SQLite (jika ada)
 /prisma/db.sqlite
 /prisma/db.sqlite-journal
 db.sqlite
+# File migrasi Prisma yang sudah terenkripsi atau terlock
+migration_lock.toml
 
-# next.js
-/.next/
-/out/
-next-env.d.ts
-
-# production
-/build
-
-# misc
+### OS and Editor Files ###
 .DS_Store
+.idea
 *.pem
 
-# debug
+### Debugging and Logs ###
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
+# File lockfiles lainnya (jika Anda beralih package manager)
+yarn.lock
+pnpm-lock.yaml
 
-# local env files
-# do not commit any .env files to git, except for the .env.example file. https://create.t3.gg/en/usage/env-variables#using-environment-variables
-.env
-.env*.local
-
-# vercel
+### Vercel / Netlify ###
 .vercel
-
-# typescript
-*.tsbuildinfo
-
-# idea files
-.idea

@@ -23,13 +23,17 @@
     "jsx": "preserve",
     "plugins": [{ "name": "next" }],
     "incremental": true,
+    // Mempertahankan solusi untuk warning 'baseUrl is deprecated'
+    "ignoreDeprecations": "6.0",
 
-    /* Path Aliases */
     "baseUrl": ".",
+    // ❌ Menghapus rootDirs: ["./src"]
     "paths": {
+      // ✅ Diperbaiki agar alias "~" menunjuk ke folder "src"
       "~/*": ["./src/*"]
     }
   },
+  
   "include": [
     "next-env.d.ts",
     "**/*.ts",
