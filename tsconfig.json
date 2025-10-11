@@ -24,7 +24,6 @@
     "plugins": [{ "name": "next" }],
     "incremental": true,
     // Mempertahankan solusi untuk warning 'baseUrl is deprecated'
-    "ignoreDeprecations": "6.0",
 
     "baseUrl": ".",
     // ❌ Menghapus rootDirs: ["./src"]

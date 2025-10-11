@@ -1,28 +1,29 @@
-// src/app/api/clerk/route.ts
 import { Webhook } from "svix";
 import type { WebhookEvent } from "@clerk/nextjs/server";
 import { PrismaClient } from "@prisma/client";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import type { UserJSON } from "@clerk/nextjs/server";
 import type { Prisma } from "@prisma/client";
 
-// --- START: PRISMA CLIENT SINGLETON FIX ---
-declare global {
-  var prisma: PrismaClient | undefined;
-}
+// Prisma client singleton
+declare global { var prisma: PrismaClient | undefined; }
 const prisma = globalThis.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalThis.prisma = prisma;
-// --- END: PRISMA CLIENT SINGLETON FIX ---
 
-// Helper: cek apakah data event adalah user lengkap
+// Supabase client with service role
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
 function isUserEvent(data: unknown): data is UserJSON {
   if (!data || typeof data !== "object") return false;
   const user = data as UserJSON;
   return typeof user.id === "string" && Array.isArray(user.email_addresses);
 }
 
-// Helper: cek user deleted
 function isDeletedUser(data: unknown): data is { id: string } {
   return (
     typeof data === "object" &&
@@ -33,13 +34,10 @@ function isDeletedUser(data: unknown): data is { id: string } {
 }
 
 export async function POST(req: Request) {
+  console.log("✅ Clerk webhook route triggered");
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
-  if (!WEBHOOK_SECRET) {
-    console.error("CLERK_WEBHOOK_SECRET is not set.");
-    return new NextResponse("Missing Clerk webhook secret", { status: 500 });
-  }
+  if (!WEBHOOK_SECRET) return new NextResponse("Missing Clerk webhook secret", { status: 500 });
 
-  // Ambil headers
   const headerPayload = await headers();
   const svix_id = headerPayload.get("svix-id") ?? "";
   const svix_timestamp = headerPayload.get("svix-timestamp") ?? "";
@@ -49,7 +47,6 @@ export async function POST(req: Request) {
     return new NextResponse("Missing Svix headers", { status: 400 });
   }
 
-  // Ambil body
   const body = await req.text();
   const wh = new Webhook(WEBHOOK_SECRET);
   let evt: WebhookEvent;
@@ -61,27 +58,24 @@ export async function POST(req: Request) {
       "svix-signature": svix_signature,
     }) as WebhookEvent;
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error("Webhook verification failed:", message);
     return new NextResponse("Invalid signature", { status: 400 });
   }
 
-  // Destructuring evt setelah berhasil verifikasi
   const { type: eventType, data: eventData } = evt;
-  console.log("Webhook event verified:", eventType, eventData);
+  console.log("Webhook event verified:", eventType);
 
   try {
-    // user.created / user.updated
     if ((eventType === "user.created" || eventType === "user.updated") && isUserEvent(eventData)) {
-      const userData = eventData as UserJSON & { gender?: string | null };
-      const { id, first_name, last_name, email_addresses, gender } = userData;
-
-      const email = email_addresses?.[0]?.email_address ?? "";
-      const name = `${first_name ?? ""} ${last_name ?? ""}`.trim();
-      const genderValue = gender ?? "unknown";
+      const userData = eventData;
+      const id = userData.id;
+      const firstName = userData.first_name ?? "";
+      const lastName = userData.last_name ?? "";
+      const email = userData.email_addresses?.[0]?.email_address ?? "";
+      const name = `${firstName} ${lastName}`.trim();
+      const genderValue = "unknown"; // Clerk doesn't send gender by default
 
       await prisma.user.upsert({
-        where: { clerkId: id } as Prisma.UserWhereUniqueInput,
+        where: { clerkId: id },
         update: {
           nama: name,
           email: email,
@@ -96,11 +90,9 @@ export async function POST(req: Request) {
           role: "user",
           isVerified: true,
           tanggal_lahir: null,
-        } as Prisma.UserCreateInput,
+        },
       });
-    }
-    // user.deleted
-    else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
+    } else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
       await prisma.user.delete({
         where: { clerkId: eventData.id },
       });
@@ -110,6 +102,4 @@ export async function POST(req: Request) {
     console.error(`Database operation failed for event ${eventType}:`, message);
     return new NextResponse("Database operation failed", { status: 500 });
   }
-
-  return NextResponse.json({ success: true });
 }
