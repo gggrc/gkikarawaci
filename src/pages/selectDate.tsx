@@ -5,6 +5,9 @@ import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/router";
 import { UserButton, SignedIn } from "@clerk/nextjs";
+import { useUser } from "@clerk/nextjs";
+import { useEffect } from "react";
+
 
 // Extend Window type for __addEventDateKey
 declare global {
@@ -184,6 +187,32 @@ export default function DatabasePage() {
     setShowEventModal(false);
     setNewEventName('');
   };
+
+const { user } = useUser();
+
+useEffect(() => {
+  if (!user) return;
+
+  const syncUser = async () => {
+    try {
+      await fetch("/api/syncUser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: user.id,
+          name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
+          email: user.primaryEmailAddress?.emailAddress,
+        }),
+      });
+      console.log("✅ Synced user with Supabase:", user.id);
+    } catch (err) {
+      console.error("❌ Failed to sync user:", err);
+    }
+  };
+
+  syncUser();
+}, [user]);
+
 
   return (
     <div className="flex min-h-screen flex-col bg-gray-200">

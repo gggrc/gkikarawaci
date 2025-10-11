@@ -13,7 +13,7 @@ declare global {
 const prisma = globalThis.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalThis.prisma = prisma;
 
-// 🪄 Supabase client (not used here but available for future)
+// 🪄 Supabase client (optional)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -75,9 +75,9 @@ export async function POST(req: Request) {
   const { type: eventType, data: eventData } = evt;
   console.log("🔔 Webhook event verified:", eventType);
 
-  try {
-    // Handle user.created / user.updated
-    if ((eventType === "user.created" || eventType === "user.updated") && isUserEvent(eventData)) {
+  // --- user.created / user.updated ---
+  if ((eventType === "user.created" || eventType === "user.updated") && isUserEvent(eventData)) {
+    try {
       console.log("🧩 Processing user event:", eventData.id);
 
       const userData = eventData;
@@ -109,34 +109,27 @@ export async function POST(req: Request) {
       });
 
       console.log("✅ User upsert successful");
+    } catch (err) {
+      console.error("❌ Upsert failed:", err);
+      return NextResponse.json({ error: "Upsert failed", details: `${err}` }, { status: 500 });
     }
-
-    // Handle user.deleted
-    else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
-      try {
-        await prisma.user.delete({
-          where: { clerkId: eventData.id },
-        });
-        console.log(`🗑️ User with clerkId ${eventData.id} deleted.`);
-      } catch (error) {
-        console.warn(`⚠️ Tried to delete non-existent user ${eventData.id}, ignoring.`);
-      }
-    }
-
-
-    // Unknown event
-    else {
-      console.log("⚠️ Unhandled event type:", eventType);
-    }
-
-    return NextResponse.json({ success: true });
-  } catch (dbError: unknown) {
-    console.error("❌ Database operation failed:", dbError);
-    const message =
-      dbError instanceof Error ? dbError.message : JSON.stringify(dbError);
-    return NextResponse.json(
-      { error: "Database operation failed", details: message },
-      { status: 500 }
-    );
   }
+
+  // --- user.deleted ---
+  else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
+    try {
+      await prisma.user.delete({
+        where: { clerkId: eventData.id },
+      });
+      console.log(`🗑️ User with clerkId ${eventData.id} deleted.`);
+    } catch (err) {
+      console.warn(`⚠️ Tried to delete non-existent user ${eventData.id}, ignoring.`);
+      // ✅ We handle this gracefully — no need to fail webhook
+    }
+  } else {
+    console.log("⚠️ Unhandled event type:", eventType);
+  }
+
+  // ✅ Always return success to Clerk
+  return NextResponse.json({ success: true });
 }
