@@ -1,38 +1,29 @@
 import { NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { createClient } from "@supabase/supabase-js";
 
-const prisma = new PrismaClient();
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // ✅ make sure you're using SERVICE ROLE key
+);
 
 export async function POST(req: Request) {
   try {
-    // ✅ explicitly type your JSON structure
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
-    const body = (await req.json()) as { id: string; name: string; email: string };
+    const { id, name, email } = await req.json();
+    console.log("📩 Incoming user:", { id, name, email });
 
+    const { data, error } = await supabase
+      .from("User") // 👈 match table name exactly
+      .upsert({ clerkId: id, nama: name, email });
 
-    const { id, name, email } = body;
+    if (error) {
+      console.error("❌ Supabase error:", error);
+      return NextResponse.json({ success: false, error }, { status: 500 });
+    }
 
-    // Upsert user (insert if not exists, update if exists)
-    await prisma.user.upsert({
-      where: { clerkId: id },
-      update: { nama: name, email },
-      create: {
-        clerkId: id,
-        nama: name,
-        email,
-        gender: "unknown",
-        jabatan: "unknown",
-        isVerified: false,
-        role: "user",
-      },
-    });
-
-    return NextResponse.json({ success: true });
-  } catch (err) {
-    console.error("❌ Sync user failed:", err);
-    return NextResponse.json(
-      { error: "Database operation failed", details: String(err) },
-      { status: 500 }
-    );
+    console.log("✅ Synced user to Supabase:", data);
+    return NextResponse.json({ success: true, data });
+  } catch (e) {
+    console.error("❌ Server error:", e);
+    return NextResponse.json({ success: false, error: String(e) }, { status: 500 });
   }
 }
