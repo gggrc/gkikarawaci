@@ -45,16 +45,19 @@ model Statistics {
 }
 
 model User {
-  user_id       Int      @id @default(autoincrement())
-  clerkId       String   @unique
-  nama          String
-  tanggal_lahir DateTime?
-  gender        String   @default("unknown")
-  email         String
-  jabatan       String
-  isVerified    Boolean
-  role          String
+  id             Int      @id @default(autoincrement())
+  clerkId        String   @unique
+  nama           String?
+  email          String?
+  gender         String?
+  jabatan        String?
+  isVerified     Boolean?
+  role           String?
+  tanggal_lahir  DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 }
+
 
 
 

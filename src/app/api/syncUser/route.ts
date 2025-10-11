@@ -1,17 +1,18 @@
-// src/app/api/syncUser/route.ts
-import { PrismaClient } from "@prisma/client";
 import { NextResponse } from "next/server";
+import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
 export async function POST(req: Request) {
   try {
-    const body = await req.json();
+    // ✅ explicitly type your JSON structure
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const body = (await req.json()) as { id: string; name: string; email: string };
+
+
     const { id, name, email } = body;
 
-    if (!id || !email)
-      return NextResponse.json({ error: "Missing user data" }, { status: 400 });
-
+    // Upsert user (insert if not exists, update if exists)
     await prisma.user.upsert({
       where: { clerkId: id },
       update: { nama: name, email },
@@ -20,18 +21,17 @@ export async function POST(req: Request) {
         nama: name,
         email,
         gender: "unknown",
-        jabatan: "Jemaat",
+        jabatan: "unknown",
+        isVerified: false,
         role: "user",
-        isVerified: true,
-        tanggal_lahir: null,
       },
     });
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    console.error("❌ SyncUser failed:", err);
+    console.error("❌ Sync user failed:", err);
     return NextResponse.json(
-      { error: "SyncUser failed", details: String(err) },
+      { error: "Database operation failed", details: String(err) },
       { status: 500 }
     );
   }

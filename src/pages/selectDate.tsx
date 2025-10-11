@@ -210,7 +210,7 @@ useEffect(() => {
     }
   };
 
-  syncUser();
+  void syncUser();
 }, [user]);
 
 
