@@ -71,10 +71,9 @@ export async function POST(req: Request) {
       const firstName = userData.first_name ?? "";
       const lastName = userData.last_name ?? "";
       const email =
-        userData.email_addresses && userData.email_addresses.length > 0
-          ? userData.email_addresses[0].email_address
+        Array.isArray(userData.email_addresses) && userData.email_addresses.length > 0
+          ? userData.email_addresses[0]?.email_address ?? `noemail_${id}@placeholder.local`
           : `noemail_${id}@placeholder.local`;
-
       const name = `${firstName} ${lastName}`.trim();
       const genderValue = "unknown"; // Clerk doesn't send gender by default
 
@@ -101,9 +100,13 @@ export async function POST(req: Request) {
         where: { clerkId: eventData.id },
       });
     }
-  } catch (dbError: unknown) {
-    const message = dbError instanceof Error ? dbError.message : "Unknown DB error";
-    console.error(`Database operation failed for event ${eventType}:`, message);
-    return new NextResponse("Database operation failed", { status: 500 });
+    } catch (dbError: unknown) {
+      console.error("❌ Database operation failed:", dbError);
+      const message =
+        dbError instanceof Error ? dbError.message : JSON.stringify(dbError);
+      return NextResponse.json(
+        { error: "Database operation failed", details: message },
+        { status: 500 }
+      );
+    }
   }
-}
