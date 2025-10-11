@@ -113,10 +113,16 @@ export async function POST(req: Request) {
 
     // Handle user.deleted
     else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
-      console.log("🗑 Deleting user:", eventData.id);
-      await prisma.user.delete({ where: { clerkId: eventData.id } });
-      console.log("✅ User delete successful");
+      try {
+        await prisma.user.delete({
+          where: { clerkId: eventData.id },
+        });
+        console.log(`🗑️ User with clerkId ${eventData.id} deleted.`);
+      } catch (error) {
+        console.warn(`⚠️ Tried to delete non-existent user ${eventData.id}, ignoring.`);
+      }
     }
+
 
     // Unknown event
     else {
