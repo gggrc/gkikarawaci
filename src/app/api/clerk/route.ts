@@ -6,20 +6,20 @@ import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { UserJSON } from "@clerk/nextjs/server";
 
-// Prisma client singleton
+// 🧠 Prisma client singleton
 declare global {
   var prisma: PrismaClient | undefined;
 }
 const prisma = globalThis.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalThis.prisma = prisma;
 
-// Supabase client (not used, but kept in case you want to use it later)
+// 🪄 Supabase client (not used here but available for future)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
-// Type guards
+// ✅ Type guards
 function isUserEvent(data: unknown): data is UserJSON {
   if (!data || typeof data !== "object") return false;
   const user = data as UserJSON;
@@ -35,23 +35,28 @@ function isDeletedUser(data: unknown): data is { id: string } {
   );
 }
 
+// 🚀 Main webhook handler
 export async function POST(req: Request) {
   console.log("✅ Clerk webhook route triggered");
 
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
   if (!WEBHOOK_SECRET) {
+    console.error("❌ Missing Clerk webhook secret.");
     return new NextResponse("Missing Clerk webhook secret", { status: 500 });
   }
 
+  // Extract headers
   const headerPayload = await headers();
   const svix_id = headerPayload.get("svix-id") ?? "";
   const svix_timestamp = headerPayload.get("svix-timestamp") ?? "";
   const svix_signature = headerPayload.get("svix-signature") ?? "";
 
   if (!svix_id || !svix_timestamp || !svix_signature) {
+    console.error("❌ Missing Svix headers");
     return new NextResponse("Missing Svix headers", { status: 400 });
   }
 
+  // Verify webhook
   const body = await req.text();
   const wh = new Webhook(WEBHOOK_SECRET);
   let evt: WebhookEvent;
@@ -62,15 +67,19 @@ export async function POST(req: Request) {
       "svix-timestamp": svix_timestamp,
       "svix-signature": svix_signature,
     }) as WebhookEvent;
-  } catch {
+  } catch (err: unknown) {
+    console.error("❌ Webhook verification failed:", err);
     return new NextResponse("Invalid signature", { status: 400 });
   }
 
   const { type: eventType, data: eventData } = evt;
-  console.log("Webhook event verified:", eventType);
+  console.log("🔔 Webhook event verified:", eventType);
 
   try {
+    // Handle user.created / user.updated
     if ((eventType === "user.created" || eventType === "user.updated") && isUserEvent(eventData)) {
+      console.log("🧩 Processing user event:", eventData.id);
+
       const userData = eventData;
       const id = userData.id;
       const firstName = userData.first_name ?? "";
@@ -81,6 +90,8 @@ export async function POST(req: Request) {
           : `noemail_${id}@placeholder.local`;
       const name = `${firstName} ${lastName}`.trim();
       const genderValue = "unknown";
+
+      console.log("📝 Upserting user:", { id, name, email });
 
       await prisma.user.upsert({
         where: { clerkId: id },
@@ -96,9 +107,23 @@ export async function POST(req: Request) {
           tanggal_lahir: null,
         },
       });
-    } else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
-      await prisma.user.delete({ where: { clerkId: eventData.id } });
+
+      console.log("✅ User upsert successful");
     }
+
+    // Handle user.deleted
+    else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
+      console.log("🗑 Deleting user:", eventData.id);
+      await prisma.user.delete({ where: { clerkId: eventData.id } });
+      console.log("✅ User delete successful");
+    }
+
+    // Unknown event
+    else {
+      console.log("⚠️ Unhandled event type:", eventType);
+    }
+
+    return NextResponse.json({ success: true });
   } catch (dbError: unknown) {
     console.error("❌ Database operation failed:", dbError);
     const message =
@@ -108,6 +133,4 @@ export async function POST(req: Request) {
       { status: 500 }
     );
   }
-
-  return NextResponse.json({ success: true });
 }
