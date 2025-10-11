@@ -206,7 +206,7 @@ export default function Home() {
               Kabupaten Tangerang, Banten 15810
             </p>
             <p>
-              <strong>☎️ Telepon:</strong> (021) 5919627
+              <strong>☎ Telepon:</strong> (021) 5919627
             </p>
             <p>
               <strong>⏰ Ibadah Minggu (umum):</strong> 07:00 WIB, 10:00 WIB, dan 17:00 WIB
