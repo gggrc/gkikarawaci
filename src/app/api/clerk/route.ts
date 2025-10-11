@@ -5,19 +5,21 @@ import { headers } from "next/headers";
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import type { UserJSON } from "@clerk/nextjs/server";
-import type { Prisma } from "@prisma/client";
 
 // Prisma client singleton
-declare global { var prisma: PrismaClient | undefined; }
+declare global {
+  var prisma: PrismaClient | undefined;
+}
 const prisma = globalThis.prisma ?? new PrismaClient();
 if (process.env.NODE_ENV !== "production") globalThis.prisma = prisma;
 
-// Supabase client with service role
+// Supabase client (not used, but kept in case you want to use it later)
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+// Type guards
 function isUserEvent(data: unknown): data is UserJSON {
   if (!data || typeof data !== "object") return false;
   const user = data as UserJSON;
@@ -35,8 +37,11 @@ function isDeletedUser(data: unknown): data is { id: string } {
 
 export async function POST(req: Request) {
   console.log("✅ Clerk webhook route triggered");
+
   const WEBHOOK_SECRET = process.env.CLERK_WEBHOOK_SECRET;
-  if (!WEBHOOK_SECRET) return new NextResponse("Missing Clerk webhook secret", { status: 500 });
+  if (!WEBHOOK_SECRET) {
+    return new NextResponse("Missing Clerk webhook secret", { status: 500 });
+  }
 
   const headerPayload = await headers();
   const svix_id = headerPayload.get("svix-id") ?? "";
@@ -57,7 +62,7 @@ export async function POST(req: Request) {
       "svix-timestamp": svix_timestamp,
       "svix-signature": svix_signature,
     }) as WebhookEvent;
-  } catch (err: unknown) {
+  } catch {
     return new NextResponse("Invalid signature", { status: 400 });
   }
 
@@ -75,19 +80,15 @@ export async function POST(req: Request) {
           ? userData.email_addresses[0]?.email_address ?? `noemail_${id}@placeholder.local`
           : `noemail_${id}@placeholder.local`;
       const name = `${firstName} ${lastName}`.trim();
-      const genderValue = "unknown"; // Clerk doesn't send gender by default
+      const genderValue = "unknown";
 
       await prisma.user.upsert({
         where: { clerkId: id },
-        update: {
-          nama: name,
-          email: email,
-          gender: genderValue,
-        },
+        update: { nama: name, email, gender: genderValue },
         create: {
           clerkId: id,
           nama: name,
-          email: email,
+          email,
           gender: genderValue,
           jabatan: "Jemaat",
           role: "user",
@@ -96,17 +97,17 @@ export async function POST(req: Request) {
         },
       });
     } else if (eventType === "user.deleted" && isDeletedUser(eventData)) {
-      await prisma.user.delete({
-        where: { clerkId: eventData.id },
-      });
+      await prisma.user.delete({ where: { clerkId: eventData.id } });
     }
-    } catch (dbError: unknown) {
-      console.error("❌ Database operation failed:", dbError);
-      const message =
-        dbError instanceof Error ? dbError.message : JSON.stringify(dbError);
-      return NextResponse.json(
-        { error: "Database operation failed", details: message },
-        { status: 500 }
-      );
-    }
+  } catch (dbError: unknown) {
+    console.error("❌ Database operation failed:", dbError);
+    const message =
+      dbError instanceof Error ? dbError.message : JSON.stringify(dbError);
+    return NextResponse.json(
+      { error: "Database operation failed", details: message },
+      { status: 500 }
+    );
   }
+
+  return NextResponse.json({ success: true });
+}

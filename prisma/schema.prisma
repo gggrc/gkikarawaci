@@ -1,3 +1,4 @@
+// schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -44,13 +45,17 @@ model Statistics {
 }
 
 model User {
-  user_id       Int       @id @default(autoincrement())
-  clerkId       String    @unique
+  user_id       Int      @id @default(autoincrement())
+  clerkId       String   @unique
   nama          String
   tanggal_lahir DateTime?
-  gender        String    @default("unknown")
+  gender        String   @default("unknown")
   email         String
   jabatan       String
   isVerified    Boolean
   role          String
 }
+
+
+
+
