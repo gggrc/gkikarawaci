@@ -70,7 +70,11 @@ export async function POST(req: Request) {
       const id = userData.id;
       const firstName = userData.first_name ?? "";
       const lastName = userData.last_name ?? "";
-      const email = userData.email_addresses?.[0]?.email_address ?? "";
+      const email =
+        userData.email_addresses && userData.email_addresses.length > 0
+          ? userData.email_addresses[0].email_address
+          : `noemail_${id}@placeholder.local`;
+
       const name = `${firstName} ${lastName}`.trim();
       const genderValue = "unknown"; // Clerk doesn't send gender by default
 
