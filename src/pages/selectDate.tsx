@@ -188,32 +188,6 @@ export default function DatabasePage() {
     setNewEventName('');
   };
 
-const { user } = useUser();
-
-useEffect(() => {
-  if (!user) return;
-
-  const syncUser = async () => {
-    try {
-      await fetch("/api/syncUser", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          id: user.id,
-          name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
-          email: user.primaryEmailAddress?.emailAddress,
-        }),
-      });
-      console.log("✅ Synced user with Supabase:", user.id);
-    } catch (err) {
-      console.error("❌ Failed to sync user:", err);
-    }
-  };
-
-  void syncUser();
-}, [user]);
-
-
   return (
     <div className="flex min-h-screen flex-col bg-gray-200">
       {/* Event Modal */}
