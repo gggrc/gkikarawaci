@@ -5,8 +5,6 @@ import { ChevronLeft, ChevronRight, Info } from "lucide-react";
 import Image from "next/image";
 import { useRouter } from "next/router";
 import { UserButton, SignedIn } from "@clerk/nextjs";
-import { useUser } from "@clerk/nextjs";
-import { useEffect } from "react";
 
 
 // Extend Window type for __addEventDateKey
