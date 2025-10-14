@@ -1,1 +1,1 @@
-ini buat web gki karawaci (tes)suachsouzhaoaihofihaoif
+ini buat web gki karawaci.
