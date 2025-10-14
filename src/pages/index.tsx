@@ -109,7 +109,7 @@ export default function Home() {
 
               <SignedIn>
                 <div className="flex items-center gap-3">
-                  <Link href="/selectDate">
+                  <Link href="/statistic">
                     <button className="px-4 py-2 rounded-full border border-white text-white hover:bg-blue-300 hover:text-[#0f172a] transition">
                       Daftar Hadir
                     </button>

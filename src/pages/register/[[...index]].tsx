@@ -20,7 +20,7 @@ export default function RegisterPage() {
             path="/register"
             routing="path"
             signInUrl="/login"
-            redirectUrl="/selectDate"
+            redirectUrl="/statistic"
           />
         </SignedOut>
       </div>
