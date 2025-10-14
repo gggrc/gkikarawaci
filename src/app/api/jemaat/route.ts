@@ -1,203 +1,113 @@
+// src/app/api/jemaat/route.ts
 import { NextResponse } from "next/server";
 
-// ----------------------
-// 1. Tipe data
-// ----------------------
-export type Jemaat = {
-  id: string;                             // id unik
+// Data type sent to the client (tanpa 'kehadiran' field)
+export interface JemaatClient {
+  id: number | string;
   foto: string;
   nama: string;
-  kehadiran: "Hadir" | "Tidak Hadir";
   jabatan: string;
-  status: "Aktif" | "Tidak Aktif";
-  kehadiranSesi: "Pagi" | "Siang" | "Sore"; // ✅ tambahkan field sesi ibadah
+  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif"; // Status Kehadiran Terhitung
+  status: string; // Status Database Asli
+  tanggalLahir?: string;
+  umur?: string;
+  keluarga?: string;
+  email?: string;
+  telepon?: string;
+  kehadiranSesi: string;
+}
+
+// Tipe data Internal untuk Mock
+interface JemaatRaw {
+  id: number | string;
+  foto: string;
+  nama: string;
+  jabatan: string;
+  status: string;
+  tanggalLahir?: string;
+  umur?: string;
+  keluarga?: string;
+  email?: string;
+  telepon?: string;
+  kehadiranSesi: string;
+  attendanceCount: number; // Jumlah kehadiran simulasi
+}
+
+
+const calculateStatusKehadiran = (attendanceCount: number): JemaatClient['statusKehadiran'] => {
+  // Asumsi 4 layanan dalam sebulan terakhir
+  if (attendanceCount >= 3) { 
+    return "Aktif";
+  } else if (attendanceCount === 2) { 
+    return "Jarang Hadir";
+  } else { 
+    return "Tidak Aktif";
+  }
 };
 
-// ----------------------
-// 2. Type guard
-// ----------------------
-function isJemaat(obj: unknown): obj is Jemaat {
-  if (typeof obj !== "object" || obj === null) return false;
+const generateMockJemaat = (count: number): JemaatClient[] => {
+    const roles = ["Jemaat", "Majelis", "Diaken", "Pengurus"];
+    const databaseStatus = ["Aktif", "Tidak Aktif"];
+    const sessions = ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00", "Ibadah Lansia : Sabtu, 10:00", "Ibadah Dewasa : Sabtu, 17:00"];
+    
+    const mockData: JemaatRaw[] = [];
 
-  const o = obj as Record<string, unknown>;
-  return (
-    typeof o.id === "string" &&
-    typeof o.foto === "string" &&
-    typeof o.nama === "string" &&
-    (o.kehadiran === "Hadir" || o.kehadiran === "Tidak Hadir") &&
-    typeof o.jabatan === "string" &&
-    (o.status === "Aktif" || o.status === "Tidak Aktif") && // ✅ pastikan ada &&
-    (o.kehadiranSesi === "Pagi" ||
-     o.kehadiranSesi === "Siang" ||
-     o.kehadiranSesi === "Sore")
-  );
-}
+    for (let i = 1; i <= count; i++) {
+        const id = i;
+        const firstName = `Jemaat`;
+        const lastName = `${String(i).padStart(3, '0')}`;
+        const name = `${firstName} ${lastName}`;
+        // Gunakan operator nullish coalescing untuk memastikan nilai default
+        const jabatan = roles[Math.floor(Math.random() * roles.length)] ?? "Jemaat";
+        const status = databaseStatus[Math.floor(Math.random() * databaseStatus.length)] ?? "Aktif";
+        // Simulasikan jumlah kehadiran dari 0 hingga 4
+        const attendanceCount = Math.floor(Math.random() * 5); 
+        // MODIFIED: Ambil sesi lengkap untuk simulasi
+        const kehadiranSesi = sessions[Math.floor(Math.random() * sessions.length)] ?? "Kebaktian I : 07:00";
+        const email = `${name.replace(/\s/g, '').toLowerCase()}@example.com`;
+        const phone = `0812${String(i).padStart(8, '0')}`;
+        const age = Math.floor(Math.random() * 60) + 18;
+        const birthYear = new Date().getFullYear() - age;
+        const tanggalLahir = `${birthYear}-${String(Math.floor(Math.random() * 12) + 1).padStart(2, '0')}-${String(Math.floor(Math.random() * 28) + 1).padStart(2, '0')}`;
 
-function isJemaatArray(data: unknown): data is Jemaat[] {
-  return Array.isArray(data) && data.every(isJemaat);
-}
+        mockData.push({
+            id,
+            foto: `https://ui-avatars.com/api/?name=${name.replace(/\s/g, '+')}&background=4F46E5&color=fff&size=128`,
+            nama: name,
+            jabatan,
+            status,
+            tanggalLahir,
+            umur: age.toString(),
+            keluarga: `Keluarga ${lastName}`,
+            email,
+            telepon: phone,
+            kehadiranSesi,
+            attendanceCount,
+        });
+    }
 
-// ----------------------
-// 3. Data awal (contoh dummy)
-// ----------------------
-let jemaat: Jemaat[] = [
-  {
-    id: "GKI_01",
-    foto: "/avatar1.png",
-    nama: "Toing Sidayat",
-    kehadiran: "Hadir",
-    jabatan: "Pendeta",
-    status: "Aktif",
-    kehadiranSesi: "Pagi",
-  },
-  {
-    id: "GKI_02",
-    foto: "/avatar2.png",
-    nama: "Abdul Sulaiman",
-    kehadiran: "Hadir",
-    jabatan: "Pengurus A",
-    status: "Aktif",
-    kehadiranSesi: "Siang",
-  },
-  {
-    id: "GKI_03",
-    foto: "/avatar3.png",
-    nama: "Steve Johnson",
-    kehadiran: "Tidak Hadir",
-    jabatan: "Pengurus B",
-    status: "Aktif",
-    kehadiranSesi: "Pagi",
-  },
-  {
-    id: "GKI_04",
-    foto: "/avatar4.png",
-    nama: "Supriad Ismail",
-    kehadiran: "Hadir",
-    jabatan: "Pengurus C",
-    status: "Aktif",
-    kehadiranSesi: "Sore",
-  },
-  {
-    id: "GKI_05",
-    foto: "/avatar5.png",
-    nama: "Suti Sutantari",
-    kehadiran: "Hadir",
-    jabatan: "Jemaat",
-    status: "Tidak Aktif",
-    kehadiranSesi: "Sore",
-  },
-  {
-    id: "GKI_06",
-    foto: "/avatar6.png",
-    nama: "Siti Andarasari",
-    kehadiran: "Tidak Hadir",
-    jabatan: "Jemaat",
-    status: "Aktif",
-    kehadiranSesi: "Pagi",
-  },
-  {
-    id: "GKI_07",
-    foto: "/avatar7.png",
-    nama: "Putri Elizabeth",
-    kehadiran: "Hadir",
-    jabatan: "Jemaat",
-    status: "Aktif",
-    kehadiranSesi: "Siang",
-  },
-  {
-    id: "GKI_08",
-    foto: "/avatar8.png",
-    nama: "Indah Purnawisari",
-    kehadiran: "Hadir",
-    jabatan: "Jemaat",
-    status: "Tidak Aktif",
-    kehadiranSesi: "Pagi",
-  },
-  {
-    id: "GKI_09",
-    foto: "/avatar9.png",
-    nama: "Kathleen Jo",
-    kehadiran: "Hadir",
-    jabatan: "Pengurus A",
-    status: "Aktif",
-    kehadiranSesi: "Siang",
-  },
-  {
-    id: "GKI_10",
-    foto: "/avatar10.png",
-    nama: "Carl Stevens",
-    kehadiran: "Tidak Hadir",
-    jabatan: "Pengurus B",
-    status: "Aktif",
-    kehadiranSesi: "Pagi",
-  },
-  {
-    id: "GKI_11",
-    foto: "/avatar11.png",
-    nama: "Benaya Suwilis",
-    kehadiran: "Hadir",
-    jabatan: "Pengurus C",
-    status: "Aktif",
-    kehadiranSesi: "Sore",
-  },
-  {
-    id: "GKI_12",
-    foto: "/avatar12.png",
-    nama: "Siti Bandarwih",
-    kehadiran: "Hadir",
-    jabatan: "Jemaat",
-    status: "Tidak Aktif",
-    kehadiranSesi: "Sore",
-  },
-  {
-    id: "GKI_13",
-    foto: "/avatar13.png",
-    nama: "Lia Manoban",
-    kehadiran: "Tidak Hadir",
-    jabatan: "Jemaat",
-    status: "Aktif",
-    kehadiranSesi: "Pagi",
-  },
-  {
-    id: "GKI_14",
-    foto: "/avatar14.png",
-    nama: "Tofik",
-    kehadiran: "Hadir",
-    jabatan: "Jemaat",
-    status: "Aktif",
-    kehadiranSesi: "Siang",
-  },
-  {
-    id: "GKI_15",
-    foto: "/avatar15.png",
-    nama: "Adi",
-    kehadiran: "Hadir",
-    jabatan: "Jemaat",
-    status: "Tidak Aktif",
-    kehadiranSesi: "Pagi",
-  },
-];
+    // Proses untuk menambahkan statusKehadiran yang dihitung
+    const processedData: JemaatClient[] = mockData.map(j => ({
+        id: j.id,
+        foto: j.foto,
+        nama: j.nama,
+        jabatan: j.jabatan,
+        status: j.status, 
+        statusKehadiran: calculateStatusKehadiran(j.attendanceCount),
+        tanggalLahir: j.tanggalLahir,
+        umur: j.umur,
+        keluarga: j.keluarga,
+        telepon: j.telepon,
+        kehadiranSesi: j.kehadiranSesi,
+        email: j.email,
+    }));
+    
+    return processedData;
+};
 
-// ----------------------
-// 4. GET - ambil data jemaat
-// ----------------------
+const processedJemaatData: JemaatClient[] = generateMockJemaat(200);
+
+// App Router Handler: Akses dari client melalui /api/jemaat
 export async function GET() {
-  return NextResponse.json(jemaat);
-}
-
-// ----------------------
-// 5. PUT - update data jemaat
-// ----------------------
-export async function PUT(req: Request) {
-  const json: unknown = await req.json();
-
-  if (!isJemaatArray(json)) {
-    return NextResponse.json({ message: "Data tidak valid" }, { status: 400 });
-  }
-
-  jemaat = json;
-  return NextResponse.json({
-    message: "Data berhasil diperbarui",
-    data: jemaat,
-  });
+    return NextResponse.json(processedJemaatData);
 }
