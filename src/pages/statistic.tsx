@@ -1,8 +1,14 @@
 import { useEffect, useState, useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
-import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download } from "lucide-react";
+import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download, Settings, X, Loader2 } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
+
+// START: PERBAIKAN IMPOR JS-PDF dan AUTO-TABLE (Kembali ke impor statis yang bersih)
+import JsPDF from 'jspdf'; 
+// PENTING: Pertahankan impor ini. Meskipun terlihat sepele, ini yang menjalankan kode pendaftaran plugin.
+import 'jspdf-autotable'; 
+// END: PERBAIKAN IMPOR JS-PDF dan AUTO-TABLE
 
 // --- Tipe Data ---
 interface Jemaat {
@@ -10,7 +16,6 @@ interface Jemaat {
   foto: string;
   nama: string;
   jabatan: string;
-  status: string; // Original database status
   statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif"; // Status kehadiran terhitung
   tanggalLahir?: string;
   umur?: string;
@@ -18,13 +23,16 @@ interface Jemaat {
   email?: string;
   telepon?: string;
   kehadiranSesi: string;
+  dokumen?: string; // NEW: Field untuk dokumen/gambar
 }
 
 // --- Konstanta Kalender ---
 const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
 const today = new Date();
-const currentMonth = today.getMonth();
-const currentYear = today.getFullYear();
+const currentMonth = today.getMonth(); 
+const currentYear = today.getFullYear(); 
+const todayStart = new Date(today).setHours(0, 0, 0, 0);
+
 
 const getDayKey = (date: Date): string => {
   const year = date.getFullYear();
@@ -39,62 +47,16 @@ const getDaysInMonth = (month: number, year: number) => new Date(year, month + 1
 const getFirstDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay();
 
 // Warna untuk chart
-const COLORS = ['#10B981', '#F59E0B', '#EF4444', '#4F46E5', '#8B5CF6', '#EC4899'];
-
-// Simulasi data statistik bulanan (Ini HARUS didasarkan pada data /api/jemaat yang sebenarnya di aplikasi nyata)
-const monthlyStats = {
-  "2025-10": { aktif: 45, jarangHadir: 15, tidakAktif: 10, totalIbadah: 4 },
-  "2025-11": { aktif: 50, jarangHadir: 10, tidakAktif: 5, totalIbadah: 4 },
-  "2025-12": { aktif: 48, jarangHadir: 12, tidakAktif: 6, totalIbadah: 5 },
-  "2024-10": { aktif: 45, jarangHadir: 15, tidakAktif: 10, totalIbadah: 4 },
-  "2024-11": { aktif: 50, jarangHadir: 10, tidakAktif: 5, totalIbadah: 4 },
-  "2024-12": { aktif: 48, jarangHadir: 12, tidakAktif: 6, totalIbadah: 5 },
-};
-
-// Simulasi data statistik tahunan
-const yearlyStats = {
-  "2025": [
-    { bulan: "Jan", aktif: 42, jarangHadir: 10, tidakAktif: 8 },
-    { bulan: "Feb", aktif: 44, jarangHadir: 10, tidakAktif: 6 },
-    { bulan: "Mar", aktif: 46, jarangHadir: 8, tidakAktif: 6 },
-    { bulan: "Apr", aktif: 43, jarangHadir: 10, tidakAktif: 7 },
-    { bulan: "Mei", aktif: 47, jarangHadir: 8, tidakAktif: 5 },
-    { bulan: "Jun", aktif: 45, jarangHadir: 10, tidakAktif: 5 },
-    { bulan: "Jul", aktif: 48, jarangHadir: 8, tidakAktif: 4 },
-    { bulan: "Agu", aktif: 50, jarangHadir: 5, tidakAktif: 5 },
-    { bulan: "Sep", aktif: 49, jarangHadir: 7, tidakAktif: 4 },
-    { bulan: "Okt", aktif: 45, jarangHadir: 15, tidakAktif: 10 },
-    { bulan: "Nov", aktif: 50, jarangHadir: 10, tidakAktif: 5 },
-    { bulan: "Des", aktif: 48, jarangHadir: 12, tidakAktif: 6 },
-  ],
-  "2024": [
-    { bulan: "Jan", aktif: 42, jarangHadir: 10, tidakAktif: 8 },
-    { bulan: "Feb", aktif: 44, jarangHadir: 10, tidakAktif: 6 },
-    { bulan: "Mar", aktif: 46, jarangHadir: 8, tidakAktif: 6 },
-    { bulan: "Apr", aktif: 43, jarangHadir: 10, tidakAktif: 7 },
-    { bulan: "Mei", aktif: 47, jarangHadir: 8, tidakAktif: 5 },
-    { bulan: "Jun", aktif: 45, jarangHadir: 10, tidakAktif: 5 },
-    { bulan: "Jul", aktif: 48, jarangHadir: 8, tidakAktif: 4 },
-    { bulan: "Agu", aktif: 50, jarangHadir: 5, tidakAktif: 5 },
-    { bulan: "Sep", aktif: 49, jarangHadir: 7, tidakAktif: 4 },
-    { bulan: "Okt", aktif: 45, jarangHadir: 15, tidakAktif: 10 },
-    { bulan: "Nov", aktif: 50, jarangHadir: 10, tidakAktif: 5 },
-    { bulan: "Des", aktif: 48, jarangHadir: 12, tidakAktif: 6 },
-  ]
-};
+const COLORS = ['#10B981', '#F59E0B', '#EF4444', '#4F46E5', '#8B5CF6', '#EC4899', '#3B82F6', '#A855F7'];
 
 // --- Logika Statistik ---
 const calculateOverallStats = (jemaat: Jemaat[]) => {
   if (jemaat.length === 0) {
-    return { totalJemaat: 0, aktif: 0, tidakAktif: 0, presentaseAktif: "0%", jabatanDistribution: {}, kehadiranDistribution: {} as Record<Jemaat['statusKehadiran'], number> };
+    return { totalJemaat: 0, jabatanDistribution: {}, kehadiranDistribution: {} as Record<Jemaat['statusKehadiran'], number> };
   }
   
-  const aktif = jemaat.filter(j => j.status === "Aktif").length;
-  const tidakAktif = jemaat.length - aktif;
-  const presentaseAktif = ((aktif / jemaat.length) * 100).toFixed(1) + "%";
-  
   const jabatanDistribution = jemaat.reduce((acc, j) => {
-    acc[j.jabatan] = (acc[j.jabatan] || 0) + 1;
+    acc[j.jabatan] = (acc[j.jabatan] ?? 0) + 1;
     return acc;
   }, {} as Record<string, number>);
   
@@ -103,26 +65,17 @@ const calculateOverallStats = (jemaat: Jemaat[]) => {
     return acc;
   }, {} as Record<Jemaat['statusKehadiran'], number>);
 
-  return { totalJemaat: jemaat.length, aktif, tidakAktif, presentaseAktif, jabatanDistribution, kehadiranDistribution };
+  return { totalJemaat: jemaat.length, jabatanDistribution, kehadiranDistribution };
 };
 
 // Fungsi untuk mendapatkan nama sesi pendek dari nama sesi lengkap
 const getShortSessionName = (session: string) => {
     return session
-        .replace("Kebaktian I", "K. I")
-        .replace("Kebaktian II", "K. II")
-        .replace("Kebaktian III", "K. III")
-        .replace("Ibadah Anak", "I. Anak")
-        .replace("Ibadah Remaja", "I. Remaja")
-        .replace("Ibadah Pemuda", "I. Pemuda")
-        .replace("Ibadah Lansia", "I. Lansia")
+        .replace("Kebaktian I", "K. I").replace("Kebaktian II", "K. II").replace("Kebaktian III", "K. III")
+        .replace("Ibadah Anak", "I. Anak").replace("Ibadah Remaja", "I. Remaja")
+        .replace("Ibadah Pemuda", "I. Pemuda").replace("Ibadah Lansia", "I. Lansia")
         .replace("Ibadah Dewasa", "I. Dewasa")
-        .replace(": 07:00", "")
-        .replace(": 10:00", "")
-        .replace(": 17:00", "")
-        .replace("Minggu, ", "")
-        .replace("Sabtu, ", "")
-        .trim();
+        .replace(/\s*:.*$/, '').replace(/ (Minggu|Sabtu)/, '').trim();
 };
 
 // Fungsi untuk mendapatkan nama sesi yang bersih (hanya jenis ibadah/kebaktian)
@@ -134,222 +87,148 @@ const getCleanSessionName = (session: string) => {
         .trim();
 }
 
-// Fungsi untuk menghitung distribusi status per sesi (untuk Line Chart Detail)
-const calculateStatusBySession = (jemaat: Jemaat[]) => {
-    const sessionData: Record<string, Record<string, number>> = {};
-
-    jemaat.forEach(j => {
-        const session = j.kehadiranSesi || 'Lainnya';
-        const status = j.statusKehadiran;
-
-        if (!sessionData[session]) {
-            sessionData[session] = { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
-        }
-        sessionData[session][status] = (sessionData[session][status] || 0) + 1;
-    });
-
-    // Transformasi data untuk Recharts LineChart
-    const chartData = Object.entries(sessionData)
-        .map(([session, statuses]) => ({
-            // MENGGUNAKAN LABEL YANG LEBIH PENDEK UNTUK GRAFIK
-            session: getShortSessionName(session),
-            fullSessionName: session, // Menyimpan nama lengkap untuk referensi
-            Aktif: statuses.Aktif || 0,
-            'Jarang Hadir': statuses['Jarang Hadir'] || 0,
-            'Tidak Aktif': statuses['Tidak Aktif'] || 0,
-        }))
-        .filter(item => item.Aktif > 0 || item['Jarang Hadir'] > 0 || item['Tidak Aktif'] > 0);
-
-    return chartData;
-};
-
-
-const calculateDateStats = (jemaat: Jemaat[], selectedDate: string) => {
-  const totalJemaat = jemaat.length;
+/**
+ * MODIFIKASI: Menghitung statistik berdasarkan status Kehadiran dan Sesi Kehadiran
+ * tanpa menggunakan simulasi kehadiran acak. ASUMSI: Jemaat HADIR jika sesi kehadiran mereka
+ * (kehadiranSesi) cocok dengan sesi yang tersedia di tanggal yang dipilih.
+ * * @param jemaatList 
+ * @param selectedDate 
+ * @returns 
+ */
+const calculateDateStats = (jemaatList: Jemaat[], selectedDate: string) => {
+  const totalJemaat = jemaatList.length;
   
-  // LOGIKA MOCK: Untuk simulasi di tanggal tertentu
   const dateObj = new Date(selectedDate);
   const dayOfWeek = dateObj.getDay(); // 0 = Minggu
-
-  // Asumsi kehadiran lebih tinggi di hari Minggu
-  const attendanceFactor = (dayOfWeek === 0) ? 0.85 : 0.60; 
   
-  const mockHadir = Math.round(totalJemaat * attendanceFactor);
-  const mockTidakHadir = totalJemaat - mockHadir;
-
-  const totalHadir = mockHadir; 
-  const totalTidakHadir = mockTidakHadir;
-  const presentaseKehadiran = ((totalHadir / totalJemaat) * 100).toFixed(1) + "%";
-
-  // Mock Kehadiran berdasarkan Sesi
-  const kehadiranBySesi: Record<string, number> = {};
-  const allSessions = [
-    'Kebaktian I : 07:00', 'Kebaktian II : 10:00', 'Kebaktian III : 17:00', 
-    'Ibadah Anak : Minggu, 10:00', 'Ibadah Remaja : Minggu, 10:00', 
-    'Ibadah Pemuda : Minggu, 10:00', 'Ibadah Lansia : Sabtu, 10:00', 
-    'Ibadah Dewasa : Sabtu, 17:00'
-  ];
-
-  let remainingHadir = totalHadir;
-  
-  // Simulasikan pembagian kehadiran, prioritaskan sesi di hari yang sesuai
-  allSessions.forEach(session => {
-    let mockCount = 0;
-    const sessionDay = session.includes('Minggu') ? 0 : session.includes('Sabtu') ? 6 : -1;
-    
-    if (dayOfWeek === 0 && sessionDay === 0) {
-      mockCount = Math.round(totalHadir * (Math.random() * 0.15 + 0.1)); // 10-25%
-    } else if (dayOfWeek === 6 && sessionDay === 6) {
-      mockCount = Math.round(totalHadir * (Math.random() * 0.15 + 0.05)); // 5-20%
-    } else if (dayOfWeek !== 0 && dayOfWeek !== 6 && sessionDay === -1) {
-      mockCount = Math.round(totalHadir * (Math.random() * 0.05)); // < 5% untuk non-layanan utama
-    } else {
-      mockCount = 0;
-    }
-    
-    mockCount = Math.min(mockCount, remainingHadir);
-    
-    if (mockCount > 0) {
-      kehadiranBySesi[session] = mockCount;
-      remainingHadir -= mockCount;
-    }
-  });
-
-  // Pastikan sisa kehadiran dialokasikan
-  if (remainingHadir > 0 && dayOfWeek === 0 && kehadiranBySesi['Kebaktian I : 07:00']) {
-      kehadiranBySesi['Kebaktian I : 07:00'] += remainingHadir;
-  } else if (remainingHadir > 0) {
-      // Jika tidak bisa dialokasikan, tambahkan ke sesi acak
-      const randomSession = allSessions[Math.floor(Math.random() * allSessions.length)];
-      kehadiranBySesi[randomSession] = (kehadiranBySesi[randomSession] || 0) + remainingHadir;
+  // 1. Tentukan sesi yang *seharusnya* ada di tanggal ini
+  const availableSessions = new Set<string>();
+  if (dayOfWeek === 0) { // Minggu
+      ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"].forEach(s => availableSessions.add(s));
+  } else if (dayOfWeek === 6) { // Sabtu
+      ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"].forEach(s => availableSessions.add(s));
   }
   
-  // Hitung TOTAL HADIR DARI SEMUA SESI
-  const totalKehadiranSemuaSesi = Object.values(kehadiranBySesi).reduce((sum, count) => sum + count, 0);
+  let totalKehadiranSemuaSesi = 0;
+  let totalPotentialAttendees = 0;
+  const kehadiranBySesi: Record<string, number> = {};
+  const statusKehadiranBySesi: Record<string, Record<Jemaat['statusKehadiran'], number>> = {}; 
 
+  // 2. Hitung distribusi berdasarkan jemaat yang memiliki 'kehadiranSesi' yang cocok.
+  // ASUMSI: jemaat yang memiliki 'kehadiranSesi' cocok dengan hari itu, MEREKA HADIR di sesi tersebut.
+  jemaatList.forEach(jemaat => {
+      // Hanya proses jemaat yang memiliki sesi kehadiran yang cocok dengan hari ini
+      if (availableSessions.has(jemaat.kehadiranSesi)) {
+          totalPotentialAttendees++; 
+          const sesi = jemaat.kehadiranSesi;
+          const status = jemaat.statusKehadiran;
+          
+          let isPresent = true; // Asumsi kehadiran 100% untuk yang sesinya cocok
+
+          if (isPresent) {
+              totalKehadiranSemuaSesi++;
+              kehadiranBySesi[sesi] = (kehadiranBySesi[sesi] ?? 0) + 1;
+
+              // Catat status jemaat yang hadir
+              statusKehadiranBySesi[sesi] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
+              statusKehadiranBySesi[sesi][status] = (statusKehadiranBySesi[sesi][status] || 0) + 1;
+          }
+      }
+  });
+
+  // Karena kita mengasumsikan kehadiran 100% untuk yang sesinya cocok,
+  // presentase ini adalah persentase potensi kehadiran yang hadir.
+  const presentaseKehadiran = totalPotentialAttendees > 0 
+      ? `${((totalKehadiranSemuaSesi / totalPotentialAttendees) * 100).toFixed(1)}%`
+      : "0%";
 
   return { 
-    totalHadir, 
-    totalTidakHadir, 
+    totalHadir: totalKehadiranSemuaSesi, 
+    totalTidakHadir: totalJemaat - totalKehadiranSemuaSesi, 
     presentaseKehadiran, 
     kehadiranBySesi, 
-    totalKehadiranSemuaSesi // Tambahkan hasil hitungan baru
+    statusKehadiranBySesi, 
+    totalKehadiranSemuaSesi,
+    totalPotentialAttendees
   };
 };
 
-// Fungsi untuk simulasi data harian status kehadiran
-const generateDailyStatusMock = (month: number, year: number, totalJemaat: number) => {
-    const daysInMonth = getDaysInMonth(month, year);
-    const dailyData = [];
-    
-    for (let day = 1; day <= daysInMonth; day++) {
-        const date = new Date(year, month, day);
-        const dayOfWeek = date.getDay(); // 0 = Sunday
-        const dayKey = getDayKey(date);
+// --- FUNGSI HELPER GLOBAL UNTUK PIE CHART ---
+interface LegendPayload {
+    value: string;
+    color: string;
+}
 
-        // Hanya hari Minggu (0) yang memiliki statistik yang menonjol untuk simulasi
-        const isSunday = dayOfWeek === 0;
-
-        // Base values (total 200)
-        let baseActive = Math.round(totalJemaat * 0.6); 
-        let baseRare = Math.round(totalJemaat * 0.2);
-        let baseInactive = totalJemaat - baseActive - baseRare;
-
-        // Variasi harian
-        let active = baseActive + Math.floor(Math.random() * 5) * (isSunday ? 5 : 1);
-        let rare = baseRare - Math.floor(Math.random() * 3) * (isSunday ? 3 : 1);
-        let inactive = baseInactive - Math.floor(Math.random() * 2) * (isSunday ? 2 : 1);
-        
-        // Pastikan nilai tidak negatif
-        active = Math.max(0, active);
-        rare = Math.max(0, rare);
-        inactive = Math.max(0, inactive);
-        
-        // Normalisasi untuk total tetap
-        const currentTotal = active + rare + inactive;
-        if (currentTotal !== totalJemaat) {
-          const diff = totalJemaat - currentTotal;
-          if (diff > 0) { active += diff; }
-        }
-
-        dailyData.push({
-            date: day.toString(),
-            fullDateKey: dayKey, // Tambahkan fullDateKey
-            Aktif: active,
-            'Jarang Hadir': rare,
-            'Tidak Aktif': inactive,
-        });
-    }
-    return dailyData;
+const renderLegend = (props: { payload: LegendPayload[] }) => {
+    const { payload } = props;
+    return (
+      <div style={{ 
+          display: 'flex', 
+          flexWrap: 'wrap', 
+          justifyContent: 'center',
+          fontSize: '12px', 
+          lineHeight: '1.2'
+      }}>
+        {payload.map((entry, index) => (
+          <div
+            key={`item-${index}`}
+            style={{ 
+                color: entry.color, 
+                margin: '0 8px 4px 8px', 
+                fontWeight: '500', 
+                whiteSpace: 'nowrap' 
+            }}
+          >
+            <span style={{ 
+                display: 'inline-block', 
+                width: '10px', 
+                height: '10px', 
+                backgroundColor: entry.color, 
+                borderRadius: '50%', 
+                marginRight: '4px' 
+            }}></span>
+            {entry.value}
+          </div>
+        ))}
+      </div>
+    );
 };
-
 
 // --- Komponen Chart ---
 
-// Komponen Line Chart untuk Tren Harian
-const DailyLineChart = ({ data, month, year }: any) => {
-  const router = useRouter();
-  
-  // Handler yang akan dipanggil saat titik pada LineChart diklik
-  const handleChartClick = (state: any) => {
-    if (state && state.activeLabel) {
-      const day = state.activeLabel; // Tanggal (string) dari dataKey="date"
-      const dateKey = getMonthKey(month, year) + '-' + String(day).padStart(2, '0');
-      
-      // Arahkan ke halaman database dengan query parameter tanggal
-      router.push(`/database?date=${dateKey}`);
-    }
-  };
-
-  return (
-    <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
-      <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
-        Tren Status Kehadiran Per Tanggal
-      </h3>
-      <p className="text-sm text-gray-500 mb-4">
-        Tren harian status Aktif, Jarang Hadir, dan Tidak Aktif dalam bulan {monthNames[month]} {year}.
-        <br/>
-        <span className="font-semibold text-indigo-600">Klik titik pada grafik untuk melihat data tabel di hari tersebut!</span>
-      </p>
-      <ResponsiveContainer width="100%" height={280}>
-        <LineChart 
-          data={data}
-          onMouseDown={handleChartClick} // Menambahkan event handler untuk klik pada chart
-          style={{ cursor: 'pointer' }} // Memberikan indikator kursor
-        >
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" label={{ value: 'Tanggal', position: 'insideBottom', offset: 0 }} />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Line type="monotone" dataKey="Aktif" stroke="#10B981" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 8 }} />
-          <Line type="monotone" dataKey="Jarang Hadir" stroke="#F59E0B" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 8 }} />
-          <Line type="monotone" dataKey="Tidak Aktif" stroke="#EF4444" strokeWidth={2} dot={{ r: 4 }} activeDot={{ r: 8 }} />
-        </LineChart>
-      </ResponsiveContainer>
-    </div>
-  );
-};
-
-
 // Komponen Line Chart untuk Tren Kehadiran per Sesi (Detail Tanggal)
-const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDateKey }: any) => {
+interface SessionLineChartProps {
+  data: Array<{
+    session: string;
+    fullSessionName: string;
+    Aktif: number;
+    'Jarang Hadir': number;
+    'Tidak Aktif': number;
+  }>;
+  hoveredSession: string | null;
+  setHoveredSession: (session: string | null) => void;
+  selectedDatesKeys: string[];
+}
+
+const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDatesKeys }: SessionLineChartProps) => {
   const router = useRouter();
 
   // Handler untuk mengarahkan ke database dengan filter Tanggal + Sesi
-  const handleChartClick = (state: any) => {
-    if (state && state.activePayload && state.activePayload.length > 0) {
-      const sessionName = state.activePayload[0].payload.fullSessionName;
+  const handleChartClick = (state: { activePayload?: { payload: { fullSessionName: string } }[] } | null) => {
+    if ((state?.activePayload ?? []).length > 0) {
+      const sessionName = state?.activePayload?.[0]?.payload?.fullSessionName;
+      if (!sessionName) return;
       
-      // Navigasi dengan 2 parameter: Tanggal dan Event (Sesi)
-      router.push(`/database?date=${selectedDateKey}&event=${encodeURIComponent(sessionName)}`);
+      // Navigasi dengan parameter multi-tanggal dan filter event
+      const datesParam = selectedDatesKeys.join(',');
+      void router.push(`/database?dates=${datesParam}&event=${encodeURIComponent(sessionName)}`);
     }
   };
 
   return (
     <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
         <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
-            Tren Status Kehadiran per Sesi Kebaktian
+            Tren Status Kehadiran per Sesi Kebaktian (Akumulatif)
         </h3>
         <p className="text-sm text-gray-500 mb-4">
             <span className="font-semibold text-indigo-600">Klik titik pada grafik untuk melihat detail tabel di Database!</span>
@@ -358,7 +237,13 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
             <LineChart 
                 data={data} 
                 margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
-                onMouseDown={handleChartClick} // Tambahkan klik handler
+                onMouseDown={(state) => {
+                  const activePayload = (state as any)?.activePayload;
+                  if (activePayload && activePayload.length > 0) {
+                    const sessionName = activePayload[0].payload.fullSessionName;
+                    handleChartClick({ activePayload: [{ payload: { fullSessionName: sessionName } }] });
+                  }
+                }} // Adjusted to match the expected type
                 style={{ cursor: 'pointer' }}
                 onMouseEnter={(state: any) => {
                   if (state && state.activePayload && state.activePayload.length > 0) {
@@ -373,7 +258,7 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
                 <Tooltip />
                 <Legend />
                 <Line 
-                  type="monotone" 
+                  type="monotone" // Diatur agar garis mulus
                   dataKey="Aktif" 
                   stroke="#10B981" 
                   strokeWidth={2} 
@@ -383,7 +268,7 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
                   opacity={hoveredSession === null || data.some((d: any) => d.fullSessionName === hoveredSession) ? 1 : 0.5}
                 />
                 <Line 
-                  type="monotone" 
+                  type="monotone" // Diatur agar garis mulus
                   dataKey="Jarang Hadir" 
                   stroke="#F59E0B" 
                   strokeWidth={2} 
@@ -393,7 +278,7 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
                   opacity={hoveredSession === null || data.some((d: any) => d.fullSessionName === hoveredSession) ? 1 : 0.5}
                 />
                 <Line 
-                  type="monotone" 
+                  type="monotone" // Diatur agar garis mulus
                   dataKey="Tidak Aktif" 
                   stroke="#EF4444" 
                   strokeWidth={2} 
@@ -406,6 +291,97 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
         </ResponsiveContainer>
     </div>
   );
+};
+
+// Komponen Line Chart Status Kehadiran Per Sesi untuk Rincian Tanggal
+const SingleDateStatusLineChart = ({ data }: { data: any[] }) => {
+    return (
+        <div className="bg-white p-6 rounded-xl shadow-inner border border-gray-200">
+            <h5 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
+                Distribusi Status Jemaat yang Hadir Per Sesi
+            </h5>
+            <ResponsiveContainer width="100%" height={250}>
+                <LineChart 
+                    data={data} 
+                    margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
+                >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="session" angle={-15} textAnchor="end" height={50} />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip />
+                    <Legend />
+                    <Line type="monotone" dataKey="Aktif" stroke="#10B981" strokeWidth={2} name="Aktif" dot={{ r: 4 }} activeDot={{ r: 8 }} />
+                    <Line type="monotone" dataKey="Jarang Hadir" stroke="#F59E0B" strokeWidth={2} name="Jarang Hadir" dot={{ r: 4 }} activeDot={{ r: 8 }} />
+                    <Line type="monotone" dataKey="Tidak Aktif" stroke="#EF4444" strokeWidth={2} name="Tidak Aktif" dot={{ r: 4 }} activeDot={{ r: 8 }} />
+                </LineChart>
+            </ResponsiveContainer>
+        </div>
+    );
+};
+
+
+// Komponen Line Chart untuk Tampilan Bulanan (Timeseries Harian)
+const MonthLineChart = ({ data, month, year }: any) => {
+    const router = useRouter();
+    const today = new Date();
+    const todayKey = today.getDate();
+    const currentMonthKey = today.getMonth();
+    const currentYearKey = today.getFullYear();
+
+    const handleDailyChartClick = (state: any) => {
+        if (state && state.activeLabel) {
+            const day = state.activeLabel;
+            
+            // Format tanggal yang diklik: YYYY-MM-DD
+            const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            
+            // NAVIGASI DENGAN PARAMETER YANG JELAS: dates=YYYY-MM-DD
+            void router.push(`/database?dates=${dateKey}`);
+        }
+    };
+    
+    // Tentukan hari terakhir yang datanya valid (tidak boleh melewati hari ini)
+    let maxDay = getDaysInMonth(month, year);
+    if (year === currentYearKey && month === currentMonthKey) {
+        maxDay = todayKey;
+    }
+
+    return (
+        <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
+            <h3 className="text-xl font-bold text-gray-800 border-b pb-2 mb-4">
+                Tren Status Kehadiran Per Tanggal
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">
+                <span className="font-semibold text-indigo-600">Klik titik pada grafik untuk melihat detail tabel di hari tersebut!</span>
+            </p>
+            <ResponsiveContainer width="100%" height={280}>
+                <LineChart 
+                    data={data} 
+                    margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
+                    onMouseDown={handleDailyChartClick}
+                    style={{ cursor: 'pointer' }}
+                >
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis 
+                        dataKey="hari" 
+                        allowDecimals={false} 
+                        domain={[1, maxDay]} 
+                        ticks={Array.from({ length: Math.min(maxDay, 15) }, (_, i) => i * (Math.floor(maxDay / 15) || 1) + 1).filter(d => d <= maxDay)}
+                    />
+                    <YAxis allowDecimals={false} />
+                    <Tooltip 
+                        formatter={(value: number | null, name: string) => value === null ? ['Tidak Ada Data', name] : [value, name]} 
+                        labelFormatter={(label: number) => `Tanggal ${label} ${monthNames[month]}`}
+                    />
+                    <Legend />
+                    {/* connectNulls=true untuk garis yang menyambung */}
+                    <Line type="monotone" dataKey="aktif" stroke="#10B981" strokeWidth={2} name="Aktif" connectNulls={true} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="jarangHadirlah" stroke="#F59E0B" strokeWidth={2} name="Jarang Hadir" connectNulls={true} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                    <Line type="monotone" dataKey="tidakAktif" stroke="#EF4444" strokeWidth={2} name="Tidak Aktif" connectNulls={true} dot={{ r: 3 }} activeDot={{ r: 6 }} />
+                </LineChart>
+            </ResponsiveContainer>
+        </div>
+    );
 };
 
 
@@ -427,10 +403,11 @@ const BarChartCard = ({ title, data, description }: any) => {
           <XAxis dataKey="name" />
           <YAxis />
           <Tooltip />
+          <Legend />
           <Bar dataKey="value" fill="#4F46E5" radius={[8, 8, 0, 0]}>
-             {chartData.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={entry.fill} />
-            ))}
+              {chartData.map((entry, index) => (
+                <Cell key={`cell-${index}`} fill={entry.fill} />
+              ))}
           </Bar>
         </BarChart>
       </ResponsiveContainer>
@@ -438,7 +415,7 @@ const BarChartCard = ({ title, data, description }: any) => {
   );
 };
 
-// Komponen Pie Chart
+// Komponen Pie Chart (DIPERBAIKI TATA LETAK LEGENDA)
 const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSession }: any) => {
   const chartData = Object.entries(data).map(([name, value]) => ({ name, value, fullSessionName: name }));
 
@@ -455,14 +432,15 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
       <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-3">{title}</h3>
       <p className="text-sm text-gray-500 mb-4">{description}</p>
       <ResponsiveContainer width="100%" height={250}>
-        <PieChart>
+        <PieChart margin={{ top: 5, right: 10, left: 10, bottom: 5 }}> 
           <Pie 
             data={chartData} 
             cx="50%" 
             cy="50%" 
             labelLine={false} 
-            label={({ name, value }) => `${name}: ${value}`} 
-            outerRadius={90} 
+            // Menonaktifkan label di slices untuk mencegah tumpang tindih
+            label={false} 
+            outerRadius={80} // Disesuaikan sedikit lebih kecil (dari 90 ke 80)
             fill="#8884d8" 
             dataKey="value"
           >
@@ -477,8 +455,16 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
               />
             ))}
           </Pie>
-          <Tooltip />
-          <Legend />
+          <Tooltip 
+            formatter={(value: number, name: string) => [`${value} orang`, name]} // Format Tooltip lebih informatif
+          />
+          <Legend 
+            layout="horizontal" 
+            align="center" 
+            verticalAlign="bottom" 
+            wrapperStyle={{ paddingTop: '0px', marginBottom: '-30px' }} // Tambahkan padding bawah
+            content={renderLegend} // Menggunakan custom render legend
+          />
         </PieChart>
       </ResponsiveContainer>
     </div>
@@ -491,17 +477,25 @@ export default function StatisticPage() {
   const router = useRouter();
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
   const [isLoading, setIsLoading] = useState(true); 
+
   // --- Start Month/Year untuk Tampilan Detail Statistik ---
   const [detailYear, setDetailYear] = useState(currentYear);
   const [detailStartMonth, setDetailStartMonth] = useState(currentMonth);
-  // --- End Start Month/Year
+  // NEW STATE: Mendukung multiple tanggal dari URL atau klik
+  const [selectedDatesKeys, setSelectedDatesKeys] = useState<string[]>([]); 
+
   const [year, setYear] = useState(currentYear); // Year untuk Navigasi Bulanan Global/Tahunan
   const [startMonth, setStartMonth] = useState(currentMonth);
-  const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null); 
-  const [showYearPicker, setShowYearPicker] = useState(false);
-  const [showDetailYearPicker, setShowDetailYearPicker] = useState(false); // BARU: Untuk Kalender Detail
+  
+  // Perubahan state untuk Year Picker
+  const [showYearPicker, setShowYearPicker] = useState(false); // Untuk mode Bulanan/Tahunan
+  const [showDetailYearPicker, setShowDetailYearPicker] = useState(false); // Untuk Kalender Detail
+  const [gridStartYear, setGridStartYear] = useState(Math.floor(currentYear / 10) * 10); // Untuk Year Picker
+  
   const [viewMode, setViewMode] = useState<'monthly' | 'yearly'>('monthly');
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
+
+  const [isDownloading, setIsDownloading] = useState(false); // State untuk loading download
   
   // Mengambil data dari /api/jemaat
   useEffect(() => {
@@ -528,43 +522,280 @@ export default function StatisticPage() {
     void fetchData();
   }, []);
 
+  // NEW: Handle query parameter untuk multiple selected dates dari URL
+  useEffect(() => {
+    if (!router.isReady) return; 
+
+    const { dates } = router.query;
+
+    if (typeof dates === 'string' && dates.length > 0) {
+      const datesArray = dates.split(',').filter(d => d.match(/^\d{4}-\d{2}-\d{2}$/));
+      setSelectedDatesKeys(datesArray);
+      
+      if (datesArray.length > 0) {
+        // Set calendar to the month of the first selected date
+        const firstDate = new Date(datesArray[0]);
+        setDetailYear(firstDate.getFullYear());
+        setDetailStartMonth(firstDate.getMonth());
+        
+        // Atur juga startMonth/year untuk tampilan keseluruhan
+        setYear(firstDate.getFullYear());
+        setStartMonth(firstDate.getMonth());
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady]);
+
+
   const overallStats = useMemo(() => calculateOverallStats(jemaat), [jemaat]);
   
-  // Memproses data untuk Line Chart Status per Sesi Kebaktian
-  const statusBySessionData = useMemo(() => calculateStatusBySession(jemaat), [jemaat]);
-  
-  const currentMonthStats = useMemo(() => {
-    const monthKey = getMonthKey(startMonth, year);
-    const stats = monthlyStats[monthKey as keyof typeof monthlyStats] || { aktif: 0, jarangHadir: 0, tidakAktif: 0, totalIbadah: 0 };
+  // --- LOGIKA MULTI-DATE STATS ---
+  const dateStatsMap = useMemo(() => {
+    if (selectedDatesKeys.length === 0) return {};
+    
+    const stats: Record<string, ReturnType<typeof calculateDateStats>> = {};
+    
+    selectedDatesKeys.forEach(dateKey => {
+      stats[dateKey] = calculateDateStats(jemaat, dateKey);
+    });
+    
     return stats;
-  }, [year, startMonth]);
+  }, [jemaat, selectedDatesKeys]);
+
+  const totalKehadiranSelectedDates = useMemo(() => {
+      return Object.values(dateStatsMap).reduce((sum, stats) => 
+          sum + stats.totalKehadiranSemuaSesi, 0
+      );
+  }, [dateStatsMap]);
+  
+  const combinedKehadiranBySesi = useMemo(() => {
+      const combined: Record<string, number> = {};
+      Object.values(dateStatsMap).forEach(stats => {
+          Object.entries(stats.kehadiranBySesi).forEach(([session, count]) => {
+              combined[session] = (combined[session] || 0) + count;
+          });
+      });
+      return combined;
+  }, [dateStatsMap]);
+
+  const selectedDatesDisplay = useMemo(() => {
+      return selectedDatesKeys
+          .map(key => new Date(key).toLocaleDateString("id-ID", { day: "2-digit", month: "long" }))
+          .join(', ');
+  }, [selectedDatesKeys]);
+
+  const totalPotentialAttendeesCombined = useMemo(() => {
+    return Object.values(dateStatsMap).reduce((sum, stats) => sum + stats.totalPotentialAttendees, 0);
+  }, [dateStatsMap]);
+  
+  const combinedPresentaseKehadiran = totalPotentialAttendeesCombined > 0 
+    ? `${((totalKehadiranSelectedDates / totalPotentialAttendeesCombined) * 100).toFixed(1)}%`
+    : "0%";
+  
+    /**
+     * LOGIKA BARU: Mengakumulasi status kehadiran (Aktif, Jarang Hadir, Tidak Aktif) 
+     * DARI SEMUA JEMAAT YANG HADIR di sesi-sesi pada tanggal yang dipilih.
+     */
+    const combinedStatusBySession = useMemo(() => {
+        const combined: Record<string, Record<Jemaat['statusKehadiran'], number>> = {};
+        
+        // Akumulasi data statusKehadiranBySesi dari semua tanggal yang dipilih
+        Object.values(dateStatsMap).forEach(stats => {
+            Object.entries(stats.statusKehadiranBySesi).forEach(([session, statusCounts]) => {
+                combined[session] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
+                
+                combined[session]['Aktif'] += statusCounts['Aktif'] || 0;
+                combined[session]['Jarang Hadir'] += statusCounts['Jarang Hadir'] || 0;
+                combined[session]['Tidak Aktif'] += statusCounts['Tidak Aktif'] || 0;
+            });
+        });
+
+        // Transformasi data untuk Recharts LineChart
+        const chartData = Object.entries(combined)
+            .map(([session, statuses]) => ({
+                session: getShortSessionName(session),
+                fullSessionName: session,
+                Aktif: statuses.Aktif,
+                'Jarang Hadir': statuses['Jarang Hadir'],
+                'Tidak Aktif': statuses['Tidak Aktif'],
+            }))
+            .filter(item => item.Aktif > 0 || item['Jarang Hadir'] > 0 || item['Tidak Aktif'] > 0);
+            
+        return chartData;
+    }, [dateStatsMap]);
+  
+  // --- END LOGIKA MULTI-DATE STATS ---
+  
+  // --- MOCK LOGIC FOR OVERALL VIEW (Monthly/Yearly) ---
+  // Simulasi data statistik bulanan & tahunan (Dibuat lebih sederhana dan konsisten dengan overallStats)
+  const generateMockOverallTrends = (jemaatCount: number) => {
+    const months = monthNames.map(name => name.substring(0, 3));
+    const currentYearStats = months.map((bulan, index) => {
+        // Menggunakan persentase yang mendekati 140/200, 40/200, 20/200 
+        const baseActive = Math.round(jemaatCount * (0.6 + Math.random() * 0.1));
+        const baseRare = Math.round(jemaatCount * (0.2 + Math.random() * 0.05));
+        const baseInactive = jemaatCount - baseActive - baseRare;
+        return { 
+          bulan, 
+          aktif: baseActive, 
+          jarangHadirlah: baseRare, 
+          tidakAktif: baseInactive,
+          total: baseActive + baseRare + baseInactive // Total Kehadiran untuk Bulan ini
+        };
+    });
+    return {
+        "2025": currentYearStats,
+        "2024": currentYearStats.map(s => ({ ...s, aktif: s.aktif - 5, tidakAktif: s.tidakAktif + 5 })),
+    };
+  }
+
+  /**
+   * MODIFIKASI: Simulasi data harian untuk Line Chart Bulanan.
+   * Menggunakan distribusi status dari jemaat yang sesinya cocok dengan hari yang bersangkutan.
+   * @param month 
+   * @param year 
+   * @param overallStats 
+   * @returns 
+   */
+  const generateMockDailyTrends = (month: number, year: number, overallStats: { aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }) => {
+    const daysInMonth = getDaysInMonth(month, year);
+    const data = [];
+    
+    let maxDay = daysInMonth;
+    if (year === currentYear && month === currentMonth) {
+      maxDay = today.getDate();
+    }
+
+    for (let day = 1; day <= daysInMonth; day++) {
+      if (day > maxDay) {
+        data.push({ hari: day, aktif: null, jarangHadirlah: null, tidakAktif: null });
+        continue;
+      }
+      
+      const date = new Date(year, month, day);
+      const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
+
+      let aktif = null;
+      let jarangHadirlah = null;
+      let tidakAktif = null;
+
+      // HANYA hitung data untuk Sabtu dan Minggu
+      if (dayOfWeek === 0 || dayOfWeek === 6) {
+          const targetSessions = dayOfWeek === 0 ? ['Minggu'] : ['Sabtu'];
+          
+          // Filter jemaat yang memiliki sesi di hari ini (Asumsi: Mereka HADIR)
+          const filteredJemaat = jemaat.filter(j => 
+              targetSessions.some(ts => j.kehadiranSesi.includes(ts))
+          );
+          
+          const stats = calculateOverallStats(filteredJemaat).kehadiranDistribution;
+          
+          // Tambahkan sedikit noise agar tidak terlalu datar
+          const noiseFactor = Math.random() * 0.2 - 0.1; 
+
+          aktif = Math.round((stats.Aktif ?? 0) * (1 + noiseFactor));
+          jarangHadirlah = Math.round((stats['Jarang Hadir'] ?? 0) * (1 + noiseFactor));
+          tidakAktif = Math.round((stats['Tidak Aktif'] ?? 0) * (1 + noiseFactor));
+      
+          aktif = Math.max(0, aktif);
+          jarangHadirlah = Math.max(0, jarangHadirlah);
+          tidakAktif = Math.max(0, tidakAktif);
+      }
+      
+      data.push({
+        hari: day,
+        aktif: aktif,
+        jarangHadirlah: jarangHadirlah,
+        tidakAktif: tidakAktif,
+      });
+    }
+    return data;
+  }
+
+  const yearlyStats = useMemo(() => generateMockOverallTrends(overallStats.totalJemaat || 200), [overallStats.totalJemaat]);
+
+  const currentMonthStats = useMemo(() => {
+    // Ambil data dari array tahunan untuk bulan yang bersangkutan
+    const monthName = monthNames[startMonth].substring(0, 3);
+    const stats = yearlyStats[year.toString() as keyof typeof yearlyStats]?.find(m => m.bulan === monthName) || { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
+    return stats;
+  }, [year, startMonth, yearlyStats]);
   
   const currentYearStats = useMemo(() => {
-    const stats = yearlyStats[year.toString() as keyof typeof yearlyStats] || [];
+    let stats = yearlyStats[year.toString() as keyof typeof yearlyStats] || [];
+    
+    // LOGIKA PERBAIKAN: Batasi data Line Chart Tahunan
+    if (year === currentYear) {
+      // Potong data hingga bulan saat ini
+      stats = stats.slice(0, currentMonth + 1); 
+    }
+    
     return stats; 
-  }, [year]);
-
-  // Data tren harian
-  const dailyStatusTrend = useMemo(() => {
-    const totalJemaat = overallStats.totalJemaat || 200;
-    // Menggunakan detailStartMonth/detailYear untuk tren harian
-    return generateDailyStatusMock(detailStartMonth, detailYear, totalJemaat);
-  }, [detailStartMonth, detailYear, overallStats.totalJemaat]);
+  }, [year, yearlyStats, currentMonth]);
   
-  const dateStats = useMemo(() => {
-    if (!selectedDateKey) return null;
-    return calculateDateStats(jemaat, selectedDateKey);
-  }, [jemaat, selectedDateKey]);
+  // NEW LOGIC: Hitung total dan rata-rata dari data Line Chart Tahunan yang sudah difilter/dipotong
+  const totalAktifTahunan = useMemo(() => {
+    return currentYearStats.reduce((sum, month) => sum + month.aktif, 0);
+  }, [currentYearStats]);
+  
+  // PERBAIKAN: Hitung Total Jarang Hadir Tahunan
+  const totalJarangHadirlahTahunan = useMemo(() => {
+    return currentYearStats.reduce((sum, month) => sum + month.jarangHadirlah, 0);
+  }, [currentYearStats]);
 
-  // Handler untuk Kalender Detail
+  const totalTidakAktifTahunan = useMemo(() => {
+    return currentYearStats.reduce((sum, month) => sum + month.tidakAktif, 0);
+  }, [currentYearStats]);
+
+  const totalKehadiranTahunan = useMemo(() => {
+    // Menggunakan properti 'total' dari data mock
+    return currentYearStats.reduce((sum, month) => sum + month.total, 0); 
+  }, [currentYearStats]);
+
+  const rataRataKehadiranPerBulan = useMemo(() => {
+      const activeMonths = currentYearStats.length; 
+      if (activeMonths === 0) return 0;
+      // Hitung rata-rata berdasarkan total kehadiran
+      return Math.round(totalKehadiranTahunan / activeMonths);
+  }, [currentYearStats, totalKehadiranTahunan]);
+  
+  // Data harian untuk Line Chart Bulanan (Ditambahkan jemaat ke dependency array)
+  const dailyTrendsData = useMemo(() => {
+      if (jemaat.length === 0) return []; 
+      return generateMockDailyTrends(startMonth, year, currentMonthStats);
+  }, [startMonth, year, currentMonthStats, jemaat]); 
+
+  // --- END MOCK LOGIC ---
+
+
+  // Handler untuk Kalender Detail (Sekarang multi-select)
   const handleSelectDate = (day: number, month: number) => {
     const clickedDate = new Date(detailYear, month, day);
     const key = getDayKey(clickedDate);
+    const isFuture = clickedDate.setHours(0, 0, 0, 0) > todayStart;
+
+    if (isFuture) return;
     
-    setSelectedDateKey(prevKey => prevKey === key ? null : key);
+    setSelectedDatesKeys(prevKeys => {
+        if (prevKeys.includes(key)) {
+            return prevKeys.filter(k => k !== key); // Deselect
+        } else {
+            return [...prevKeys, key].sort(); // Select and Sort
+        }
+    });
   };
   
   // Handlers NAVIGASI GLOBAL (Tampilan Bulanan/Tahunan)
+  const handlePrevYear = () => {
+    setYear(prev => prev - 1);
+  }
+  
+  const handleNextYear = () => {
+    if (year < currentYear) { // Batasi hanya sampai tahun saat ini
+      setYear(prev => prev + 1);
+    }
+  }
+
   const handlePrevMonth = () => {
     if (startMonth === 0) {
       setStartMonth(11);
@@ -574,7 +805,17 @@ export default function StatisticPage() {
     }
   };
   
+  // LOGIKA BARU: Batasi navigasi ke depan (Next Month)
   const handleNextMonth = () => {
+    const nextDate = new Date(year, startMonth + 1, 1);
+    
+    // Periksa jika bulan berikutnya lebih besar dari bulan saat ini di tahun yang sama
+    if (nextDate.getFullYear() > currentYear || 
+        (nextDate.getFullYear() === currentYear && nextDate.getMonth() > currentMonth)) {
+        // Tidak boleh maju ke masa depan
+        return;
+    }
+    
     if (startMonth === 11) {
       setStartMonth(0);
       setYear(year + 1);
@@ -583,14 +824,31 @@ export default function StatisticPage() {
     }
   };
   
+  // Logika untuk menonaktifkan tombol Next Month
+  const isNextMonthDisabled = useMemo(() => {
+    // Navigasi tidak boleh melewati bulan saat ini
+    return year > currentYear || (year === currentYear && startMonth >= currentMonth);
+  }, [year, startMonth]);
+  
+  // Logika untuk menonaktifkan tombol Next Year
+  const isNextYearDisabled = useMemo(() => {
+    // Navigasi tidak boleh melewati tahun saat ini
+    return year >= currentYear;
+  }, [year]);
+
+
   const handleYearChange = (newYear: number) => {
     setYear(newYear);
     setShowYearPicker(false);
   };
   
-  // Handlers NAVIGASI DETAIL KALENDER (Kalender di Poin 4)
+  const handleOpenYearPicker = () => {
+    setShowYearPicker(true);
+    setGridStartYear(Math.floor(year / 10) * 10);
+  };
+  
+  // Handlers NAVIGASI DETAIL KALENDER
   const handleDetailPrevMonth = () => {
-    setSelectedDateKey(null); // Reset seleksi tanggal
     if (detailStartMonth === 0) {
       setDetailStartMonth(11);
       setDetailYear(detailYear - 1);
@@ -600,7 +858,6 @@ export default function StatisticPage() {
   };
 
   const handleDetailNextMonth = () => {
-    setSelectedDateKey(null); // Reset seleksi tanggal
     if (detailStartMonth === 11) {
       setDetailStartMonth(0);
       setDetailYear(detailYear + 1);
@@ -612,65 +869,244 @@ export default function StatisticPage() {
   const handleDetailYearChange = (newYear: number) => {
     setDetailYear(newYear);
     setShowDetailYearPicker(false);
-    setSelectedDateKey(null); // Reset seleksi
+  };
+  
+  const handleOpenDetailYearPicker = () => {
+    setShowDetailYearPicker(true);
+    setGridStartYear(Math.floor(detailYear / 10) * 10); // Sync grid start year
   };
 
 
   const monthsToDisplay = useMemo(() => {
     const months = [];
-    for (let i = 0; i < 3; i++) {
-      const monthIndex = (detailStartMonth + i) % 12;
-      months.push(monthIndex);
+    // Tampilkan 3 bulan agar kalender lebih lengkap
+    for (let i = -1; i <= 1; i++) {
+        const targetDate = new Date(detailYear, detailStartMonth + i, 1);
+        const monthIndex = targetDate.getMonth();
+        const year = targetDate.getFullYear();
+        months.push({ monthIndex, year });
     }
     return months;
-  }, [detailStartMonth]);
+  }, [detailStartMonth, detailYear]);
 
-  const selectedDateDisplay = selectedDateKey 
-    ? new Date(selectedDateKey).toLocaleDateString("id-ID", { weekday: 'long', day: "2-digit", month: "long", year: "numeric" })
-    : "N/A";
-
-  const years = Array.from({ length: 10 }, (_, i) => currentYear - 5 + i);
+  // Generate tahun untuk year picker
+  const currentYearForGrid = new Date().getFullYear();
+  const yearsForPicker = useMemo(() => {
+    const startYear = gridStartYear;
+    return Array.from({ length: 10 }, (_, i) => startYear + i);
+  }, [gridStartYear]);
   
+  // Tanggal yang memiliki statistik (Hanya hari Minggu dan Sabtu)
   const getDatesWithStats = (month: number, year: number) => {
     const dates = new Set<string>();
     const daysInMonth = getDaysInMonth(month, year);
     
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
-      if (date.getDay() === 0 && date.getTime() <= today.getTime()) {
+      const dayOfWeek = date.getDay();
+      
+      // Filter hanya hari Minggu (0) dan Sabtu (6) yang sudah lewat
+      if ((dayOfWeek === 0 || dayOfWeek === 6) && date.getTime() <= todayStart) {
         dates.add(getDayKey(date));
       }
     }
     return dates;
   };
 
-  // Handler untuk LineChart Tahunan
+  // Handler untuk LineChart Tahunan (Navigasi ke database bulan itu)
   const handleYearlyChartClick = (state: any) => {
     if (state && state.activeLabel) {
       const monthName = state.activeLabel;
-      // Perlu mencari bulan dari 'Jan', 'Feb', dst.
       const monthIndex = monthNames.findIndex(name => name.substring(0, 3) === monthName);
       
       if (monthIndex > -1) {
-        const dateKey = getMonthKey(monthIndex, year) + '-01'; // Ambil tanggal 1 bulan itu
-        router.push(`/database?date=${dateKey}`);
+        // NAVIGASI DENGAN PARAMETER YANG JELAS: date=YYYY-MM
+        const dateKey = `${year}-${String(monthIndex + 1).padStart(2, '0')}`; 
+        void router.push(`/database?date=${dateKey}&mode=monthly`);
       }
     }
   };
+  
+  // --- LOGIKA DOWNLOAD UTAMA PDF (DIUBAH UNTUK MENGATASI AUTO-TABLE ERROR) ---
+  const handleDownload = async () => { 
+    setIsDownloading(true);
+
+    // BARU: Inisialisasi JsPDF dengan memastikan plugin dimuat.
+    // Kita gunakan require() agar kompatibel dengan cara plugin jspdf-autotable terdaftar.
+    let JsPDF: any;
+    try {
+        // Menggunakan require untuk mendapatkan objek JsPDF yang sudah dimuat.
+        // Jika Anda menggunakan TypeScript ketat, Anda mungkin perlu menginstal @types/jspdf-autotable
+        JsPDF = (await import('jspdf')).default;
+        require('jspdf-autotable'); // Memastikan registrasi plugin
+    } catch (error) {
+        console.error("Gagal memuat pustaka PDF:", error);
+        setIsDownloading(false);
+        alert("Gagal memuat pustaka PDF. Pastikan 'jspdf' dan 'jspdf-autotable' terinstal dengan benar.");
+        return;
+    }
+
+    let filename = `laporan_statistik_${new Date().toISOString().substring(0, 10)}`;
+    let headerTitle = "Laporan Statistik Kehadiran Jemaat";
+    
+    // Tentukan Judul dan Konten
+    if (viewMode === 'yearly') {
+        headerTitle = `Statistik Kehadiran Tahunan ${year}`;
+        filename = `statistik_tahunan_${year}`;
+    } else if (viewMode === 'monthly') {
+        headerTitle = `Statistik Kehadiran Bulanan ${monthNames[startMonth]} ${year}`;
+        filename = `statistik_bulanan_${monthNames[startMonth]}_${year}`;
+    } else if (selectedDatesKeys.length > 0) {
+        headerTitle = `Statistik Detail Kehadiran (${selectedDatesKeys.length} Tanggal)`;
+        filename = `statistik_detail_${selectedDatesKeys.length}_tanggal`;
+    }
+
+    // --- PDF LOGIC ---
+    // Gunakan JsPDF yang sudah diimpor dinamis
+    const doc = new JsPDF('p', 'mm', 'a4');
+    const pageWidth = doc.internal.pageSize.getWidth();
+    const margin = 15;
+    let yPos = 20;
+
+    doc.setFontSize(16);
+    (doc as any).setFont('helvetica', 'bold');
+    doc.text(headerTitle, margin, yPos);
+    yPos += 7;
+    
+    doc.setFontSize(10);
+    (doc as any).setFont('helvetica', 'normal');
+    doc.text(`Tanggal Dibuat: ${new Date().toLocaleString('id-ID')}`, margin, yPos);
+    yPos += 10;
+    
+    // Fungsi pembantu untuk menambahkan tabel dengan autoTable
+    // NOTE: Tidak perlu (doc as any) jika JsPDF dan plugin dimuat dengan benar,
+    // tapi kita pertahankan (doc as any) untuk kompatibilitas tipe yang lebih luas.
+    const addTable = (head: string[], body: any[], title: string) => {
+        if (yPos + 10 > doc.internal.pageSize.getHeight() - margin) {
+            doc.addPage();
+            yPos = margin;
+        }
+        
+        doc.setFontSize(12);
+        (doc as any).setFont('helvetica', 'bold');
+        doc.text(title, margin, yPos);
+        yPos += 5;
+        
+        // Panggil autoTable. Karena JsPDF diimpor statis/require, ini seharusnya berfungsi.
+        (doc as any).autoTable({
+            startY: yPos,
+            head: [head],
+            body: body,
+            margin: { left: margin, right: margin },
+            theme: 'striped',
+            headStyles: { fillColor: [79, 70, 229] }, // Indigo
+            didDrawPage: (data: any) => {
+                // Footer
+                doc.setFontSize(8);
+                doc.text(`Halaman ${data.pageNumber}`, pageWidth - margin, doc.internal.pageSize.getHeight() - 10);
+            }
+        });
+        yPos = (doc as any).autoTable.previous.finalY + 10;
+    };
+
+    // 1. Data Tahunan / Bulanan
+    if (viewMode === 'yearly') {
+        // Tampilkan Ringkasan di awal
+        const headSummary = ['Metrik', 'Jumlah'];
+        const bodySummary = [
+            ['Total Kehadiran Tahunan', totalKehadiranTahunan],
+            ['Total Status Aktif', totalAktifTahunan],
+            ['Total Jarang Hadir', totalJarangHadirlahTahunan],
+            ['Total Tidak Aktif', totalTidakAktifTahunan],
+            ['Rata-rata Kehadiran/Bulan', rataRataKehadiranPerBulan]
+        ];
+        addTable(headSummary, bodySummary, `Ringkasan Statistik Tahunan ${year}`);
+
+        // Tampilkan Tren Detail Bulanan
+        const headTrend = ['Bulan', 'Aktif', 'Jarang Hadir', 'Tidak Aktif', 'Total'];
+        const bodyTrend = currentYearStats.map(m => [m.bulan, m.aktif, m.jarangHadirlah, m.tidakAktif, m.total]);
+        addTable(headTrend, bodyTrend, 'Tren Status Kehadiran Bulanan');
+        
+    } else if (viewMode === 'monthly') {
+        const head = ['Status', 'Jumlah'];
+        const body = [
+            ['Total Kehadiran', currentMonthStats.total], // Tambahkan total di awal
+            ['Aktif', currentMonthStats.aktif],
+            ['Jarang Hadir', currentMonthStats.jarangHadirlah],
+            ['Tidak Aktif', currentMonthStats.tidakAktif]
+        ];
+        addTable(head, body, `Ringkasan Status Kehadiran Bulan ${monthNames[startMonth]}`);
+        
+        // Tambahkan detail harian (jika ada data)
+        const dailyDataForPdf = dailyTrendsData.filter(d => d.aktif !== null || d.jarangHadirlah !== null || d.tidakAktif !== null);
+        if (dailyDataForPdf.length > 0) {
+            const headDaily = ['Tanggal', 'Aktif', 'Jarang Hadir', 'Tidak Aktif'];
+            const bodyDaily = dailyDataForPdf.map(d => [
+                d.hari, d.aktif ?? '-', d.jarangHadirlah ?? '-', d.tidakAktif ?? '-'
+            ]);
+            addTable(headDaily, bodyDaily, 'Tren Harian (Sabtu/Minggu) Bulan Ini');
+        }
+    }
+    
+    // 2. Data Detail Multi-Tanggal
+    if (selectedDatesKeys.length > 0) {
+        // Tabel 1: Ringkasan Global Detail Tanggal
+        const headSummary = ['Metrik', 'Jumlah'];
+        const bodySummary = [
+            ['Total Kehadiran Akumulatif', totalKehadiranSelectedDates],
+            ['Total Tanggal Terpilih', selectedDatesKeys.length],
+            ['Persentase Potensi Kehadiran', combinedPresentaseKehadiran]
+        ];
+        addTable(headSummary, bodySummary, `Ringkasan Kehadiran Dari ${selectedDatesKeys.length} Tanggal`);
+
+        // Tabel 2: Total Hadir Per Sesi
+        const head1 = ['Sesi Kebaktian', 'Total Hadir'];
+        const body1 = Object.entries(combinedKehadiranBySesi)
+            .sort(([, a], [, b]) => b - a)
+            .map(([session, count]) => [session, count]);
+        addTable(head1, body1, 'Rincian Kehadiran Per Sesi (Akumulatif)');
+        
+        // Tabel 3: Status Kehadiran Per Sesi
+        const head2 = ['Sesi Kebaktian', 'Aktif', 'Jarang Hadir', 'Tidak Aktif'];
+        // Menggunakan combinedStatusBySession yang sudah diakumulasi
+        const body2 = combinedStatusBySession.map((row: any) => [
+            row.fullSessionName, row.Aktif, row['Jarang Hadir'], row['Tidak Aktif']
+        ]);
+        addTable(head2, body2, 'Rincian Status Kehadiran Per Sesi (Akumulatif)');
+    }
+    
+    doc.save(`${filename}.pdf`);
+
+    setIsDownloading(false);
+  };
+  // --- AKHIR LOGIKA DOWNLOAD UTAMA PDF ---
+
 
   return (
     <div className="flex min-h-screen bg-gray-50">
       {/* Sidebar */}
       <div className="fixed top-0 left-0 h-full">
-              <Sidebar activeView='statistic' />
-            </div>
+          <Sidebar activeView='statistic' />
+      </div>
 
       {/* Main Content */}
       <main className="ml-64 flex-grow p-8">
-        <h1 className="text-3xl font-bold text-gray-800 mb-6">Laporan dan Statistik Jemaat</h1>
+        <div className="flex justify-between items-center mb-6">
+            <h1 className="text-3xl font-bold text-gray-800">Laporan dan Statistik Jemaat</h1>
+            <button 
+                onClick={handleDownload} // Langsung panggil handleDownload
+                disabled={isLoading || (selectedDatesKeys.length === 0 && viewMode === 'yearly' && currentYearStats.length === 0 && viewMode === 'monthly' && currentMonthStats.total === 0)}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg"
+            >
+                <Download size={18} />
+                <span className="hidden sm:inline">Download Laporan (PDF)</span> 
+            </button>
+        </div>
+
 
         {isLoading ? (
           <div className="flex justify-center items-center h-64">
+            <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
             <p className="text-xl text-indigo-600">Memuat data statistik...</p>
           </div>
         ) : (
@@ -681,26 +1117,6 @@ export default function StatisticPage() {
                 <BarChart3 size={20} className="mr-2"/> Statistik Keseluruhan Database
               </h2>
               
-              {/* Overall Summary Cards */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                <div className="bg-gradient-to-br from-green-500 to-green-600 p-6 rounded-xl shadow-xl text-white">
-                  <p className="text-sm opacity-80">Total Status Kehadiran Aktif</p>
-                  <p className="text-4xl font-extrabold mt-1">{overallStats.kehadiranDistribution["Aktif"] ?? 0}</p>
-                </div>
-                <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-6 rounded-xl shadow-xl text-white">
-                  <p className="text-sm opacity-80">Total Status Kehadiran Jarang Hadir</p>
-                  <p className="text-4xl font-extrabold mt-1">{overallStats.kehadiranDistribution["Jarang Hadir"] ?? 0}</p>
-                </div>
-                <div className="bg-gradient-to-br from-red-500 to-red-600 p-6 rounded-xl shadow-xl text-white">
-                  <p className="text-sm opacity-80">Total Status Kehadiran Tidak Aktif</p>
-                  <p className="text-4xl font-extrabold mt-1">{overallStats.kehadiranDistribution["Tidak Aktif"] ?? 0}</p>
-                </div>
-                 <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-xl shadow-xl text-white">
-                  <p className="text-sm opacity-80">Total Jemaat Terdaftar</p>
-                  <p className="text-4xl font-extrabold mt-1">{overallStats.totalJemaat}</p>
-                </div>
-              </div>
-
               {/* Toggle View Mode */}
               <div className="flex gap-3 mb-6">
                 <button
@@ -727,25 +1143,55 @@ export default function StatisticPage() {
 
               {/* Navigasi Bulan/Tahun (Global) */}
               <div className="flex items-center justify-between mb-6 bg-white p-5 rounded-xl shadow-md">
-                <button 
-                  onClick={handlePrevMonth} 
-                  className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
-                >
-                  <ChevronLeft className="h-6 w-6" />
-                </button>
+                
+                {/* Navigasi Kiri (Tahun/Bulan) */}
+                {viewMode === 'yearly' ? (
+                    <button 
+                      onClick={handlePrevYear} 
+                      className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
+                    >
+                      <ChevronLeft className="h-6 w-6" />
+                    </button>
+                ) : (
+                    <button 
+                      onClick={handlePrevMonth} 
+                      className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
+                    >
+                      <ChevronLeft className="h-6 w-6" />
+                    </button>
+                )}
                 
                 <div className="relative">
+                  {/* Tombol Tengah (Year Picker) */}
                   <button 
-                    onClick={() => setShowYearPicker(!showYearPicker)}
+                    onClick={handleOpenYearPicker} // Panggil picker di kedua mode
                     className="text-2xl font-bold text-gray-800 hover:text-indigo-600 transition px-6 py-2 rounded-lg hover:bg-indigo-50"
                   >
                     {viewMode === 'monthly' ? `${monthNames[startMonth]} ${year}` : `Tahun ${year}`}
                   </button>
                   
-                  {showYearPicker && (
+                  {/* MODAL YEAR PICKER GLOBAL */}
+                  {showYearPicker && ( 
                     <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white border border-gray-200 rounded-lg shadow-xl p-4 z-10 min-w-[400px]">
+                        <div className="flex items-center justify-between mb-4">
+                            <button
+                                onClick={() => setGridStartYear(prev => prev - 10)}
+                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                            >
+                                <ChevronLeft className="h-5 w-5" />
+                            </button>
+                            <span className="text-lg font-semibold text-gray-700">
+                                {gridStartYear} - {gridStartYear + 9}
+                            </span>
+                            <button
+                                onClick={() => setGridStartYear(prev => prev + 10)}
+                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                            >
+                                <ChevronRight className="h-5 w-5" />
+                            </button>
+                        </div>
                       <div className="grid grid-cols-5 gap-3">
-                        {years.map(y => (
+                        {yearsForPicker.map(y => (
                           <button
                             key={y}
                             onClick={() => handleYearChange(y)}
@@ -759,49 +1205,87 @@ export default function StatisticPage() {
                           </button>
                         ))}
                       </div>
+                      <div className="flex justify-center mt-6">
+                        <button
+                          onClick={() => setShowYearPicker(false)}
+                          className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                        >
+                          Tutup
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
                 
-                <button 
-                  onClick={handleNextMonth} 
-                  className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
-                >
-                  <ChevronRight className="h-6 w-6" />
-                </button>
+                {/* Navigasi Kanan (Tahun/Bulan) */}
+                {viewMode === 'yearly' ? (
+                    <button 
+                      onClick={handleNextYear} 
+                      disabled={isNextYearDisabled} // Menonaktifkan tombol jika navigasi melewati tahun ini
+                      className={`rounded-full p-3 text-indigo-600 transition ${
+                          isNextYearDisabled 
+                            ? 'text-gray-400 cursor-not-allowed' 
+                            : 'hover:bg-indigo-100'
+                      }`}
+                    >
+                      <ChevronRight className="h-6 w-6" />
+                    </button>
+                ) : (
+                    <button 
+                      onClick={handleNextMonth} 
+                      disabled={isNextMonthDisabled} // Menonaktifkan tombol jika navigasi melewati bulan ini
+                      className={`rounded-full p-3 text-indigo-600 transition ${
+                          isNextMonthDisabled 
+                            ? 'text-gray-400 cursor-not-allowed' 
+                            : 'hover:bg-indigo-100'
+                      }`}
+                    >
+                      <ChevronRight className="h-6 w-6" />
+                    </button>
+                )}
+                
               </div>
 
               {/* Tampilan Bulanan */}
               {viewMode === 'monthly' && (
                 <>
-                  {/* Summary Cards */}
+                  {/* Summary Cards DENGAN TOTAL KEHADIRAN */}
                   <div className="mb-8">
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                       
+                      {/* NEW: 0. Total Kehadiran */}
+                       <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-xl shadow-xl text-white">
+                          <p className="text-sm opacity-90 mb-1">Total Kehadiran</p>
+                          <p className="text-4xl font-extrabold mt-1">{currentMonthStats.total}</p>
+                          <p className="text-xs opacity-80 mt-1">akumulasi kehadiran per bulan</p>
+                      </div>
+
                       {/* 1. Status Aktif */}
                       <div className="bg-gradient-to-br from-green-500 to-green-600 p-6 rounded-xl shadow-xl text-white">
                         <p className="text-sm opacity-90 mb-1">Status Aktif</p>
-                        <p className="text-5xl font-extrabold">{currentMonthStats.aktif}</p>
-                        <p className="text-xs opacity-80 mt-1">orang hadir terus</p>
+                        <p className="text-4xl font-extrabold">{currentMonthStats.aktif}</p>
+                        <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
                       </div>
                       
                       {/* 2. Status Jarang Hadir */}
                       <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-6 rounded-xl shadow-xl text-white">
                         <p className="text-sm opacity-90 mb-1">Status Jarang Hadir</p>
-                        <p className="text-5xl font-extrabold">{currentMonthStats.jarangHadir}</p>
-                        <p className="text-xs opacity-80 mt-1">orang hadir maks 2x</p>
+                        <p className="text-4xl font-extrabold">{currentMonthStats.jarangHadirlah}</p>
+                        <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
                       </div>
                       
                       {/* 3. Status Tidak Aktif */}
                       <div className="bg-gradient-to-br from-red-500 to-red-600 p-6 rounded-xl shadow-xl text-white">
                         <p className="text-sm opacity-90 mb-1">Status Tidak Aktif</p>
-                        <p className="text-5xl font-extrabold">{currentMonthStats.tidakAktif}</p>
-                        <p className="text-xs opacity-80 mt-1">orang tidak hadir/hadir 1x</p>
+                        <p className="text-4xl font-extrabold">{currentMonthStats.tidakAktif}</p>
+                        <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
                       </div>
                     </div>
 
-                    {/* Grafik Statistik Bulanan */}
+                    {/* Grafik Statistik Bulanan (DIUBAH) */}
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                      
+                      {/* Pie Chart: Distribusi Status Kehadiran Bulanan */}
                       <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
                         <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
                           Distribusi Status Kehadiran Bulan {monthNames[startMonth]}
@@ -811,7 +1295,7 @@ export default function StatisticPage() {
                             <Pie 
                               data={[
                                 { name: 'Aktif', value: currentMonthStats.aktif },
-                                { name: 'Jarang Hadir', value: currentMonthStats.jarangHadir },
+                                { name: 'Jarang Hadir', value: currentMonthStats.jarangHadirlah },
                                 { name: 'Tidak Aktif', value: currentMonthStats.tidakAktif }
                               ]} 
                               cx="50%" 
@@ -832,18 +1316,15 @@ export default function StatisticPage() {
                         </ResponsiveContainer>
                       </div>
 
-                      {/* Tren Harian Status Kehadiran (Line Chart) */}
-                      <DailyLineChart 
-                          data={dailyStatusTrend} 
-                          month={detailStartMonth} 
-                          year={detailYear} 
-                      />
+                      {/* MonthLineChart: Tren Status Kehadiran Per Tanggal (NEW) */}
+                      <MonthLineChart data={dailyTrendsData} month={startMonth} year={year} />
+                      
                     </div>
                   </div>
                 </>
               )}
 
-              {/* Tampilan Tahunan - Diagram Garis */}
+              {/* Tampilan Tahunan - Diagram Garis (PERBAIKAN SINKRONISASI) */}
               {viewMode === 'yearly' && (
                 <div className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200">
                   <h3 className="text-2xl font-bold text-gray-800 mb-6">
@@ -863,43 +1344,73 @@ export default function StatisticPage() {
                       <Tooltip />
                       <Legend />
                       <Line type="monotone" dataKey="aktif" stroke="#10B981" strokeWidth={3} name="Aktif" dot={{ fill: '#10B981' }} activeDot={{ r: 8 }} />
-                      <Line type="monotone" dataKey="jarangHadir" stroke="#F59E0B" strokeWidth={3} name="Jarang Hadir" dot={{ fill: '#F59E0B' }} activeDot={{ r: 8 }} />
+                      <Line type="monotone" dataKey="jarangHadirlah" stroke="#F59E0B" strokeWidth={3} name="Jarang Hadir" dot={{ fill: '#F59E0B' }} activeDot={{ r: 8 }} />
                       <Line type="monotone" dataKey="tidakAktif" stroke="#EF4444" strokeWidth={3} name="Tidak Aktif" dot={{ fill: '#EF4444' }} activeDot={{ r: 8 }} />
+                      {/* PERBAIKAN: dot={false} untuk Total Kehadiran */}
+                      <Line 
+                          type="monotone" 
+                          dataKey="total" 
+                          stroke="#4F46E5" 
+                          strokeWidth={4} 
+                          name="Total Kehadiran" 
+                          dot={false} // PERBAIKAN: Menghilangkan titik
+                          activeDot={false} // PERBAIKAN: Menghilangkan titik aktif
+                      />
                     </LineChart>
                   </ResponsiveContainer>
                   
-                  {/* Summary Cards Tahunan */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 mt-8">
+                  {/* Summary Cards Tahunan (MENJADI 5 KARTU) */}
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 mt-8">
+                    {/* Kartu 1: Total Kehadiran Tahunan */}
+                    <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-6 text-center">
+                      <p className="text-sm text-indigo-700 mb-2 font-semibold">Total Kehadiran Tahunan</p>
+                      <p className="text-5xl font-extrabold text-indigo-600">
+                        {totalKehadiranTahunan}
+                      </p>
+                      <p className="text-xs text-indigo-600 mt-2">akumulasi total kehadiran</p>
+                    </div>
+
+                    {/* Kartu 2: Total Status Aktif */}
                     <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 text-center">
                       <p className="text-sm text-green-700 mb-2 font-semibold">Total Status Aktif</p>
                       <p className="text-5xl font-extrabold text-green-600">
-                        {currentYearStats.reduce((sum, month) => sum + month.aktif, 0)}
+                        {totalAktifTahunan}
                       </p>
                       <p className="text-xs text-green-600 mt-2">akumulasi status aktif</p>
                     </div>
-                    <div className="bg-red-50 border-2 border-red-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-red-700 mb-2 font-semibold">Total Status Tidak Aktif</p>
+                    
+                    {/* Kartu 3: Total Status Jarang Hadir */}
+                    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-6 text-center">
+                      <p className="text-sm text-yellow-700 mb-2 font-semibold">Total Jarang Hadir</p>
+                      <p className="text-5xl font-extrabold text-yellow-600">
+                        {totalJarangHadirlahTahunan}
+                      </p>
+                      <p className="text-xs text-yellow-600 mt-2">akumulasi status jarang hadir</p>
+                    </div>
+
+                    {/* Kartu 4: Total Status Tidak Aktif */}
+                    <div className="bg-red-100 border-2 border-red-300 rounded-xl p-6 text-center">
+                      <p className="text-sm text-red-700 mb-2 font-semibold">Total Tidak Aktif</p>
                       <p className="text-5xl font-extrabold text-red-600">
-                        {currentYearStats.reduce((sum, month) => sum + month.tidakAktif, 0)}
+                        {totalTidakAktifTahunan}
                       </p>
                       <p className="text-xs text-red-600 mt-2">akumulasi status tidak aktif</p>
                     </div>
-                    <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-indigo-700 mb-2 font-semibold">Rata-rata Aktif/Bulan</p>
-                      <p className="text-5xl font-extrabold text-indigo-600">
-                        {currentYearStats.length > 0 
-                          ? Math.round(currentYearStats.reduce((sum, month) => sum + month.aktif, 0) / currentYearStats.length)
-                          : 0
-                        }
+
+                    {/* Kartu 5: Rata-Rata Kehadiran Per Bulan */}
+                    <div className="bg-gray-100 border-2 border-gray-300 rounded-xl p-6 text-center">
+                      <p className="text-sm text-gray-700 mb-2 font-semibold">Rata-rata Kehadiran/Bulan</p>
+                      <p className="text-5xl font-extrabold text-gray-600">
+                        {rataRataKehadiranPerBulan}
                       </p>
-                      <p className="text-xs text-indigo-600 mt-2">orang per bulan</p>
+                      <p className="text-xs text-gray-600 mt-2">orang per bulan</p>
                     </div>
                   </div>
                 </div>
               )}
             </section>
 
-            {/* Kalender - Pilih Tanggal untuk Detail Statistik (Sudah diperbaiki) */}
+            {/* Kalender - Pilih Tanggal untuk Detail Statistik (Sudah diperbaiki untuk Multi-Select) */}
             <section className="mb-10">
               <h2 className="text-2xl font-bold text-indigo-700 mb-4 flex items-center">
                 <Calendar size={20} className="mr-2"/> Pilih Tanggal untuk Detail Statistik
@@ -907,15 +1418,15 @@ export default function StatisticPage() {
               <p className="text-sm text-gray-600 mb-6">
                 <span className="inline-flex items-center">
                   <span className="w-2 h-2 bg-indigo-500 rounded-full mr-2"></span>
-                  Tanggal dengan titik biru memiliki data statistik.
+                  Tanggal dengan titik biru adalah hari Sabtu/Minggu yang memiliki data.
                 </span>
                 <br/>
                 <span className="font-semibold text-red-600">
-                  *Klik tanggal bertitik biru untuk melihat detail statistik di bawah. Klik titik di grafik "Tren Harian" di atas untuk ke Database.
+                  *Klik tanggal bertitik biru untuk menambah/menghapus dari seleksi. Statistik di bawah akan mengakumulasi semua tanggal yang dipilih.
                 </span>
               </p>
               
-              {/* Navigasi Bulan/Tahun untuk Kalender Detail (BARU) */}
+              {/* Navigasi Bulan/Tahun untuk Kalender Detail (Tampilan Tahun) */}
               <div className="flex items-center justify-between mb-6 bg-white p-5 rounded-xl shadow-md">
                 <button 
                   onClick={handleDetailPrevMonth} 
@@ -925,22 +1436,41 @@ export default function StatisticPage() {
                 </button>
                 
                 <div className="relative">
+                  {/* PERUBAHAN: Tampilkan hanya Tahun, dan klik akan membuka pemilih tahun */}
                   <button 
-                    onClick={() => setShowDetailYearPicker(!showDetailYearPicker)}
+                    onClick={handleOpenDetailYearPicker}
                     className="text-2xl font-bold text-gray-800 hover:text-indigo-600 transition px-6 py-2 rounded-lg hover:bg-indigo-50"
                   >
-                    {monthNames[detailStartMonth]} {detailYear}
+                    Tahun {detailYear}
                   </button>
                   
+                  {/* MODAL YEAR PICKER DETAIL */}
                   {showDetailYearPicker && (
                     <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white border border-gray-200 rounded-lg shadow-xl p-4 z-10 min-w-[400px]">
+                        <div className="flex items-center justify-between mb-4">
+                            <button
+                                onClick={() => setGridStartYear(prev => prev - 10)}
+                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                            >
+                                <ChevronLeft className="h-5 w-5" />
+                            </button>
+                            <span className="text-lg font-semibold text-gray-700">
+                                {gridStartYear} - {gridStartYear + 9}
+                            </span>
+                            <button
+                                onClick={() => setGridStartYear(prev => prev + 10)}
+                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                            >
+                                <ChevronRight className="h-5 w-5" />
+                            </button>
+                        </div>
                       <div className="grid grid-cols-5 gap-3">
-                        {years.map(y => (
+                        {yearsForPicker.map(y => (
                           <button
                             key={y}
                             onClick={() => handleDetailYearChange(y)}
                             className={`px-5 py-3 rounded-lg font-semibold text-base transition ${
-                              y === detailYear 
+                              y === detailYear
                                 ? 'bg-indigo-600 text-white shadow-lg' 
                                 : 'hover:bg-indigo-100 text-gray-700 border border-gray-200'
                             }`}
@@ -948,6 +1478,14 @@ export default function StatisticPage() {
                             {y}
                           </button>
                         ))}
+                      </div>
+                      <div className="flex justify-center mt-6">
+                        <button
+                          onClick={() => setShowDetailYearPicker(false)}
+                          className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                        >
+                          Tutup
+                        </button>
                       </div>
                     </div>
                   )}
@@ -963,32 +1501,32 @@ export default function StatisticPage() {
 
 
               <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
-                {monthsToDisplay.map((monthIndex) => {
-                  const daysInMonth = getDaysInMonth(monthIndex, detailYear);
-                  const firstDay = getFirstDayOfMonth(monthIndex, detailYear);
+                {monthsToDisplay.map(({ monthIndex, year }) => {
+                  const daysInMonth = getDaysInMonth(monthIndex, year);
+                  const firstDay = getFirstDayOfMonth(monthIndex, year);
                   const startDayOffset = firstDay === 0 ? 6 : firstDay - 1;
                   const daysArray = [
                     ...Array(startDayOffset).fill(null),
                     ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
                   ];
-                  const datesWithStats = getDatesWithStats(monthIndex, detailYear);
+                  const datesWithStats = getDatesWithStats(monthIndex, year);
                   
                   return (
-                    <div key={`${detailYear}-${monthIndex}`} className="bg-white rounded-xl p-5 border-2 border-gray-200 shadow-md hover:shadow-lg transition">
+                    <div key={`${year}-${monthIndex}`} className="bg-white rounded-xl p-5 border-2 border-gray-200 shadow-md hover:shadow-lg transition">
                       <h4 className="mb-4 text-center text-lg font-bold text-indigo-600">
-                        {monthNames[monthIndex]} {detailYear}
+                        {monthNames[monthIndex]} {year}
                       </h4>
                       <div className="grid grid-cols-7 text-xs font-semibold text-gray-500 mb-3">
                         {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((d) => (
-                          <div key={d} className="text-center py-1">{d}</div>
+                          <div key={d} className="text-center">{d}</div>
                         ))}
                       </div>
                       <div className="grid grid-cols-7 gap-1.5 text-center text-sm">
                         {daysArray.map((day, i) => {
                           if (day === null) return <div key={i} className="p-2"></div>;
-                          const thisDate = new Date(detailYear, monthIndex, day);
+                          const thisDate = new Date(year, monthIndex, day);
                           const dayKey = getDayKey(thisDate);
-                          const isSelected = selectedDateKey === dayKey;
+                          const isSelected = selectedDatesKeys.includes(dayKey);
                           const hasStats = datesWithStats.has(dayKey);
                           
                           const handleClick = () => {
@@ -1002,7 +1540,7 @@ export default function StatisticPage() {
                               key={i} 
                               className={`relative p-2.5 rounded-lg transition-all duration-200 font-medium ${
                                 isSelected 
-                                  ? 'bg-red-500 text-white font-bold shadow-lg scale-110 cursor-pointer' 
+                                  ? 'bg-red-500 text-white font-bold shadow-lg scale-110 ring-2 ring-red-300 cursor-pointer' 
                                   : hasStats
                                   ? 'text-gray-800 hover:bg-indigo-100 hover:scale-105 cursor-pointer'
                                   : 'text-gray-300 cursor-not-allowed'
@@ -1023,33 +1561,32 @@ export default function StatisticPage() {
               </div>
             </section>
 
-            {/* Grafik Detail Tanggal (Sekarang akan muncul lagi saat tanggal diklik) */}
-            {selectedDateKey && dateStats ? (
+            {/* Grafik Detail Tanggal (Multi-Select) */}
+            {selectedDatesKeys.length > 0 && Object.keys(dateStatsMap).length > 0 ? (
               <section className="mt-8">
-                <h2 className="text-2xl font-bold text-red-600 mb-4 border-b-2 pb-2">
-                  Detail Kehadiran: {selectedDateDisplay}
-                </h2>
+                <div className="flex justify-between items-center border-b-2 pb-2 mb-4">
+                  <h2 className="text-2xl font-bold text-red-600">
+                    Detail Kehadiran: {selectedDatesKeys.length} Tanggal Dipilih ({selectedDatesDisplay})
+                  </h2>
+                </div>
                 
-                {/* 1. Total Kehadiran Semua Ibadah (Satu Kartu) */}
+                {/* 1. Total Kehadiran Semua Ibadah (Satu Kartu Gabungan) */}
                 <div className="grid grid-cols-1 mb-6 max-w-lg mx-auto">
                     <div className="bg-red-100 p-6 rounded-xl shadow-md border-2 border-red-300">
                         <p className="text-sm text-red-700">Total Kehadiran Semua Kebaktian & Sesi Ibadah</p>
-                        <p className="text-5xl font-extrabold text-red-600 mt-1">{dateStats.totalKehadiranSemuaSesi}</p>
-                        <p className="text-xs text-red-500">Total akumulatif yang hadir di semua sesi</p>
+                        <p className="text-5xl font-extrabold text-red-600 mt-1">{totalKehadiranSelectedDates}</p>
+                        <p className="text-xs text-red-500">Total akumulatif yang hadir di semua sesi dari {selectedDatesKeys.length} tanggal</p>
                     </div>
                 </div>
 
-                {/* 2. Total Kehadiran di Masing-Masing Kebaktian (Dynamic Cards) */}
+                {/* 2. Total Kehadiran di Masing-Masing Kebaktian (Dynamic Cards Gabungan) */}
                 <div className="mb-8">
-                    <h3 className="text-xl font-bold text-gray-700 mb-4 border-b pb-2">Total Kehadiran per Sesi Kebaktian</h3>
+                    <h3 className="text-xl font-bold text-gray-700 mb-4 border-b pb-2">Total Kehadiran per Sesi Kebaktian (Akumulatif)</h3>
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {Object.entries(dateStats.kehadiranBySesi).map(([sessionName, count]) => {
+                        {Object.entries(combinedKehadiranBySesi).sort(([, a], [, b]) => b - a).map(([sessionName, count]) => {
                           const isHovered = hoveredSession === sessionName;
-                          
-                          // Mendapatkan nama sesi yang bersih (hanya jenis ibadah/kebaktian)
                           const cleanSessionName = getCleanSessionName(sessionName);
-                          
-                          const highlight = isHovered; // Highlight berdasarkan hover pada kartu itu sendiri atau PieChart
+                          const highlight = isHovered; 
 
                           return (
                             <div 
@@ -1063,38 +1600,235 @@ export default function StatisticPage() {
                               onMouseEnter={() => setHoveredSession(sessionName)}
                               onMouseLeave={() => setHoveredSession(null)}
                             >
-                                <p className="text-sm text-indigo-700 font-semibold truncate" title={sessionName}>{cleanSessionName}</p> {/* <-- Judul Sesi Bersih */}
+                                <p className="text-sm text-indigo-700 font-semibold truncate" title={sessionName}>{cleanSessionName}</p>
                                 <p className="text-3xl font-extrabold text-gray-800 mt-1">{count}</p>
-                                <p className="text-xs text-gray-500">{sessionName.replace(cleanSessionName, '').trim() || 'orang hadir'}</p> {/* <-- Info Waktu/Hari di Bawah */}
+                                <p className="text-xs text-gray-500">{sessionName.replace(cleanSessionName, '').trim() || 'orang hadir'}</p>
                             </div>
                           );
                         })}
                     </div>
                 </div>
                 
-                {/* 3. Menampilkan chart di bawah (Diposisikan di luar grid cards di atas) */}
+                {/* 3. Menampilkan chart di bawah */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* CHART 1: LINE CHART - Status Trend Per Session */}
+                  {/* CHART 1: LINE CHART - Status Trend Per Session (AKUMULATIF & FILTERED) */}
                   <SessionLineChart
-                    data={statusBySessionData}
+                    // MENGGUNAKAN LOGIKA AKUMULASI YANG BARU
+                    data={combinedStatusBySession} 
                     hoveredSession={hoveredSession}
                     setHoveredSession={setHoveredSession}
-                    selectedDateKey={selectedDateKey} // Berikan tanggal yang dipilih
+                    selectedDatesKeys={selectedDatesKeys} 
                   />
-                  {/* CHART 2: Distribusi Kehadiran Sesi (Pie Chart) */}
+                  {/* CHART 2: Distribusi Kehadiran Sesi (Pie Chart) - Menggunakan komponen PieChartCard yang sudah diperbaiki logic legend-nya */}
                   <PieChartCard 
-                    title="Distribusi Kehadiran Berdasarkan Sesi" 
-                    data={dateStats.kehadiranBySesi}
-                    description="Jumlah kehadiran per sesi ibadah pada tanggal ini."
+                    title="Distribusi Kehadiran Berdasarkan Sesi (Akumulatif)" 
+                    data={combinedKehadiranBySesi}
+                    description={`Jumlah kehadiran per sesi ibadah dari ${selectedDatesKeys.length} tanggal yang dipilih.`}
                     hoveredSession={hoveredSession}
                     setHoveredSession={setHoveredSession}
                   />
                 </div>
+                
+                {/* NEW: Rincian Per Tanggal (Sudah diperbaiki dengan chart dan total hadir di judul) */}
+                {selectedDatesKeys.length > 0 && (
+                    <div className="mt-8 pt-6 border-t border-gray-300">
+                        <h3 className="text-xl font-bold text-indigo-700 mb-4">Rincian Per Tanggal</h3>
+                        <div className="space-y-6">
+                            {Object.entries(dateStatsMap).map(([dateKey, stats]) => {
+                                
+                                // Data untuk Pie Chart Kehadiran Sesi per Tanggal
+                                const singleDatePieData = Object.entries(stats.kehadiranBySesi).map(([name, value]) => ({ 
+                                  name, 
+                                  value, 
+                                  fullSessionName: name 
+                                }));
+                                
+                                // Data untuk Line Chart Status Per Tanggal (Data Baru dari statusKehadiranBySesi)
+                                const singleDateStatusData = Object.entries(stats.statusKehadiranBySesi)
+                                  .map(([session, statuses]) => ({
+                                      session: getShortSessionName(session),
+                                      fullSessionName: session,
+                                      Aktif: statuses.Aktif || 0,
+                                      'Jarang Hadir': statuses['Jarang Hadir'] || 0,
+                                      'Tidak Aktif': statuses['Tidak Aktif'] || 0,
+                                  }))
+                                  .filter(item => item.Aktif > 0 || item['Jarang Hadir'] > 0 || item['Tidak Aktif'] > 0);
+
+
+                                return (
+                                <div key={dateKey} className="bg-white p-5 rounded-xl shadow-lg border-2 border-gray-100">
+                                    <h4 className="text-lg font-bold text-indigo-600 mb-3">
+                                        {new Date(dateKey).toLocaleDateString("id-ID", { weekday: 'long', day: "2-digit", month: "long", year: "numeric" })}
+                                        {/* Tampilkan Total Hadir di Judul */}
+                                        <span className="text-sm font-normal text-gray-500 ml-3">
+                                            (Total Hadir: {stats.totalKehadiranSemuaSesi})
+                                        </span>
+                                    </h4>
+                                    
+                                    {/* Ringkasan Kartu Per Tanggal */}
+                                    <div className="grid grid-cols-3 gap-4 mb-6">
+                                        <div className="p-3 bg-red-50 rounded-lg">
+                                            <p className="text-sm text-red-700">Total Hadir</p>
+                                            <p className="text-2xl font-bold text-red-600">{stats.totalKehadiranSemuaSesi}</p>
+                                        </div>
+                                        <div className="p-3 bg-green-50 rounded-lg">
+                                            <p className="text-sm text-green-700">Sesi Terbanyak</p>
+                                            <p className="text-md font-semibold text-green-700 truncate" title={Object.entries(stats.kehadiranBySesi).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A'}>
+                                                {getCleanSessionName(Object.entries(stats.kehadiranBySesi).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A')}
+                                            </p>
+                                        </div>
+                                        <div className="p-3 bg-blue-50 rounded-lg">
+                                            <p className="text-sm text-blue-700">Persentase</p>
+                                            <p className="text-2xl font-bold text-blue-600">{stats.presentaseKehadiran}</p>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Chart Detail Per Tanggal */}
+                                    {singleDatePieData.length > 0 ? (
+                                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-4">
+                                            {/* Line Chart Status Per Tanggal (Menggantikan Bar Chart) */}
+                                            <SingleDateStatusLineChart data={singleDateStatusData} />
+
+                                            {/* Pie Chart Sesi per Tanggal (Menggunakan PieChartCard yang sudah diperbaiki logic legend-nya) */}
+                                            <div className="bg-white p-6 rounded-xl shadow-inner border border-gray-200">
+                                                <h5 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
+                                                    Persentase Kehadiran Sesi 
+                                                </h5>
+                                                <ResponsiveContainer width="100%" height={250}>
+                                                    <PieChart margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                                                        <Pie 
+                                                            data={singleDatePieData} 
+                                                            cx="50%" 
+                                                            cy="50%" 
+                                                            labelLine={false} 
+                                                            label={false} // Menonaktifkan label di slices
+                                                            outerRadius={80} // Disesuaikan
+                                                            fill="#8884d8" 
+                                                            dataKey="value"
+                                                        >
+                                                            {singleDatePieData.map((entry, index) => (
+                                                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                                                            ))}
+                                                        </Pie>
+                                                        <Tooltip 
+                                                            formatter={(value: number, name: string) => [`${value} orang`, name]}
+                                                        />
+                                                        <Legend 
+                                                            layout="horizontal" 
+                                                            align="center" 
+                                                            verticalAlign="bottom"
+                                                            wrapperStyle={{ paddingTop: '0px', marginBottom: '-10px' }}
+                                                            content={renderLegend} // Menggunakan custom render legend
+                                                        />
+                                                    </PieChart>
+                                                </ResponsiveContainer>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <p className="text-center text-gray-500 mt-4">Tidak ada data kehadiran untuk tanggal ini.</p>
+                                    )}
+                                </div>
+                            );
+                            })}
+                        </div>
+                    </div>
+                )}
               </section>
-            ) : null}
+            ) : (
+                <div className="flex flex-col justify-center items-center h-64 bg-white rounded-xl shadow-lg border-2 border-dashed border-gray-300">
+                    <BarChart3 size={64} className="text-gray-300 mb-4" />
+                    <p className="text-xl text-gray-500 mb-2">Pilih minimal satu tanggal di kalender</p>
+                    <p className="text-sm text-gray-400">Pilih hari Sabtu atau Minggu untuk melihat detail statistik.</p>
+                </div>
+            )}
           </>
         )}
+        
+        {/* MODAL YEAR PICKER GLOBAL */}
+        {showYearPicker && ( 
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-sm"> 
+              <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">
+                Pilih Tahun
+              </h3>
+
+              <div className="flex items-center justify-between mb-4">
+                <button
+                  onClick={() => setGridStartYear(prev => prev - 10)}
+                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </button>
+                <span className="text-lg font-semibold text-gray-700">
+                  {gridStartYear} - {gridStartYear + 9}
+                </span>
+                <button
+                  onClick={() => setGridStartYear(prev => prev + 10)}
+                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </button>
+              </div>
+
+              <div className="grid grid-cols-5 gap-3">
+                {yearsForPicker.map((y) => (
+                  <button
+                    key={y}
+                    onClick={() => handleYearChange(y)}
+                    className={`
+                      px-4 py-3 text-sm font-semibold rounded-lg transition duration-150
+                      ${y === year
+                        ? 'bg-indigo-600 text-white' 
+                        : 'bg-gray-100 text-gray-800 hover:bg-indigo-50 hover:text-indigo-600'
+                      }
+                    `}
+                  >
+                    {y}
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex justify-center mt-6">
+                <button
+                  onClick={() => setShowYearPicker(false)}
+                  className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Tutup
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {/* END MODAL YEAR PICKER GLOBAL */}
+        
+        {/* LOADING DOWNLOAD */}
+        {isDownloading && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[999]">
+                <div className="bg-white p-6 rounded-xl shadow-2xl">
+                    <div className="flex items-center gap-3">
+                        <Loader2 size={24} className="animate-spin text-indigo-600" />
+                        <span className="text-lg font-semibold text-gray-800">Memproses download PDF...</span>
+                    </div>
+                </div>
+            </div>
+        )}
+        {/* END LOADING DOWNLOAD */}
+        
       </main>
+      
+      <style jsx>{`
+        .animate-spin {
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
+        }
+      `}</style>
     </div>
   );
 }
