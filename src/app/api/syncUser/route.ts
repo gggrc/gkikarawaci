@@ -1,8 +1,6 @@
-// src/app/api/syncUser/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// ✅ Definisikan tipe data untuk request body
 type IncomingUser = {
   id: string;
   name: string;
@@ -11,7 +9,7 @@ type IncomingUser = {
 
 const supabase = createClient(
   process.env.SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // ✅ pakai service key, bukan anon key
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
 export async function POST(req: Request) {
@@ -21,28 +19,58 @@ export async function POST(req: Request) {
 
     const { id, name, email } = body;
 
-    const { error } = await supabase
+    // 🔍 cek apakah user sudah ada
+    const { data: existingUser, error: fetchError } = await supabase
       .from("User")
-      .upsert([
+      .select("*")
+      .eq("clerkId", id)
+      .single();
+
+    if (fetchError && fetchError.code !== "PGRST116") {
+      // selain "not found"
+      console.error("❌ Fetch user error:", fetchError);
+      return NextResponse.json({ error: "Database error" }, { status: 500 });
+    }
+
+    if (existingUser) {
+      // ✅ user sudah ada → update hanya nama & email (biar sinkron)
+      const { error: updateError } = await supabase
+        .from("User")
+        .update({
+          nama: name,
+          email: email,
+        })
+        .eq("clerkId", id);
+
+      if (updateError) {
+        console.error("❌ Update user error:", updateError);
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
+
+      console.log("🔁 Existing user synced (no role/isVerified change)");
+      return NextResponse.json({ success: true, updated: true });
+    } else {
+      // 🆕 user belum ada → insert baru
+      const { error: insertError } = await supabase.from("User").insert([
         {
-          clerkId: id,          // ini tetap camelCase di JS
+          clerkId: id,
           nama: name,
           email: email,
           gender: "unknown",
           jabatan: "unknown",
-          isVerified: false,
+          isVerified: "pending",
           role: "user",
         },
       ]);
 
+      if (insertError) {
+        console.error("❌ Insert user error:", insertError);
+        return NextResponse.json({ error: insertError.message }, { status: 500 });
+      }
 
-    if (error) {
-      console.error("❌ Supabase error:", error);
-      return NextResponse.json({ error: error.message }, { status: 500 });
+      console.log("✅ New user inserted");
+      return NextResponse.json({ success: true, inserted: true });
     }
-
-    console.log("✅ User synced successfully");
-    return NextResponse.json({ success: true });
   } catch (err) {
     console.error("❌ Sync user failed:", err);
     return NextResponse.json({ error: "Server error" }, { status: 500 });

@@ -51,6 +51,6 @@ model User {
   gender        String    @default("unknown")
   email         String
   jabatan       String
-  isVerified    Boolean
+  isVerified    String   @default("pending") // "pending" | "accepted" | "rejected" 
   role          String
 }

@@ -1,13 +1,17 @@
 import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
-import { SignedOut, UserButton, SignedIn } from "@clerk/nextjs";
+import { SignedOut, UserButton, SignedIn, useUser } from "@clerk/nextjs";
 import { useEffect, useState, useCallback } from "react";
+import { useRouter } from "next/router";
 
 export default function Home() {
   const [activeSection, setActiveSection] = useState<string>("home");
   const [showNavbar, setShowNavbar] = useState(true);
   const [lastScrollY, setLastScrollY] = useState(0);
+
+  const { user } = useUser();
+  const router = useRouter();
 
   const handleScroll = useCallback(() => {
     if (window.scrollY > lastScrollY) {
@@ -43,6 +47,39 @@ export default function Home() {
       sections.forEach((section) => observer.unobserve(section));
     };
   }, []);
+
+  // 🔸 LOGIC REDIRECT USER SETELAH LOGIN
+  useEffect(() => {
+    const checkUser = async () => {
+      if (!user) return;
+
+      try {
+        const res = await fetch("/api/me");
+        const data = await res.json();
+
+        if (!data) return;
+
+        // admin langsung ke /statistic
+        if (data.role === "admin") {
+          router.push("/statistic");
+          return;
+        }
+
+        // user biasa cek verifikasi
+        if (data.isVerified === "pending") {
+          router.push("/waiting");
+        } else if (data.isVerified === "accepted") {
+          router.push("/statistic");
+        } else if (data.isVerified === "rejected") {
+          router.push("/rejected"); // kalau ada halaman rejected
+        }
+      } catch (err) {
+        console.error("Error fetching user data:", err);
+      }
+    };
+
+    checkUser();
+  }, [user, router]);
 
   return (
     <>

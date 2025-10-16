@@ -1,10 +1,11 @@
-import { SignIn, SignedIn, UserButton, SignedOut } from "@clerk/nextjs";
+import { SignIn, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 
 export default function LoginPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[url('/backgroundLogin.jpg')] bg-cover bg-center">
       <div className="absolute inset-0 bg-black/30" />
       <div className="relative mx-auto flex w-full max-w-4xl px-4">
+        {/* Left text section */}
         <div className="flex-1 pr-8 text-white">
           <h1 className="mt-8 mb-6 text-4xl font-bold">
             Selamat Datang Kembali
@@ -17,6 +18,7 @@ export default function LoginPage() {
           <h4 className="mt-3 text-xl font-bold italic">(Amsal 3:5-6)</h4>
         </div>
 
+        {/* Login form */}
         <SignedIn>
           <UserButton afterSignOutUrl="/" />
         </SignedIn>
@@ -26,7 +28,7 @@ export default function LoginPage() {
             path="/login"
             routing="path"
             signUpUrl="/register"
-            redirectUrl="/statistic"
+            redirectUrl="/"  // ✅ redirect ke root supaya middleware yang handle arahkan selanjutnya
           />
         </SignedOut>
       </div>
