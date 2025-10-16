@@ -1,7 +1,11 @@
-import { useEffect, useState, useMemo } from "react";
-import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, ListChecks, CheckCheck } from "lucide-react";
+import { useEffect, useState, useMemo, useCallback } from "react";
+import Image from "next/image";
+import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
+import { jsPDF } from 'jspdf';
+import autoTable from "jspdf-autotable";
+import type { UserOptions } from "jspdf-autotable";
 
 // --- Tipe Data ---
 interface Jemaat {
@@ -9,19 +13,28 @@ interface Jemaat {
   foto: string;
   nama: string;
   jabatan: string;
-  status: string;
   statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif";
   tanggalLahir?: string;
   umur?: string;
   keluarga?: string;
   email?: string;
   telepon?: string;
-  kehadiranSesi: string; // Jenis Ibadah/Kebaktian
+  kehadiranSesi: string; 
+  dokumen?: string; 
 }
 
-interface EditableJemaat extends Jemaat {}
+interface PreviewModalData {
+    url: string; 
+    name: string;
+    type: 'image' | 'pdf' | 'other';
+}
 
-// --- Utility function for Age Calculation ---
+type ViewMode = 'event_per_table' | 'monthly_summary';
+type SelectedEventsByDate = Record<string, string[]>;
+type EventsCache = Record<string, string[]>;
+
+// --- UTILITY FUNCTIONS & CONSTANTS ---
+
 const calculateAge = (dobString: string | undefined): string => {
   if (!dobString) return "";
   const today = new Date();
@@ -38,7 +51,6 @@ const calculateAge = (dobString: string | undefined): string => {
   return age.toString();
 };
 
-// --- Konstanta Kalender ---
 const monthNames: string[] = [
   "Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", 
   "Agustus", "September", "Oktober", "November", "Desember",
@@ -56,14 +68,68 @@ const getDayKey = (date: Date): string => {
   return `${year}-${month}-${day}`;
 };
 
-const getMonthKey = (date: Date): string => 
-  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+const getDaysInMonth = (month: number, year: number): number => 
+  new Date(year, month + 1, 0).getDate();
 
-// Helper untuk in-memory storage
-let memoryStorage: { 
+const getFirstDayOfMonth = (month: number, year: number): number => 
+  new Date(year, month, 1).getDay();
+
+const isImageUrlOrBase64 = (data: string): boolean => {
+    if (!data) return false;
+    return data.startsWith('data:image') || 
+           /\.(jpeg|jpg|png|gif|webp)$/i.test(data.toLowerCase()) || 
+           data.includes('picsum.photos');
+};
+
+const getAvailableSessionNames = (date: Date): string[] => {
+    const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
+    if (dayOfWeek === 6) { // Sabtu
+        return ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"];
+    } else if (dayOfWeek === 0) { // Minggu
+        return ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"];
+    }
+    return [];
+};
+
+
+const mockEventsGenerator = (dateKey: string, date: Date): string[] => {
+    const defaultEvents = getAvailableSessionNames(date);
+    
+    const dateTimestamp = new Date(dateKey).setHours(0, 0, 0, 0);
+    if (dateTimestamp <= todayStart && defaultEvents.length > 0) {
+        // Tambahkan opsi 'KESELURUHAN DATA HARI INI'
+        defaultEvents.unshift("KESELURUHAN DATA HARI INI");
+    }
+    return defaultEvents;
+};
+
+const getDatesWithEventsInMonth = (month: number, currentYear: number, currentEvents: EventsCache): { date: Date, key: string, events: string[] }[] => {
+  const daysInMonth = getDaysInMonth(month, currentYear);
+  const dates: { date: Date, key: string, events: string[] }[] = [];
+  
+  for (let day = 1; day <= daysInMonth; day++) {
+    const date = new Date(currentYear, month, day);
+    const dayKey = getDayKey(date);
+    const dateTimestamp = new Date(date).setHours(0, 0, 0, 0);
+    const isFutureDay = dateTimestamp > todayStart;
+
+    if (!isFutureDay) {
+      const mockEvents = mockEventsGenerator(dayKey, date);
+      const currentEventList = currentEvents[dayKey] ?? mockEvents;
+      
+      if (currentEventList.length > 0) { 
+        dates.push({ date, key: dayKey, events: currentEventList });
+      }
+    }
+  }
+  return dates;
+};
+
+// --- Helper untuk in-memory storage ---
+const memoryStorage: { 
   selectedDates: string[], 
-  selectedEventsByDate: Record<string, string[]>, 
-  events: Record<string, string[]> 
+  selectedEventsByDate: SelectedEventsByDate, 
+  events: EventsCache
 } = {
   selectedDates: [],
   selectedEventsByDate: {},
@@ -80,99 +146,428 @@ const loadSelection = () => {
   return { dates, events };
 };
 
-const saveSelection = (dates: Date[], events: Record<string, string[]>) => {
-  const datesToStore = dates.map(getDayKey);
+const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
+  const datesToStore = dates.map(getDayKey); 
   memoryStorage.selectedDates = datesToStore;
   memoryStorage.selectedEventsByDate = events;
 };
 
-// --- Fungsi utilitas Murni ---
-const mockEventsGenerator = (dateKey: string, date: Date): string[] => {
-    const dayOfWeek = date.getDay();
-    let defaultEvents: string[] = [];
-    if (dateKey && dateKey) {
-        if (dayOfWeek === 6) {
-            defaultEvents = ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"];
-        } else if (dayOfWeek === 0) {
-            defaultEvents = ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"];
-        }
+// --- Komponen Modal Preview Dokumen ---
+const DocumentPreviewModal = ({ data, onClose }: { data: PreviewModalData | null, onClose: () => void }) => {
+    if (!data) return null;
+
+    const isImage = isImageUrlOrBase64(data.url);
+    const isPdf = data.type === 'pdf';
+    
+    let content;
+
+    if (isImage) {
+        content = (
+            <Image
+                src={data.url}
+                alt={`Preview ${data.name}`}
+                width={800}
+                height={600}
+                className="max-h-[70vh] w-full object-contain"
+                style={{ width: '100%', height: 'auto' }}
+                unoptimized
+            />
+        );
+    } else if (isPdf) {
+        content = (
+            <div className="w-full h-[70vh]">
+                <iframe
+                    src={data.url}
+                    title={`PDF Preview ${data.name}`}
+                    className="w-full h-full border-0 rounded-lg"
+                    allowFullScreen
+                >
+                    <div className="p-4 text-center">
+                        <p>Browser tidak dapat menampilkan PDF secara langsung.</p>
+                        <a href={data.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                            Klik di sini untuk mengunduh/melihat PDF di tab baru.
+                        </a>
+                    </div>
+                </iframe>
+            </div>
+        );
+    } else {
+        content = (
+            <div className="p-6 text-center">
+                <FileText size={48} className="text-gray-500 mx-auto mb-3" />
+                <p className="text-xl font-semibold mb-2">Format Tidak Dapat Dipreview</p>
+                <p className="text-gray-600">File bukan gambar atau PDF yang dapat ditampilkan. Buka tautan di bawah:</p>
+                <a href={data.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all mt-2 inline-block">
+                    {data.url}
+                </a>
+            </div>
+        );
     }
-    // Tambahkan KESELURUHAN DATA HARI INI di awal daftar event jika ada event lain
-    if (defaultEvents.length > 0) {
-        defaultEvents.unshift("KESELURUHAN DATA HARI INI");
-    }
-    return defaultEvents;
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+                <div className="flex justify-between items-center p-4 border-b">
+                    <h3 className="text-lg font-bold text-gray-800 truncate">
+                        Preview: {data.name}
+                    </h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
+                        <X size={24} />
+                    </button>
+                </div>
+                <div className="flex-grow overflow-y-auto p-4 flex items-center justify-center">
+                    {content}
+                </div>
+                <div className="p-4 border-t flex justify-end">
+                    <a 
+                        href={data.url} 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+                    >
+                        Buka di Tab Baru
+                    </a>
+                </div>
+            </div>
+        </div>
+    );
 };
 
-const getDaysInMonth = (month: number, year: number): number => 
-  new Date(year, month + 1, 0).getDate();
+// --- LOGIKA KALENDER ---
+interface CalendarSectionProps {
+    year: number;
+    setYear: React.Dispatch<React.SetStateAction<number>>;
+    startMonth: number;
+    setStartMonth: React.Dispatch<React.SetStateAction<number>>;
+    viewMode: ViewMode;
+    handleSelectMonth: (monthIndex: number, currentYear: number, forceMonthlySummary?: boolean) => void;
+    handleSelectDate: (day: number, month: number) => void;
+    selectedDates: Date[];
+    setShowYearDialog: React.Dispatch<React.SetStateAction<boolean>>;
+}
 
-const getFirstDayOfMonth = (month: number, year: number): number => 
-  new Date(year, month, 1).getDay();
+const CalendarSection = ({
+    year, setYear, startMonth, setStartMonth, viewMode, 
+    handleSelectMonth, handleSelectDate, selectedDates, setShowYearDialog
+}: CalendarSectionProps) => {
 
-// Helper untuk mendapatkan tanggal-tanggal ibadah dalam sebulan
-const getDatesWithEventsInMonth = (month: number, currentYear: number, currentEvents: Record<string, string[]>): { date: Date, key: string, events: string[] }[] => {
-  const daysInMonth = getDaysInMonth(month, currentYear);
-  const dates: { date: Date, key: string, events: string[] }[] = [];
-  
-  for (let day = 1; day <= daysInMonth; day++) {
-    const date = new Date(currentYear, month, day);
-    const dayKey = getDayKey(date);
-    const isFutureDay = date.setHours(0, 0, 0, 0) > todayStart;
-
-    if (!isFutureDay) {
-      const mockEvents = mockEventsGenerator(dayKey, date);
-      const currentEventList = currentEvents[dayKey] || mockEvents;
+    const handlePrevMonth = useCallback(() => { 
+        const newMonth = (startMonth - 1 + 12) % 12;
+        const newYear = startMonth === 0 ? year - 1 : year;
+        setStartMonth(newMonth); 
+        setYear(newYear);
+    }, [startMonth, year, setStartMonth, setYear]);
       
-      if (mockEvents.length > 0) { 
-        dates.push({ date, key: dayKey, events: currentEventList });
-      }
-    }
-  }
-  return dates;
+    const handleNextMonth = useCallback(() => { 
+        const newMonth = (startMonth + 1) % 12;
+        const newYear = startMonth === 11 ? year + 1 : year;
+        setStartMonth(newMonth); 
+        setYear(newYear); 
+    }, [startMonth, year, setStartMonth, setYear]);
+
+    const monthsToDisplay = useMemo(() => {
+        const months = [];
+        for (let i = 0; i < 3; i++) {
+          const monthIndex = (startMonth + i) % 12;
+          months.push(monthIndex);
+        }
+        return months;
+    }, [startMonth]);
+
+    const selectedKeys = useMemo(() => new Set(selectedDates.map(getDayKey)), [selectedDates]);
+
+    return (
+        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+            <h2 className="text-xl font-bold text-indigo-700 mb-4 flex items-center gap-2">
+              <Calendar size={20} />
+              Pilih Tanggal Ibadah
+            </h2>
+            
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+                <button 
+                  onClick={handlePrevMonth} 
+                  className="rounded-full p-2 text-indigo-600 hover:bg-indigo-100 transition"
+                  aria-label="Previous Month"
+                >
+                  <ChevronLeft className="h-6 w-6" />
+                </button>
+                
+                <div className="flex items-center gap-3">
+                    <h2 
+                      className={`text-xl md:text-2xl font-bold text-gray-800 cursor-pointer hover:text-indigo-600 transition px-4 py-2 rounded-lg ${
+                        viewMode === 'monthly_summary' ? 'bg-indigo-100 text-indigo-700 shadow-sm' : 'hover:bg-indigo-100'
+                      }`}
+                      onClick={() => setShowYearDialog(true)}
+                    >
+                      Tahun {year}
+                    </h2>
+                </div>
+                
+                <button 
+                  onClick={handleNextMonth} 
+                  className="rounded-full p-2 text-indigo-600 hover:bg-indigo-100 transition"
+                  aria-label="Next Month"
+                >
+                  <ChevronRight className="h-6 w-6" />
+                </button>
+            </div>
+            
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {monthsToDisplay.map((monthIndex) => {
+                const daysInMonth = getDaysInMonth(monthIndex, year);
+                const firstDay = getFirstDayOfMonth(monthIndex, year);
+                const startDayOffset = firstDay === 0 ? 6 : firstDay - 1; 
+                const daysArray: (number | null)[] = [
+                  ...Array(startDayOffset).fill(null) as (number | null)[],
+                  ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+                ];
+                  
+                return (
+                  <div key={`${year}-${monthIndex}`} className="bg-white rounded-xl border border-gray-100">
+                    <h4 
+                      className="mb-3 pt-4 text-center text-sm md:text-md font-bold text-indigo-600 cursor-pointer hover:text-indigo-800 transition"
+                      onClick={() => handleSelectMonth(monthIndex, year)} 
+                      role="button"
+                    >
+                      {monthNames[monthIndex]} {year}
+                    </h4>
+                    <div className="grid grid-cols-7 text-xs font-semibold text-gray-600 mb-2">
+                      {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((d) => (
+                        <div key={d} className="text-center">{d}</div>
+                      ))}
+                    </div>
+                    <div className="grid grid-cols-7 gap-1 text-center text-sm p-4 pt-0"> 
+                      {daysArray.map((day, i) => {
+                        if (day === null) return <div key={i} className="p-1"></div>;
+                        
+                        const thisDate = new Date(year, monthIndex, day);
+                        const dayKey = getDayKey(thisDate);
+                        const isSelected = selectedKeys.has(dayKey);
+                        const dateTimestamp = new Date(thisDate).setHours(0, 0, 0, 0);
+                        const isFutureDay = dateTimestamp > todayStart;
+                        
+                        const hasEvents = (memoryStorage.events[dayKey] ?? mockEventsGenerator(dayKey, thisDate)).length > 0;
+                        
+                        let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm";
+                        if (isFutureDay) {
+                          dayClass += " text-gray-300 cursor-not-allowed";
+                        } else if (isSelected) {
+                          dayClass += " bg-indigo-600 text-white font-bold cursor-pointer shadow-md"; 
+                        } else { 
+                          dayClass += " text-gray-700 hover:bg-indigo-200 cursor-pointer";
+                        }
+
+                        return (
+                          <div 
+                            key={i} 
+                            className={dayClass} 
+                            onClick={() => !isFutureDay && handleSelectDate(day, monthIndex)} 
+                            role="button"
+                          >
+                            {day}
+                            {hasEvents && !isFutureDay && (
+                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full ${
+                                isSelected ? 'bg-white' : 'bg-indigo-600'
+                              }`}></div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+    );
 };
 
-// --- LOGIKA UTAMA DATABASE PAGE ---
+// --- LOGIKA DAFTAR EVENT ---
+interface SelectedEventsSectionProps {
+    selectedDates: Date[];
+    selectedEventsByDate: SelectedEventsByDate;
+    events: EventsCache;
+    viewMode: ViewMode;
+    handleSelectEvent: (dateKey: string, event: string) => void;
+    handleDeleteEvent: (dateKey: string, eventName: string) => void;
+    handleOpenEditEvent: (dateKey: string, eventName: string) => void;
+    setShowAddEventDialog: React.Dispatch<React.SetStateAction<boolean>>;
+    setAddEventDateKey: React.Dispatch<React.SetStateAction<string | null>>;
+}
+
+const SelectedEventsSection = ({
+    selectedDates, selectedEventsByDate, events, viewMode,
+    handleSelectEvent, handleDeleteEvent, handleOpenEditEvent,
+    setShowAddEventDialog, setAddEventDateKey
+}: SelectedEventsSectionProps) => {
+    
+    const selectedDateKeys = useMemo(() => selectedDates.map(getDayKey), [selectedDates]);
+
+    return (
+        <div className="bg-white p-6 rounded-xl border border-gray-100 lg:sticky lg:top-8 h-fit"> 
+            <h3 className="text-lg font-bold text-indigo-700 mb-4 border-b pb-2">
+              {selectedDates.length} Tanggal Dipilih ({viewMode === 'monthly_summary' ? '1 Tabel' : `${selectedDateKeys.reduce((acc, key) => acc + (selectedEventsByDate[key]?.length ?? 0), 0)} Event`})
+            </h3>
+            
+            <div className="max-h-96 overflow-y-auto pr-2 space-y-4">
+              {selectedDates.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Calendar size={48} className="mx-auto mb-2 opacity-30" />
+                  <p>Pilih tanggal di kalender</p>
+                </div>
+              ) : (
+                selectedDates.map((date) => {
+                  const key = getDayKey(date);
+                  const dateDisplay = date.toLocaleDateString("id-ID", { 
+                    day: "2-digit", 
+                    month: "long",
+                    year: "numeric"
+                  });
+                  const currentEvents = events[key] ?? mockEventsGenerator(key, date);
+                  const selectedEvents = selectedEventsByDate[key] ?? [];
+                  
+                  return (
+                    <div key={key} className="p-4 border-2 border-indigo-200 rounded-lg bg-indigo-50"> 
+                      <div className="flex justify-between items-center mb-3">
+                        <span className="font-semibold text-gray-800 text-sm">{dateDisplay}</span>
+                        <button 
+                          className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition" 
+                          onClick={() => { 
+                            setShowAddEventDialog(true); 
+                            setAddEventDateKey(key); 
+                          }}
+                        >
+                          + Event
+                        </button>
+                      </div>
+                      {currentEvents.length === 0 ? (
+                        <div className="text-center py-4 text-gray-500">
+                          <p className="text-sm mb-2">Tidak ada event di tanggal ini</p>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex flex-wrap gap-2">
+                            {currentEvents.map((ev, idx) => {
+                                const isSelected = selectedEvents.includes(ev);
+                                const isOverall = ev === "KESELURUHAN DATA HARI INI";
+
+                                return (
+                                <div key={idx} className="relative inline-block">
+                                    <button
+                                        onClick={() => handleSelectEvent(key, ev)} 
+                                        className={`text-xs px-3 py-1.5 rounded-lg transition 
+                                          ${isOverall 
+                                            ? isSelected 
+                                              ? 'bg-green-600 text-white' 
+                                              : 'border-2 border-green-300 text-green-700 hover:bg-green-100'
+                                            : isSelected
+                                              ? 'bg-indigo-600 text-white' 
+                                              : 'border-2 border-indigo-300 text-indigo-700 hover:bg-indigo-100'
+                                          }`}
+                                    >
+                                        {ev}
+                                    </button>
+                                    
+                                    {!isOverall && (
+                                        <>
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation(); 
+                                                    handleOpenEditEvent(key, ev);
+                                                }}
+                                                className="absolute top-[-8px] left-[-8px] bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-blue-700 transition" 
+                                                title="Edit Event"
+                                            >
+                                                <Pencil size={8} />
+                                            </button>
+                                            
+                                            <button 
+                                                onClick={(e) => {
+                                                    e.stopPropagation(); 
+                                                    handleDeleteEvent(key, ev);
+                                                }}
+                                                className="absolute top-[-8px] right-[-8px] bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-red-700 transition" 
+                                                title="Hapus Event"
+                                            >
+                                                <X size={10} />
+                                            </button>
+                                        </>
+                                    )}
+                                </div>
+                                );
+                            })}
+                          </div>
+                          {selectedEvents.length === 0 && (
+                            <p className="mt-3 text-xs text-red-600 font-medium bg-red-50 p-2 rounded">
+                              Pilih minimal 1 event!
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+        </div>
+    );
+};
+
+// --- KOMPONEN UTAMA ---
 export default function DatabasePage() {
   const router = useRouter();
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
   const [isLoading, setIsLoading] = useState(true); 
   
-  // Kalender state
   const [year, setYear] = useState<number>(currentYear);
   const [startMonth, setStartMonth] = useState<number>((currentMonth - 1 + 12) % 12);
   const [showYearDialog, setShowYearDialog] = useState(false);
   const [gridStartYear, setGridStartYear] = useState(Math.floor(currentYear / 10) * 10);
   
-  // Selection state
   const [selectedDates, setSelectedDates] = useState<Date[]>([]);
-  const [selectedEventsByDate, setSelectedEventsByDate] = useState<Record<string, string[]>>({});
-  const [events, setEvents] = useState<Record<string, string[]>>({});
-  
-  // State untuk Mode Tampilan Tabel
-  const [viewMode, setViewMode] = useState<'event_per_table' | 'monthly_summary'>('event_per_table');
+  const [selectedEventsByDate, setSelectedEventsByDate] = useState<SelectedEventsByDate>({});
+  const [events, setEvents] = useState<EventsCache>({});
+  const [viewMode, setViewMode] = useState<ViewMode>('event_per_table');
   
   const [showAddEventDialog, setShowAddEventDialog] = useState(false);
   const [newEventName, setNewEventName] = useState('');
   const [addEventDateKey, setAddEventDateKey] = useState<string | null>(null);
 
-  // Tabel state
+  const [showEditEventDialog, setShowEditEventDialog] = useState(false); 
+  const [editEventName, setEditEventName] = useState(''); 
+  const [editingEventKey, setEditingEventKey] = useState<{ dateKey: string; oldName: string } | null>(null); 
+
   const [tablePage, setTablePage] = useState(1);
   const [editMode, setEditMode] = useState(false);
-  const [draftJemaat, setDraftJemaat] = useState<EditableJemaat[]>([]);
+  const [draftJemaat, setDraftJemaat] = useState<Jemaat[]>([]);
   const [openDetailDrawer, setOpenDetailDrawer] = useState(false);
   const [formData, setFormData] = useState<Jemaat | null>(null);
   const itemsPerPage = 10;
-  // Filter state
+  
   const [filterStatusKehadiran, setFilterStatusKehadiran] = useState(""); 
   const [filterJabatan, setFilterJabatan] = useState("");
-  const [filterStatus, setFilterStatus] = useState("");
-  // NEW STATE: Filter Kehadiran Sesi
   const [filterKehadiranSesi, setFilterKehadiranSesi] = useState(""); 
   
   const [openDownloadDialog, setOpenDownloadDialog] = useState(false);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [previewModalData, setPreviewModalData] = useState<PreviewModalData | null>(null);
+  
+  const selectedDatesOnly = useMemo(() => selectedDates.map(getDayKey), [selectedDates]); 
+  
+  const localPreviewUrl = useMemo(() => {
+    if (selectedFile && isImageUrlOrBase64(selectedFile.name)) {
+        return URL.createObjectURL(selectedFile);
+    }
+    return null;
+  }, [selectedFile]);
 
-  // Load initial selection
+  const handleGoToStats = useCallback(() => {
+    const datesParam = selectedDatesOnly.join(','); 
+    const dateQuery = datesParam.length > 0 ? `?dates=${datesParam}` : '';
+    void router.push(`/statistic${dateQuery}`);
+  }, [router, selectedDatesOnly]);
+  
   useEffect(() => {
     const initialSelection = loadSelection();
     setSelectedDates(initialSelection.dates);
@@ -180,7 +575,6 @@ export default function DatabasePage() {
     setEvents(memoryStorage.events || {});
   }, []);
 
-  // Perbaikan Fetching Data Jemaat dari /api/jemaat
   useEffect(() => {
     const fetchData = async () => {
       setIsLoading(true);
@@ -193,18 +587,18 @@ export default function DatabasePage() {
 
         const data: unknown = await res.json();
         
-        if (Array.isArray(data) && data.length > 0 && 
-            typeof (data[0] as Jemaat).statusKehadiran === 'string' &&
-            typeof (data[0] as Jemaat).nama === 'string'
-        ) {
+        if (Array.isArray(data) && data.length > 0) {
           const fetchedJemaat = data as Jemaat[];
           setJemaat(fetchedJemaat);
           setDraftJemaat(fetchedJemaat.map(j => ({ ...j })));
         } else {
-          throw new Error("Data jemaat tidak valid atau kosong.");
+          setJemaat([]);
+          setDraftJemaat([]);
         }
       } catch (err) {
         console.error("Error fetch jemaat:", err);
+        setJemaat([]); 
+        setDraftJemaat([]);
       } finally {
         setIsLoading(false);
       }
@@ -213,15 +607,14 @@ export default function DatabasePage() {
     void fetchData();
   }, []);
   
-  // Gunakan useEffect untuk mengisi events cache
   useEffect(() => {
-    const newEvents: Record<string, string[]> = {};
+    const newEvents: EventsCache = {};
     const months = [startMonth, (startMonth + 1) % 12, (startMonth + 2) % 12];
     
     months.forEach(month => {
-        const datesInMonth = getDatesWithEventsInMonth(month, year, events); 
+        const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events); 
         datesInMonth.forEach(d => {
-            if (!events[d.key]) { 
+            if (!memoryStorage.events[d.key]) { 
                 newEvents[d.key] = d.events;
             }
         });
@@ -230,14 +623,12 @@ export default function DatabasePage() {
     if (Object.keys(newEvents).length > 0) {
       setEvents(prev => ({ ...prev, ...newEvents }));
     }
-  }, [startMonth, year, events]);
+  }, [startMonth, year]); 
   
-  // Sync events to memory storage
   useEffect(() => {
     memoryStorage.events = events;
   }, [events]);
 
-  // SELECTED TABLES: Pasangan {date, event} untuk render multiple tables (hanya dipakai di mode event_per_table)
   const selectedTables = useMemo(() => {
     const tables: {date: string, event: string}[] = [];
     if (viewMode === 'monthly_summary') return tables;
@@ -252,77 +643,32 @@ export default function DatabasePage() {
     return tables;
   }, [selectedDates, selectedEventsByDate, viewMode]);
   
-  // Digunakan untuk download dan summary count
-  const selectedDatesOnly = useMemo(() => selectedDates.map(getDayKey), [selectedDates]);
-
-  // Reset pagination when filters change
   useEffect(() => {
     setTablePage(1);
-  }, [filterStatusKehadiran, filterJabatan, filterStatus, filterKehadiranSesi, selectedDates, viewMode]); 
+  }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi, selectedDates, viewMode]); 
 
-  // Handle URL Query Parameters (kembali ke logika single table/single date)
-  useEffect(() => {
-    if (!router.isReady || jemaat.length === 0 || Object.keys(events).length === 0) return; 
-
-    const { date } = router.query;
-    if (typeof date !== 'string') return;
+  const handleSelectMonth = useCallback((monthIndex: number, currentYear: number, forceMonthlySummary = false) => {
     
-    let targetDate = new Date(date);
-    
-    const triggerSelection = (dateKey: string, m: number, y: number) => {
-        const availableEvents = events[dateKey] || mockEventsGenerator(dateKey, targetDate); 
-        setEvents(prev => ({ ...prev, [dateKey]: availableEvents }));
-        
-        const selectedEvents = availableEvents.filter(e => e === "KESELURUHAN DATA HARI INI"); 
-        
-        setSelectedDates([targetDate]);
-        setSelectedEventsByDate({ [dateKey]: selectedEvents });
-        setStartMonth(m);
-        setYear(y);
-        setViewMode('event_per_table'); // Default mode saat navigasi single date
-    }
-    
-    if (date.length === 7) { 
-        const y = parseInt(date.substring(0, 4), 10);
-        const m = parseInt(date.substring(5, 7), 10) - 1;
-        targetDate = new Date(y, m, 1);
-        
-        // Panggil handleSelectMonth untuk seleksi bulanan
-        handleSelectMonth(m, y, true); // True untuk force monthly summary
-    } 
-    else if (!isNaN(targetDate.getTime())) {
-        const dateKey = getDayKey(targetDate);
-        triggerSelection(dateKey, targetDate.getMonth(), targetDate.getFullYear());
-    }
-    
-    router.replace(router.pathname, undefined, { shallow: true });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [router.isReady, router.query, jemaat.length, Object.keys(events).length]);
-
-  // LOGIKA KALENDER: Seleksi Bulan (Monthly Summary Mode)
-  const handleSelectMonth = (monthIndex: number, currentYear: number, forceMonthlySummary = false) => {
-    
-    if (viewMode === 'monthly_summary' && !forceMonthlySummary) {
-        // Jika sedang di mode monthly summary dan klik bulan yang sama lagi, kembali ke mode event per table
+    if (viewMode === 'monthly_summary' && !forceMonthlySummary && monthIndex === startMonth && currentYear === year) {
         setViewMode('event_per_table');
-        // Kosongkan seleksi atau biarkan default seleksi tanggal 1
         setSelectedDates([]);
         setSelectedEventsByDate({});
         saveSelection([], {});
         return;
     }
 
-    const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, events);
+    const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, memoryStorage.events);
     
     const newDates = datesWithEventsInMonth.map(d => d.date);
-    const newEventsByDate: Record<string, string[]> = {};
+    const newEventsByDate: SelectedEventsByDate = {};
     
     datesWithEventsInMonth.forEach(d => {
-        // Otomatis pilih KESELURUHAN DATA HARI INI untuk semua tanggal
         const overallEvent = d.events.find(e => e === "KESELURUHAN DATA HARI INI");
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
+        memoryStorage.events[d.key] ??= d.events;
     });
-
+    
+    setEvents(prev => ({ ...prev, ...memoryStorage.events }));
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
@@ -330,36 +676,129 @@ export default function DatabasePage() {
     setStartMonth(monthIndex);
     setYear(currentYear);
     setViewMode('monthly_summary');
-  };
+  }, [viewMode, startMonth, year, setStartMonth, setYear]);
+
+  useEffect(() => {
+    if (!router.isReady || isLoading || jemaat.length === 0) return; 
+
+    const { dates, date, mode, event: eventQuery } = router.query;
     
-  // Logika select date (Mengubah mode ke event_per_table)
-  const handleSelectDate = (day: number, month: number) => {
-    setViewMode('event_per_table'); // Pindah ke mode multiple tables saat tanggal diklik
+    const currentEventsCache = memoryStorage.events;
+    
+    if (typeof dates === 'string' && dates.includes(',')) {
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        const datesArray = dates.split(',').filter(d => dateRegex.exec(d));
+        const firstDate = datesArray.length > 0 && datesArray[0] !== undefined ? new Date(datesArray[0]) : null;
+        
+        if (!firstDate) return;
+
+        const newSelectedDates: Date[] = [];
+        const newSelectedEventsByDate: SelectedEventsByDate = {};
+        const targetMonth = firstDate.getMonth();
+        const targetYear = firstDate.getFullYear();
+        
+        datesArray.forEach(dateKey => {
+            const dateObj = new Date(dateKey);
+            const availableEvents = currentEventsCache[dateKey] ?? mockEventsGenerator(dateKey, dateObj); 
+            
+            currentEventsCache[dateKey] ??= availableEvents;
+
+            let selectedEvents: string[] = [];
+            
+            if (typeof eventQuery === 'string' && eventQuery) {
+                const decodedEvent = decodeURIComponent(eventQuery);
+                if (availableEvents.includes(decodedEvent)) {
+                    selectedEvents = [decodedEvent];
+                }
+            } else {
+                const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
+                if (overallEvent) {
+                    selectedEvents = [overallEvent];
+                }
+            }
+            
+            if (selectedEvents.length > 0) {
+                newSelectedDates.push(dateObj);
+                newSelectedEventsByDate[dateKey] = selectedEvents;
+            }
+        });
+        
+        setEvents({ ...currentEventsCache });
+        setSelectedDates(newSelectedDates.sort((a, b) => a.getTime() - b.getTime()));
+        setSelectedEventsByDate(newSelectedEventsByDate);
+        setStartMonth(targetMonth);
+        setYear(targetYear);
+        setViewMode('event_per_table'); 
+        saveSelection(newSelectedDates, newSelectedEventsByDate);
+        
+        void router.replace(router.pathname, undefined, { shallow: true });
+        return;
+    }
+
+    if (typeof dates === 'string' && /^\d{4}-\d{2}-\d{2}$/.exec(dates)) {
+        const dateKey = dates;
+        const targetDate = new Date(dateKey);
+        
+        if (isNaN(targetDate.getTime())) return;
+        
+        const availableEvents = currentEventsCache[dateKey] ?? mockEventsGenerator(dateKey, targetDate); 
+        currentEventsCache[dateKey] = availableEvents;
+        
+        const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
+        const selectedEvents = overallEvent ? [overallEvent] : []; 
+        
+        setEvents({ ...currentEventsCache });
+        setSelectedDates([targetDate]);
+        setSelectedEventsByDate({ [dateKey]: selectedEvents });
+        setStartMonth(targetDate.getMonth());
+        setYear(targetDate.getFullYear());
+        setViewMode('event_per_table'); 
+        saveSelection([targetDate], { [dateKey]: selectedEvents });
+        
+        void router.replace(router.pathname, undefined, { shallow: true });
+        return;
+    }
+    
+    if (typeof date === 'string' && /^\d{4}-\d{2}$/.exec(date) && mode === 'monthly') {
+        const y = parseInt(date.substring(0, 4), 10);
+        const m = parseInt(date.substring(5, 7), 10) - 1;
+        
+        handleSelectMonth(m, y, true);
+        
+        void router.replace(router.pathname, undefined, { shallow: true });
+        return;
+    }
+    
+  }, [router, isLoading, jemaat.length, handleSelectMonth]); 
+
+  const handleSelectDate = useCallback((day: number, month: number) => {
+    setViewMode('event_per_table'); 
     
     const clickedDate = new Date(year, month, day);
     const key = getDayKey(clickedDate);
-    const isFuture = new Date(clickedDate).setHours(0, 0, 0, 0) > todayStart;
+    const dateTimestamp = new Date(clickedDate).setHours(0, 0, 0, 0);
+    const isFuture = dateTimestamp > todayStart;
     
     if (isFuture) return;
 
     const generatedEvents = mockEventsGenerator(key, clickedDate);
-    const availableEvents = events[key] || generatedEvents;
+    const availableEvents = events[key] ?? generatedEvents;
     
     if (!events[key]) {
         setEvents(prev => ({ ...prev, [key]: generatedEvents }));
+        memoryStorage.events[key] = generatedEvents;
     }
 
     const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
     
     let newDates: Date[];
-    let newEventsByDate = { ...selectedEventsByDate };
+    const newEventsByDate = { ...selectedEventsByDate };
 
     if (isCurrentlySelected) {
       newDates = selectedDates.filter(d => getDayKey(d) !== key);
       delete newEventsByDate[key];
     } else {
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
-      // Otomatis pilih KESELURUHAN DATA HARI INI saat tanggal diklik
       const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
@@ -367,11 +806,10 @@ export default function DatabasePage() {
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
-  };
+  }, [events, selectedDates, selectedEventsByDate, year]);
 
-  // LOGIKA UTAMA MULTIPLE SELECTION EVENT
-  const handleSelectEvent = (dateKey: string, event: string) => {
-    setViewMode('event_per_table'); // Pindah ke mode multiple tables saat event di panel kanan diklik
+  const handleSelectEvent = useCallback((dateKey: string, event: string) => {
+    setViewMode('event_per_table'); 
     
     setSelectedEventsByDate(prev => {
       const current = prev[dateKey] ?? [];
@@ -380,18 +818,16 @@ export default function DatabasePage() {
       let updated: string[];
       
       if (event === "KESELURUHAN DATA HARI INI") {
-          // Jika KESELURUHAN di-klik:
           if (isEventSelected) {
-              updated = current.filter(e => e !== event);
+              updated = current.filter(e => e !== event); 
           } else {
-              updated = [...current, event];
+              updated = [event];
           }
       } else {
-          // Jika event spesifik di-klik:
           if (isEventSelected) {
               updated = current.filter((e: string) => e !== event);
           } else {
-              updated = [...current, event];
+              updated = [...current.filter(e => e !== "KESELURUHAN DATA HARI INI"), event];
           }
       }
       
@@ -400,46 +836,79 @@ export default function DatabasePage() {
 
       return newEventsByDate;
     });
-  };
+  }, [selectedDates]);
   
-  // NEW FUNCTION: Handle Hapus Event (HANYA event non-mock yang bisa dihapus)
-  const handleDeleteEvent = (dateKey: string, eventName: string) => {
-      // Periksa apakah event adalah event mock default atau event KESELURUHAN
-      const date = new Date(dateKey);
-      const mockEvents = mockEventsGenerator(dateKey, date);
-      // Event mock adalah event yang ada di daftar mock events tapi BUKAN KESELURUHAN
-      const isMockEvent = mockEvents.includes(eventName) && eventName !== "KESELURUHAN DATA HARI INI";
+  const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
+      if (eventName === "KESELURUHAN DATA HARI INI") return; 
       
-      if (isMockEvent || eventName === "KESELURUHAN DATA HARI INI") return; // Jangan hapus event utama atau event mock
-      
-      // Konfirmasi penghapusan (Opsional, tapi disarankan)
       if (!confirm(`Apakah Anda yakin ingin menghapus event "${eventName}" dari tanggal ${new Date(dateKey).toLocaleDateString("id-ID")}?`)) {
           return;
       }
       
-      // Hapus dari daftar events
       setEvents(prevEvents => {
           const updatedEvents = {
               ...prevEvents,
-              [dateKey]: (prevEvents[dateKey] || []).filter(e => e !== eventName)
+              [dateKey]: (prevEvents[dateKey] ?? []).filter(e => e !== eventName)
           };
           memoryStorage.events = updatedEvents;
           return updatedEvents;
       });
       
-      // Hapus dari daftar selected events
       setSelectedEventsByDate(prevSelected => {
           const newSelected = {
               ...prevSelected,
-              [dateKey]: (prevSelected[dateKey] || []).filter(e => e !== eventName)
+              [dateKey]: (prevSelected[dateKey] ?? []).filter(e => e !== eventName)
           };
           saveSelection(selectedDates, newSelected);
           return newSelected;
       });
-  };
+  }, [selectedDates]);
 
+  const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
+      if (eventName === "KESELURUHAN DATA HARI INI") return;
+      
+      setEditingEventKey({ dateKey, oldName: eventName });
+      setEditEventName(eventName);
+      setShowEditEventDialog(true);
+  }, []);
+
+  const handleSaveEditEvent = useCallback(() => {
+      if (!editingEventKey || !editEventName.trim()) return;
+
+      const { dateKey, oldName } = editingEventKey;
+      const newName = editEventName.trim();
+
+      if (oldName === newName) {
+          setShowEditEventDialog(false);
+          return;
+      }
+
+      setEvents(prevEvents => {
+          const currentEvents = prevEvents[dateKey] ?? [];
+          const oldIndex = currentEvents.indexOf(oldName);
+          
+          if (oldIndex === -1) return prevEvents; 
+          
+          const updatedEvents = [...currentEvents];
+          updatedEvents[oldIndex] = newName;
+          
+          memoryStorage.events = { ...prevEvents, [dateKey]: updatedEvents };
+          return { ...prevEvents, [dateKey]: updatedEvents };
+      });
+      
+      setSelectedEventsByDate(prevSelected => {
+          const currentSelected = prevSelected[dateKey] ?? [];
+          const updatedSelected = currentSelected.map(e => (e === oldName ? newName : e));
+          
+          saveSelection(selectedDates, { ...prevSelected, [dateKey]: updatedSelected });
+          return { ...prevSelected, [dateKey]: updatedSelected };
+      });
+
+      setShowEditEventDialog(false);
+      setEditingEventKey(null);
+  }, [editingEventKey, editEventName, selectedDates]);
   
-  const handleAddEvent = () => {
+  const handleAddEvent = useCallback(() => {
     const key = addEventDateKey;
     if (!key || !newEventName.trim()) return;
     
@@ -447,7 +916,6 @@ export default function DatabasePage() {
     
     const trimmedName = newEventName.trim();
     
-    // Pastikan KESELURUHAN selalu ada di awal daftar
     const currentEvents = events[key] ?? mockEventsGenerator(key, new Date(key));
     const newEvents = ["KESELURUHAN DATA HARI INI", ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e !== trimmedName), trimmedName];
     
@@ -459,10 +927,7 @@ export default function DatabasePage() {
     
     setSelectedEventsByDate(prev => {
       const currentSelected = prev[key] ?? [];
-      
-      // Tambahkan event baru ke yang sudah dipilih
       const newSelected = [...currentSelected, trimmedName];
-      
       const newEventsByDate = { ...prev, [key]: newSelected.filter(e => e) };
       saveSelection(selectedDates, newEventsByDate);
       return newEventsByDate;
@@ -475,143 +940,159 @@ export default function DatabasePage() {
     setShowAddEventDialog(false);
     setNewEventName('');
     setAddEventDateKey(null);
-  };
+  }, [addEventDateKey, newEventName, events, selectedDates]);
   
-  const handlePrevMonth = () => { 
-    const newMonth = (startMonth - 1 + 12) % 12;
-    const newYear = startMonth === 0 ? year - 1 : year;
-    
-    setStartMonth(newMonth); 
-    setYear(newYear);
-    
-    // Pindah ke mode monthly summary saat pindah bulan
-    handleSelectMonth(newMonth, newYear, true); 
-  };
-  
-  const handleNextMonth = () => { 
-    const newMonth = (startMonth + 1) % 12;
-    const newYear = startMonth === 11 ? year + 1 : year;
-    
-    setStartMonth(newMonth); 
-    setYear(newYear); 
-    
-    // Pindah ke mode monthly summary saat pindah bulan
-    handleSelectMonth(newMonth, newYear, true); 
-  };
-  
-  const monthsToDisplay = useMemo(() => {
-    const months = [];
-    for (let i = 0; i < 3; i++) {
-      const monthIndex = (startMonth + i) % 12;
-      months.push(monthIndex);
-    }
-    return months;
-  }, [startMonth]);
-  
-  const handleOpenYearPicker = () => {
-    setShowYearDialog(true);
-    setGridStartYear(Math.floor(year / 10) * 10);
-  };
-
-  const handleSelectYearFromGrid = (selectedYear: number) => {
+  const handleSelectYearFromGrid = useCallback((selectedYear: number) => {
     setYear(selectedYear);
     setShowYearDialog(false);
-    
-    // Pindah ke mode monthly summary saat pilih tahun
-    handleSelectMonth(startMonth, selectedYear, true); 
-  };
+  }, []);
   
   const calculatedAge = useMemo(() => {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
-  // Fungsi Filter untuk mode event_per_table (menerima pasangan {date, event})
-  const getFilteredJemaatPerEvent = (jemaatList: Jemaat[], dateKey: string, event: string): Jemaat[] => {
-    // 1. Filter berdasarkan filter UI
+  const getFilteredJemaatPerEvent = useCallback((jemaatList: Jemaat[], dateKey: string, event: string): Jemaat[] => {
+    
+    const dateObj = new Date(dateKey);
+
     let filteredData = jemaatList.filter(j =>
       (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
-      (filterJabatan === "" || j.jabatan === filterJabatan) &&
-      (filterStatus === "" || j.status === filterStatus)
+      (filterJabatan === "" || j.jabatan === filterJabatan)
     );
     
-    // 2. Filter berdasarkan Event yang sedang di-render
-    if (event === "KESELURUHAN DATA HARI INI") {
+    // Logika untuk Monthly Summary atau Event 'KESELURUHAN BULAN INI'
+    if (event === "KESELURUHAN BULAN INI") {
+        if (filterKehadiranSesi !== "") {
+            filteredData = filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+        }
         return filteredData;
     }
     
-    // Jika event spesifik yang dipilih:
-    return filteredData.filter(j => j.kehadiranSesi === event);
-  };
+    // PERBAIKAN LOGIKA: Filter Jemaat berdasarkan Sesi yang tersedia di hari itu.
+    if (event === "KESELURUHAN DATA HARI INI") {
+        
+        const availableSessions = getAvailableSessionNames(dateObj);
+        
+        // Jemaat yang berpotensi hadir di hari ini
+        const jemaatPotentialyPresent = filteredData.filter(j => 
+            availableSessions.includes(j.kehadiranSesi)
+        );
 
-  // Fungsi Filter untuk mode monthly_summary (menggabungkan semua data)
-  const getFilteredJemaatMonthlySummary = (jemaatList: Jemaat[]): Jemaat[] => {
+        // Jika filter Kehadiran Sesi (Jenis Ibadah) diaktifkan, kita gunakan filter itu
+        if (filterKehadiranSesi !== "") {
+            // Filter hanya dari jemaat yang berpotensi hadir
+            return jemaatPotentialyPresent.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+        }
+        
+        // Jika filter Kehadiran Sesi (Jenis Ibadah) tidak diaktifkan, kembalikan 
+        // semua data yang sudah difilter Status/Jabatan DAN yang sesinya ada di hari itu.
+        return jemaatPotentialyPresent; 
+    }
+    
+    // Logika untuk event spesifik (misalnya 'Kebaktian I : 07:00')
+    // Data yang muncul di event spesifik difilter berdasarkan KehadiranSesi yang sama dengan nama event.
+    return filteredData.filter(j => j.kehadiranSesi === event);
+  }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
+
+  const getFilteredJemaatMonthlySummary = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
     if (selectedDatesOnly.length === 0) return [];
 
-    // Filter UI
     let filteredData = jemaatList.filter(j =>
       (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
-      (filterJabatan === "" || j.jabatan === filterJabatan) &&
-      (filterStatus === "" || j.status === filterStatus)
+      (filterJabatan === "" || j.jabatan === filterJabatan)
     );
     
-    // Filter NEW: Berdasarkan Kehadiran Sesi
     if (filterKehadiranSesi !== "") {
         filteredData = filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
     }
 
-    // Karena ini adalah mock data, kita menganggap semua jemaat yang difilter UI adalah
-    // data untuk seluruh bulan.
     return filteredData;
-  }
+  }, [selectedDatesOnly.length, filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
   
-  // Fungsi utama yang dipanggil oleh render (digunakan untuk download dan pagination)
-  const getFilteredJemaat = (jemaatList: Jemaat[]): Jemaat[] => {
+  const getFilteredJemaat = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
     if (viewMode === 'monthly_summary') {
         return getFilteredJemaatMonthlySummary(jemaatList);
     }
     
-    // Untuk mode 'event_per_table', kita gunakan data dari tabel pertama untuk pagination.
     if (selectedTables.length > 0) {
-        return getFilteredJemaatPerEvent(jemaatList, selectedTables[0].date, selectedTables[0].event);
+        // Saat event_per_table, kita hanya ambil filter dari event pertama yang dipilih
+        return selectedTables[0]
+          ? getFilteredJemaatPerEvent(jemaatList, selectedTables[0].date, selectedTables[0].event)
+          : [];
     }
 
     return [];
-  }
+  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent]);
   
-  const getPagedData = (jemaatList: Jemaat[]) => {
+  const dataForPagination = useMemo(() => getFilteredJemaat(jemaat), [jemaat, getFilteredJemaat]);
+  const filteredCount = dataForPagination.length;
+  const totalPages = Math.ceil(filteredCount / itemsPerPage);
+  
+  const getPagedData = useCallback((jemaatList: Jemaat[]) => {
     const filtered = jemaatList; 
     const indexOfLast = tablePage * itemsPerPage;
     const indexOfFirst = indexOfLast - itemsPerPage;
     return filtered.slice(indexOfFirst, indexOfLast);
-  };
+  }, [tablePage]);
   
   const uniqueJabatan = useMemo(() => 
     [...new Set(jemaat.map((j) => j.jabatan))], [jemaat]);
     
-  // NEW: Ambil semua Sesi unik untuk filter
-  const uniqueKehadiranSesi = useMemo(() => 
-    [...new Set(jemaat.map((j) => j.kehadiranSesi))], [jemaat]);
+  // LOGIKA BARU: Menghitung Sesi yang unik dan *tersedia* berdasarkan tanggal yang dipilih
+  const uniqueKehadiranSesiByDate = useMemo(() => {
+    if (selectedTables.length === 0) {
+        // Mode default atau tidak ada yang dipilih, tampilkan semua sesi unik dari database
+        return [...new Set(jemaat.map((j) => j.kehadiranSesi))];
+    }
+    
+    const uniqueSessions = new Set<string>();
+    
+    // Jika mode Monthly Summary, tampilkan semua sesi unik di database
+    if (viewMode === 'monthly_summary') {
+        return [...new Set(jemaat.map((j) => j.kehadiranSesi))];
+    }
+    
+    // Jika mode Event Per Table dan event yang dipilih adalah 'KESELURUHAN DATA HARI INI'
+    if (selectedTables.length > 0) {
+        // Kita hanya perlu melihat event pertama, karena filter sesi berlaku untuk semua data di tabel itu
+        const firstTable = selectedTables[0]; 
 
-  const handleSaveEdit = () => {
+        if (firstTable && firstTable.event === 'KESELURUHAN DATA HARI INI') {
+            const dateObj = new Date(firstTable.date);
+            // Ambil hanya sesi yang tersedia di tanggal itu
+            getAvailableSessionNames(dateObj).forEach(session => uniqueSessions.add(session));
+        } else if (firstTable) {
+            // Jika event spesifik dipilih, filter sesi tidak perlu ditampilkan, 
+            // tapi kita kembalikan sesi yang dipilih agar tampilan tidak kosong.
+            return [firstTable.event];
+        }
+    }
+    
+    return Array.from(uniqueSessions).sort();
+  }, [jemaat, selectedTables, viewMode]);
+
+
+  const handleSaveEdit = useCallback(() => {
     setEditMode(false);
     setJemaat(draftJemaat.map(d => ({ ...d })));
-  };
+  }, [draftJemaat]);
   
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setEditMode(false);
     setDraftJemaat(jemaat.map(j => ({ ...j })));
-  };
+  }, [jemaat]);
   
-  const handleRowClick = (row: Jemaat) => {
+  const handleRowClick = useCallback((row: Jemaat) => {
     if (!editMode) {
       setFormData({ ...row });
       setOpenDetailDrawer(true);
+      setSelectedFile(null); 
     }
-  };
+  }, [editMode]);
   
-  const handleSaveForm = () => {
+  const handleSaveForm = useCallback(() => {
     if (formData) {
-        let updatedFormData = { ...formData };
+        const updatedFormData = { ...formData };
         
         if (updatedFormData.tanggalLahir) {
             updatedFormData.umur = calculateAge(updatedFormData.tanggalLahir);
@@ -622,74 +1103,77 @@ export default function DatabasePage() {
         setJemaat(prev => prev.map(j => j.id === updatedFormData.id ? updatedFormData : j));
         setDraftJemaat(prev => prev.map(j => j.id === updatedFormData.id ? updatedFormData : j));
         setOpenDetailDrawer(false);
+        setSelectedFile(null); 
     }
-  };
-
-  const handleDownload = (format: 'csv' | 'pdf') => {
-    const dataToDownload = getFilteredJemaat(jemaat);
-    if (dataToDownload.length === 0) {
-        alert("Tidak ada data untuk diunduh.");
-        return;
-    }
-    
-    const dateRange = selectedDates.length > 0 
-      ? `${new Date(selectedDates[0]).toLocaleDateString('id-ID')} sampai ${new Date(selectedDates[selectedDates.length - 1]).toLocaleDateString('id-ID')}`
-      : "N/A";
-      
-    const summaryHeader = viewMode === 'monthly_summary'
-      ? `Data Gabungan Bulanan: ${monthNames[startMonth]} ${year}`
-      : `Data Gabungan Filtered untuk Tanggal: ${dateRange}`;
-
-    if (format === 'csv') {
-      let csv = "";
-      
-      csv += `"${summaryHeader}"\n`;
-      
-      const keys = ['id', 'nama', 'statusKehadiran', 'jabatan', 'status', 'kehadiranSesi', 'email', 'telepon'];
-      const headers = keys.join(",");
-      csv += headers + "\n";
-      
-      csv += dataToDownload.map(row => 
-        keys.map(key => {
-          const val = row[key as keyof Jemaat] ?? '';
-          return `"${String(val).replace(/"/g, '""')}"`; 
-        }).join(",")
-      ).join("\n") + "\n";
-      
-      const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.setAttribute("download", "data_jemaat_gabungan_filtered.csv");
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-    } else if (format === 'pdf') {
-      // Mock PDF download
-      alert(`Simulasi Download PDF untuk: ${summaryHeader}\n\nFitur ini memerlukan library eksternal (seperti jsPDF) untuk implementasi penuh.`);
-    }
-    setOpenDownloadDialog(false);
-  };
-
-  // Hitungan untuk pagination (berdasarkan mode)
-  const dataForPagination = getFilteredJemaat(jemaat);
-  const filteredCount = dataForPagination.length;
-  const totalPages = Math.ceil(filteredCount / itemsPerPage);
-
-  const currentYearForGrid = new Date().getFullYear();
-  const years = useMemo(() => {
-    const startYear = currentYearForGrid - 5;
-    const endYear = currentYearForGrid + 1;
-    return Array.from({ length: endYear - startYear + 1 }, (_, i) => startYear + i);
-  }, [currentYearForGrid]);
+  }, [formData]);
   
-  // Ringkasan untuk Header Tabel Tunggal (Monthly Summary Mode)
-  const monthlySummaryHeader = useMemo(() => {
-    if (selectedDates.length === 0) return "Pilih Tanggal";
+  const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files ? event.target.files[0] : null;
+      setSelectedFile(file ?? null);
+      if (file) {
+          setFormData(f => f ? { ...f, dokumen: undefined } : null);
+      }
+  }, []);
+  
+  const handleFileUpload = useCallback(async () => {
+      if (!selectedFile || !formData) return;
+
+      setIsUploading(true);
+      
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      try {
+          let savedDocumentData: string | undefined;
+
+          if (selectedFile.type.includes('image')) {
+              const reader = new FileReader();
+              reader.readAsDataURL(selectedFile);
+              
+              const base64Data = await new Promise<string>((resolve, reject) => {
+                  reader.onload = () => resolve(reader.result as string);
+                  reader.onerror = error => reject(new Error(`FileReader error: ${error.target?.error?.message ?? 'Unknown error'}`));
+              });
+              savedDocumentData = base64Data;
+              
+          } else if (selectedFile.type.includes('pdf')) {
+              savedDocumentData = `https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf?file=${selectedFile.name}_${Math.random().toString(36).substring(2, 8)}`;
+          } else {
+              savedDocumentData = `https://example.com/docs/file?name=${selectedFile.name}_${Math.random().toString(36).substring(2, 8)}`;
+          }
+          
+          setFormData(f => f ? { ...f, dokumen: savedDocumentData } : null);
+          alert(`Dokumen "${selectedFile.name}" berhasil diunggah dan disimpan (Simulasi)!`);
+      } catch (error) {
+          console.error("Error mock uploading file:", error);
+          alert("Gagal mengunggah dokumen (Mock Error).");
+      } finally {
+          setIsUploading(false);
+          setSelectedFile(null); 
+      }
+  }, [selectedFile, formData]);
+  
+  const openPreviewModal = useCallback((jemaatItem: Jemaat) => {
+    if (!jemaatItem.dokumen) return;
+
+    let type: PreviewModalData['type'];
+    if (isImageUrlOrBase64(jemaatItem.dokumen)) {
+        type = 'image';
+    } else if (jemaatItem.dokumen.includes('.pdf') || jemaatItem.dokumen.startsWith('data:application/pdf')) {
+        type = 'pdf';
+    } else {
+        type = 'other';
+    }
     
-    const dateCount = selectedDates.length;
-    
-    return `Keseluruhan Data | ${monthNames[startMonth]} ${year} (${dateCount} Tanggal)`;
-  }, [selectedDates, startMonth, year]);
+    setPreviewModalData({
+        url: jemaatItem.dokumen,
+        name: `${jemaatItem.nama}'s Document`,
+        type: type
+    });
+  }, []);
+
+  const closePreviewModal = useCallback(() => {
+    setPreviewModalData(null);
+  }, []);
 
   const tablesToRender = useMemo(() => {
     if (viewMode === 'monthly_summary') {
@@ -698,13 +1182,182 @@ export default function DatabasePage() {
     } else {
       return selectedTables;
     }
-  }, [viewMode, selectedTables, selectedDatesOnly, startMonth, year]);
+  }, [viewMode, selectedTables, selectedDatesOnly.length, startMonth, year]);
 
+  const handleDownload = useCallback(async (format: 'csv' | 'pdf') => {
+    if (tablesToRender.length === 0) {
+        alert("Tidak ada data untuk diunduh. Pilih tanggal dan event terlebih dahulu.");
+        return;
+    }
+    
+    setOpenDownloadDialog(false);
+    
+    const loadingDiv = document.createElement('div');
+    loadingDiv.id = 'download-loading';
+    loadingDiv.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[999]';
+    loadingDiv.innerHTML = `
+      <div class="bg-white p-6 rounded-xl shadow-2xl">
+        <div class="flex items-center gap-3">
+          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <span class="text-lg font-semibold text-gray-800">Membuat ${format.toUpperCase()} (${tablesToRender.length} tabel)...</span>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(loadingDiv);
+
+    try {
+        const startDate = selectedDates.length > 0 ? selectedDates[0] : undefined;
+        const endDate = selectedDates.length > 0 ? selectedDates[selectedDates.length - 1] : undefined;
+        const dateRange = startDate && endDate
+          ? `${startDate instanceof Date ? startDate.toLocaleDateString('id-ID') : new Date(startDate).toLocaleDateString('id-ID')} sampai ${endDate instanceof Date ? endDate.toLocaleDateString('id-ID') : new Date(endDate).toLocaleDateString('id-ID')}`
+          : "N/A";
+          
+        const summaryHeader = viewMode === 'monthly_summary'
+          ? `Data Gabungan Bulanan: ${monthNames[startMonth]} ${year}`
+          : `Data Kehadiran Jemaat - ${dateRange}`;
+
+        if (format === 'csv') {
+          let csv = "";
+          csv += `"${summaryHeader}"\n\n`;
+          
+          const keys: (keyof Jemaat)[] = ['id', 'nama', 'statusKehadiran', 'jabatan', 'kehadiranSesi', 'email', 'telepon'];
+          
+          tablesToRender.forEach(({ date, event }, tableIndex) => {
+            const dataForTable = viewMode === 'monthly_summary'
+              ? getFilteredJemaatMonthlySummary(jemaat)
+              : getFilteredJemaatPerEvent(jemaat, date, event);
+            
+            if (dataForTable.length === 0) return;
+            
+            const tableHeader = viewMode === 'monthly_summary'
+              ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
+              : `${new Date(date).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })} - ${event}`;
+            
+            csv += `\n"${tableHeader}"\n`;
+            csv += `"Total Data: ${dataForTable.length}"\n`;
+            
+            const headers = ['ID', 'Nama', 'Status Kehadiran', 'Jabatan', 'Jenis Ibadah', 'Email', 'Telp'];
+            csv += headers.map(h => `"${h}"`).join(",") + "\n";
+            
+            csv += dataForTable.map(row => 
+              keys.map(key => {
+                const val = row[key] ?? '';
+                return `"${String(val).replace(/"/g, '""')}"`; 
+              }).join(",")
+            ).join("\n") + "\n";
+            
+            if (tableIndex < tablesToRender.length - 1) {
+              csv += "\n" + "=".repeat(80) + "\n";
+            }
+          });
+          
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.setAttribute("download", `data_jemaat_${new Date().toISOString().substring(0, 10)}.csv`);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+        } else if (format === 'pdf') {
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const margin = 10;
+            let isFirstTable = true;
+            
+            tablesToRender.forEach(({ date, event }) => {
+              const dataForTable = viewMode === 'monthly_summary'
+                ? getFilteredJemaatMonthlySummary(jemaat)
+                : getFilteredJemaatPerEvent(jemaat, date, event);
+              
+              if (dataForTable.length === 0) return;
+              
+              if (!isFirstTable) {
+                pdf.addPage();
+              }
+              isFirstTable = false;
+              
+              let yPosition = 20;
+              
+              const tableHeader = viewMode === 'monthly_summary'
+                ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
+                : `${new Date(date).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })} - ${event}`;
+              
+              pdf.setFontSize(14);
+              pdf.setFont('helvetica', 'bold');
+              pdf.text(tableHeader, margin, yPosition);
+              yPosition += 8;
+              
+              pdf.setFontSize(10);
+              pdf.setFont('helvetica', 'normal');
+              pdf.text(`Total Data: ${dataForTable.length}`, margin, yPosition);
+              yPosition += 10;
+              
+              const head = [['ID', 'Nama', 'Status', 'Jabatan', 'Jenis Ibadah', 'Telp']];
+              const body = dataForTable.map(row => [
+                  String(row.id),
+                  row.nama,
+                  row.statusKehadiran,
+                  row.jabatan,
+                  row.kehadiranSesi,
+                  row.telepon ?? '-'
+              ]);
+
+              autoTable(pdf, {
+                startY: yPosition,
+                head: head,
+                body: body,
+                margin: { left: margin, right: margin },
+                headStyles: { fillColor: [79, 70, 229] },
+                didDrawPage: (data: { pageNumber: number }) => {
+                    pdf.setFontSize(8);
+                    pdf.setTextColor(128, 128, 128);
+                    pdf.text(
+                        `Halaman ${data.pageNumber} | ${summaryHeader} | Generated: ${new Date().toLocaleString('id-ID')}`,
+                        margin,
+                        pdf.internal.pageSize.getHeight() - 10
+                    );
+                }
+              } as UserOptions);
+            });
+            
+            pdf.save(`data_jemaat_${new Date().toISOString().substring(0, 10)}.pdf`);
+        } 
+      } catch (error) {
+        console.error("Error generating report:", error);
+        alert(`Gagal membuat laporan ${format.toUpperCase()}. Periksa konsol untuk detail error.`);
+      } finally {
+        const finalLoadingDiv = document.getElementById('download-loading');
+        if (finalLoadingDiv) {
+            document.body.removeChild(finalLoadingDiv);
+        }
+      }
+  }, [tablesToRender, selectedDates, viewMode, startMonth, year, jemaat, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent]);
+
+  const showSesiFilter = useMemo(() => {
+    if (viewMode === 'monthly_summary') return true;
+    
+    // Sesi filter hanya ditampilkan jika mode event_per_table DAN event yang dipilih adalah 'KESELURUHAN DATA HARI INI'
+    if (selectedTables.length === 1 && selectedTables[0]?.event === 'KESELURUHAN DATA HARI INI') {
+        return true;
+    }
+    
+    // Jika event spesifik dipilih, filter sesi tidak perlu ditampilkan
+    return false;
+  }, [viewMode, selectedTables]);
+  
+  const getPreviewUrl = useMemo(() => {
+    if (selectedFile) {
+        if (localPreviewUrl) return localPreviewUrl;
+        return null; 
+    }
+    return formData?.dokumen ?? null;
+  }, [selectedFile, localPreviewUrl, formData?.dokumen]);
 
   if (isLoading) {
     return (
       <div className="flex min-h-screen bg-gray-50">
         <main className="flex-grow p-8 max-w-7xl mx-auto w-full flex justify-center items-center">
+          <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
           <p className="text-xl text-indigo-600">Memuat data jemaat...</p>
         </main>
       </div>
@@ -733,7 +1386,7 @@ export default function DatabasePage() {
               <span className="hidden sm:inline">Download ({filteredCount})</span> 
             </button>
             <button 
-              onClick={() => router.push('/statistic')}
+              onClick={handleGoToStats}
               className="flex items-center gap-2 px-4 py-2 border-2 border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50 transition shadow-md hover:shadow-lg"
             >
               <BarChart3 size={18} />
@@ -743,200 +1396,34 @@ export default function DatabasePage() {
         </div>
       
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border border-gray-100">
-            <h2 className="text-xl font-bold text-indigo-700 mb-4 flex items-center gap-2">
-              <Calendar size={20} />
-              Pilih Tanggal Ibadah
-            </h2>
-            
-            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
-                <button 
-                  onClick={handlePrevMonth} 
-                  className="rounded-full p-2 text-indigo-600 hover:bg-indigo-100 transition"
-                >
-                  <ChevronLeft className="h-6 w-6" />
-                </button>
-                
-                <div className="flex items-center gap-3">
-                    <h2 
-                      className={`text-xl md:text-2xl font-bold text-gray-800 cursor-pointer hover:text-indigo-600 transition px-4 py-2 rounded-lg ${
-                        viewMode === 'monthly_summary' ? 'bg-indigo-100 text-indigo-700 shadow-sm' : 'hover:bg-indigo-100'
-                      }`}
-                      onClick={handleOpenYearPicker}
-                    >
-                      Tahun {year}
-                    </h2>
-                </div>
-                
-                <button 
-                  onClick={handleNextMonth} 
-                  className="rounded-full p-2 text-indigo-600 hover:bg-indigo-100 transition"
-                >
-                  <ChevronRight className="h-6 w-6" />
-                </button>
-            </div>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {monthsToDisplay.map((monthIndex) => {
-                const daysInMonth = getDaysInMonth(monthIndex, year);
-                const firstDay = getFirstDayOfMonth(monthIndex, year);
-                const startDayOffset = firstDay === 0 ? 6 : firstDay - 1;
-                const daysArray: (number | null)[] = [
-                  ...Array(startDayOffset).fill(null),
-                  ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-                ];
-                
-                const selectedKeys = new Set(selectedDates.map(getDayKey));
-                  
-                return (
-                  <div key={`${year}-${monthIndex}`} className="bg-gradient-to-br from-indigo-50 to-blue-50 rounded-lg p-4 border border-indigo-100">
-                    <h4 
-                      className="mb-3 text-center text-sm md:text-md font-bold text-indigo-600 cursor-pointer hover:text-indigo-800 transition"
-                      onClick={() => handleSelectMonth(monthIndex, year)} // KLIK BULAN UNTUK SELEKSI BULANAN (monthly summary)
-                    >
-                      {monthNames[monthIndex]} {year}
-                    </h4>
-                    <div className="grid grid-cols-7 text-xs font-semibold text-gray-600 mb-2">
-                      {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((d) => (
-                        <div key={d} className="text-center">{d}</div>
-                      ))}
-                    </div>
-                    <div className="grid grid-cols-7 gap-1 text-center text-sm">
-                      {daysArray.map((day, i) => {
-                        if (day === null) return <div key={i} className="p-1"></div>;
-                        
-                        const thisDate = new Date(year, monthIndex, day);
-                        const dayKey = getDayKey(thisDate);
-                        const isSelected = selectedKeys.has(dayKey);
-                        const isFutureDay = new Date(thisDate).setHours(0, 0, 0, 0) > todayStart;
-                        
-                        const hasEvents = mockEventsGenerator(dayKey, thisDate).length > 0;
-                        
-                        let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm";
-                        if (isFutureDay) {
-                          dayClass += " text-gray-300 cursor-not-allowed";
-                        } else if (isSelected) {
-                          dayClass += " bg-indigo-600 text-white font-bold shadow-md ring-2 ring-indigo-300 cursor-pointer";
-                        } else { 
-                          dayClass += " text-gray-700 hover:bg-indigo-200 cursor-pointer";
-                        }
-
-                        return (
-                          <div 
-                            key={i} 
-                            className={dayClass} 
-                            onClick={() => !isFutureDay && handleSelectDate(day, monthIndex)} // KLIK TANGGAL (event_per_table)
-                          >
-                            {day}
-                            {hasEvents && !isFutureDay && (
-                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full ${
-                                isSelected ? 'bg-white' : 'bg-indigo-600'
-                              }`}></div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+          <CalendarSection
+            year={year}
+            setYear={setYear}
+            startMonth={startMonth}
+            setStartMonth={setStartMonth}
+            viewMode={viewMode}
+            handleSelectMonth={handleSelectMonth}
+            handleSelectDate={handleSelectDate}
+            selectedDates={selectedDates}
+            setShowYearDialog={setShowYearDialog}
+          />
           
-          <div className="bg-white p-6 rounded-xl shadow-lg border border-gray-100 lg:sticky lg:top-8 h-fit">
-            <h3 className="text-lg font-bold text-indigo-700 mb-4 border-b pb-2">
-              {selectedDates.length} Tanggal Dipilih ({viewMode === 'monthly_summary' ? '1 Tabel' : `${selectedTables.length} Tabel`})
-            </h3>
-            
-            <div className="max-h-96 overflow-y-auto pr-2 space-y-4">
-              {selectedDates.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <Calendar size={48} className="mx-auto mb-2 opacity-30" />
-                  <p>Pilih tanggal di kalender</p>
-                </div>
-              ) : (
-                selectedDates.map((date) => {
-                  const key = getDayKey(date);
-                  const dateDisplay = date.toLocaleDateString("id-ID", { 
-                    day: "2-digit", 
-                    month: "long",
-                    year: "numeric"
-                  });
-                  const currentEvents = events[key] ?? mockEventsGenerator(key, date);
-                  const selectedEvents = selectedEventsByDate[key] ?? [];
-                  const mockEvents = mockEventsGenerator(key, date); // Ulangi mockEvents untuk cek isMockEvent
-                  
-                  return (
-                    <div key={key} className="p-4 border-2 border-indigo-200 rounded-lg bg-gradient-to-br from-indigo-50 to-blue-50">
-                      <div className="flex justify-between items-center mb-3">
-                        <span className="font-semibold text-gray-800 text-sm">{dateDisplay}</span>
-                        <button 
-                          className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition shadow-sm"
-                          onClick={() => { 
-                            setShowAddEventDialog(true); 
-                            setAddEventDateKey(key); 
-                          }}
-                        >
-                          + Event
-                        </button>
-                      </div>
-                      {currentEvents.length === 0 ? (
-                        <div className="text-center py-4 text-gray-500">
-                          <p className="text-sm mb-2">Tidak ada event di tanggal ini</p>
-                        </div>
-                      ) : (
-                        <>
-                          <div className="flex flex-wrap gap-2">
-                            {currentEvents.map((ev, idx) => (
-                              <div key={idx} className="relative inline-block">
-                                <button
-                                  onClick={() => handleSelectEvent(key, ev)} // KLIK EVENT (event_per_table)
-                                  className={`text-xs px-3 py-1.5 rounded-lg transition shadow-sm 
-                                ${ev === "KESELURUHAN DATA HARI INI" 
-                                  ? selectedEvents.includes(ev) 
-                                    ? 'bg-green-600 text-white shadow-md' 
-                                    : 'border-2 border-green-300 text-green-700 hover:bg-green-100'
-                                  : selectedEvents.includes(ev)
-                                    ? 'bg-indigo-600 text-white shadow-md'
-                                    : 'border-2 border-indigo-300 text-indigo-700 hover:bg-indigo-100'
-                                }`}
-                                >
-                                  {ev}
-                                </button>
-                                {/* Tombol Hapus: Hanya untuk event non-mock dan non-KESELURUHAN */}
-                                {ev !== "KESELURUHAN DATA HARI INI" && !mockEvents.includes(ev) && (
-                                    <button 
-                                        onClick={(e) => {
-                                            e.stopPropagation(); 
-                                            handleDeleteEvent(key, ev);
-                                        }}
-                                        className="absolute top-[-8px] right-[-8px] bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-red-700 transition"
-                                        title="Hapus Event"
-                                    >
-                                        <X size={10} />
-                                    </button>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                          {selectedEvents.length === 0 && (
-                            <p className="mt-3 text-xs text-red-600 font-medium bg-red-50 p-2 rounded">
-                              Pilih minimal 1 event!
-                            </p>
-                          )}
-                        </>
-                      )}
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
+          <SelectedEventsSection
+            selectedDates={selectedDates}
+            selectedEventsByDate={selectedEventsByDate}
+            events={events}
+            viewMode={viewMode}
+            handleSelectEvent={handleSelectEvent}
+            handleDeleteEvent={handleDeleteEvent}
+            handleOpenEditEvent={handleOpenEditEvent}
+            setShowAddEventDialog={setShowAddEventDialog}
+            setAddEventDateKey={setAddEventDateKey}
+          />
         </div>
 
         {tablesToRender.length > 0 ? (
           <div className="mt-8">
-            <div className="flex items-center gap-3 bg-white p-4 rounded-xl shadow-lg border border-gray-100 flex-wrap mb-6">
+            <div className="flex items-center gap-3 bg-white p-4 rounded-xl border border-gray-100 flex-wrap mb-6"> 
               <span className="font-semibold text-gray-700 text-sm">Filter:</span>
               
               <select 
@@ -961,25 +1448,14 @@ export default function DatabasePage() {
                 ))}
               </select>
               
-              <select 
-                value={filterStatus} 
-                onChange={e => setFilterStatus(e.target.value)}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
-              >
-                <option value="">Semua Status</option>
-                <option value="Aktif">Aktif</option>
-                <option value="Tidak Aktif">Tidak Aktif</option>
-              </select>
-              
-              {/* NEW FILTER: Jenis Ibadah/Kebaktian */}
-              {viewMode === 'monthly_summary' && (
+              {showSesiFilter && (
                   <select 
                     value={filterKehadiranSesi} 
                     onChange={e => setFilterKehadiranSesi(e.target.value)}
                     className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
                   >
                     <option value="">Semua Jenis Ibadah</option>
-                    {uniqueKehadiranSesi.map((sesi) => (
+                    {uniqueKehadiranSesiByDate.map((sesi) => (
                       <option key={sesi} value={sesi}>{sesi}</option>
                     ))}
                   </select>
@@ -989,7 +1465,7 @@ export default function DatabasePage() {
                 {!editMode ? (
                   <button 
                     onClick={() => setEditMode(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition shadow-md hover:shadow-lg"
+                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition" 
                   >
                     <Settings size={18} />
                     <span className="hidden sm:inline">Edit Data</span>
@@ -998,22 +1474,22 @@ export default function DatabasePage() {
                   <div className="flex gap-2">
                     <button 
                       onClick={handleSaveEdit}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-md"
+                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
                     >
-                      ✓ Simpan
+                      Simpan
                     </button>
                     <button 
                       onClick={handleCancelEdit}
                       className="px-4 py-2 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-50 transition"
                     >
-                      ✕ Batal
+                      Batal
                     </button>
                   </div>
                 )}
               </div>
             </div>
             
-            <div className="space-y-8">
+            <div className="space-y-8" id="table-container"> 
               
               {tablesToRender.map(({ date, event }, idx) => {
                 
@@ -1023,32 +1499,30 @@ export default function DatabasePage() {
                     
                 const filteredData = dataToRender;
                 
-                // Pagination hanya untuk tabel pertama
                 const pagedData = idx === 0 ? getPagedData(filteredData) : filteredData; 
                 
                 const tableFilteredCount = filteredData.length;
                 
-                // Pagination hanya ditampilkan pada tabel pertama (index 0)
                 const showPagination = idx === 0 && totalPages > 1;
 
                 const headerText = viewMode === 'monthly_summary'
-                    ? `📋 ${monthlySummaryHeader}`
-                    : `📋 ${new Date(date).toLocaleDateString("id-ID", { 
+                    ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
+                    : `${new Date(date).toLocaleDateString("id-ID", { 
                         day: "2-digit", 
                         month: "long", 
                         year: "numeric" 
                       })} - ${event}`;
 
                 return (
-                  <div key={date + event} className="bg-white rounded-xl shadow-lg border border-gray-200 overflow-hidden">
-                    <div className="bg-gradient-to-r from-indigo-600 to-blue-600 p-4 text-white font-semibold flex justify-between items-center">
+                  <div key={`${date}-${event}`} className="bg-white rounded-xl border border-gray-200 overflow-hidden"> 
+                    <div className="bg-indigo-600 p-4 text-white font-semibold flex justify-between items-center">
                       <h2 className="text-base md:text-lg">{headerText}</h2>
                       <span className="text-sm bg-white/20 px-3 py-1 rounded-full">{tableFilteredCount} data</span>
                     </div>
                     
                     <div className="overflow-x-auto">
                       <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-gradient-to-r from-indigo-50 to-blue-50">
+                        <thead className="bg-indigo-50"> 
                           <tr>
                             <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">No</th>
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
@@ -1056,16 +1530,14 @@ export default function DatabasePage() {
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Nama</th>
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status Kehadiran</th> 
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Jabatan</th>
-                            {/* NEW COLUMN: Jenis Ibadah/Kebaktian */}
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Jenis Ibadah/Kebaktian</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status</th>
+                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Dokumen</th> 
                             <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Aksi</th>
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                           {pagedData.map((j, i) => {
                             const draftItem = draftJemaat.find(d => d.id === j.id) ?? j;
-                            // Index hanya valid untuk tabel pertama jika pagination diaktifkan
                             const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
 
                             return (
@@ -1081,12 +1553,16 @@ export default function DatabasePage() {
                                   {j.id}
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap">
-                                  <img 
-                                    src={j.foto} 
-                                    alt={j.nama} 
-                                    className="rounded-full h-10 w-10 object-cover ring-2 ring-indigo-300 shadow-sm" 
+                                  <Image
+                                    src={j.foto}
+                                    alt={j.nama}
+                                    width={40}
+                                    height={40}
+                                    className="rounded-full h-10 w-10 object-cover shadow-sm"
+                                    unoptimized
                                   />
                                 </td>
+                                
                                 <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                                   {editMode ? (
                                     <input
@@ -1155,34 +1631,24 @@ export default function DatabasePage() {
                                     j.jabatan
                                   )}
                                 </td>
-                                {/* NEW COLUMN VALUE */}
                                 <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
                                     {draftItem.kehadiranSesi}
                                 </td>
-                                {/* END NEW COLUMN VALUE */}
-                                <td className="px-4 py-3 whitespace-nowrap text-sm">
-                                  {editMode ? (
-                                    <select
-                                      value={draftItem.status}
-                                      onChange={(e) => {
-                                        setDraftJemaat(prev => 
-                                          prev.map(d => d.id === j.id ? { ...d, status: e.target.value } : d)
-                                        );
+                                <td className="px-4 py-3 whitespace-nowrap text-sm text-center">
+                                  {j.dokumen ? (
+                                    <button
+                                      onClick={(e) => { 
+                                        e.stopPropagation(); 
+                                        openPreviewModal(j); 
                                       }}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none"
+                                      className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition text-xs font-medium"
+                                      title={j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf') ? "Preview PDF" : "Preview Gambar"}
                                     >
-                                      <option value="Aktif">Aktif</option>
-                                      <option value="Tidak Aktif">Tidak Aktif</option>
-                                    </select>
+                                      {j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf') ? <FileText size={14} /> : <LucideImage size={14} />}
+                                      Preview
+                                    </button>
                                   ) : (
-                                    <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
-                                      j.status === "Aktif" 
-                                        ? 'bg-blue-100 text-blue-800 border border-blue-200' 
-                                        : 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                                    }`}>
-                                      {j.status}
-                                    </span>
+                                    <span className="text-gray-400">N/A</span>
                                   )}
                                 </td>
                                 <td className="px-4 py-3 whitespace-nowrap text-center">
@@ -1191,7 +1657,7 @@ export default function DatabasePage() {
                                       e.stopPropagation(); 
                                       handleRowClick(j); 
                                     }}
-                                    className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium shadow-sm"
+                                    className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium" 
                                   >
                                     Detail
                                   </button>
@@ -1208,9 +1674,9 @@ export default function DatabasePage() {
                         <button 
                           disabled={tablePage === 1}
                           onClick={() => setTablePage(p => p - 1)}
-                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition shadow-sm"
+                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition" 
                         >
-                          ← Sebelumnya
+                          Sebelumnya
                         </button>
                         <span className="text-gray-700 font-medium">
                           Halaman <span className="text-indigo-600 font-bold">{tablePage}</span> dari {totalPages}
@@ -1218,9 +1684,9 @@ export default function DatabasePage() {
                         <button 
                           disabled={tablePage === totalPages}
                           onClick={() => setTablePage(p => p + 1)}
-                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition shadow-sm"
+                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition" 
                         >
-                          Berikutnya →
+                          Berikutnya
                         </button>
                       </div>
                     )}
@@ -1230,7 +1696,7 @@ export default function DatabasePage() {
             </div>
           </div>
         ) : (
-          <div className="flex flex-col justify-center items-center h-64 bg-white rounded-xl shadow-lg border-2 border-dashed border-gray-300">
+          <div className="flex flex-col justify-center items-center h-64 bg-white rounded-xl border-2 border-dashed border-gray-300"> 
             <Calendar size={64} className="text-gray-300 mb-4" />
             <p className="text-xl text-gray-500 mb-2">Belum ada data yang ditampilkan</p>
             <p className="text-sm text-gray-400">Pilih tanggal di kalender dan minimal 1 event</p>
@@ -1238,8 +1704,8 @@ export default function DatabasePage() {
         )}
 
         {showYearDialog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-sm shadow-2xl">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-sm"> 
               <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">
                 Pilih Tahun
               </h3>
@@ -1248,6 +1714,7 @@ export default function DatabasePage() {
                 <button
                   onClick={() => setGridStartYear(prev => prev - 10)}
                   className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                  aria-label="Previous Decade"
                 >
                   <ChevronLeft className="h-5 w-5" />
                 </button>
@@ -1257,6 +1724,7 @@ export default function DatabasePage() {
                 <button
                   onClick={() => setGridStartYear(prev => prev + 10)}
                   className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                  aria-label="Next Decade"
                 >
                   <ChevronRight className="h-5 w-5" />
                 </button>
@@ -1268,12 +1736,14 @@ export default function DatabasePage() {
                     key={y}
                     onClick={() => handleSelectYearFromGrid(y)}
                     className={`
-                      px-4 py-3 text-sm font-semibold rounded-lg transition duration-150 shadow-sm
+                      px-4 py-3 text-sm font-semibold rounded-lg transition duration-150
                       ${y === year
-                        ? 'bg-indigo-600 text-white shadow-lg ring-2 ring-indigo-400'
+                        ? 'bg-indigo-600 text-white shadow-md' 
                         : 'bg-gray-100 text-gray-800 hover:bg-indigo-50 hover:text-indigo-600'
                       }
+                      ${y > currentYear ? 'opacity-50 cursor-not-allowed' : ''}
                     `}
+                    disabled={y > currentYear}
                   >
                     {y}
                   </button>
@@ -1293,8 +1763,8 @@ export default function DatabasePage() {
         )}
         
         {showAddEventDialog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
               <h3 className="text-xl font-bold text-indigo-600 mb-4 border-b pb-3">
                 Tambah Event Baru
               </h3>
@@ -1323,7 +1793,7 @@ export default function DatabasePage() {
                 <button
                   onClick={handleAddEvent}
                   disabled={!newEventName.trim()}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md"
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition" 
                 >
                   Tambah
                 </button>
@@ -1332,12 +1802,48 @@ export default function DatabasePage() {
           </div>
         )}
 
-        {openDetailDrawer && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-end z-50">
-            <div className="bg-white w-full max-w-md h-full overflow-y-auto shadow-2xl animate-slide-in">
+        {showEditEventDialog && editingEventKey && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
+              <h3 className="text-xl font-bold text-indigo-600 mb-4 border-b pb-3">
+                Edit Nama Event
+              </h3>
+              <p className="text-sm text-gray-500 mb-4">
+                Mengedit event untuk tanggal: <span className="font-semibold">{new Date(editingEventKey.dateKey).toLocaleDateString("id-ID")}</span>
+              </p>
+              <input
+                type="text"
+                value={editEventName}
+                onChange={(e) => setEditEventName(e.target.value)}
+                className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 mb-4 focus:border-indigo-500 focus:outline-none"
+                placeholder="Nama Event Baru"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setShowEditEventDialog(false)}
+                  className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={handleSaveEditEvent}
+                  disabled={!editEventName.trim() || editEventName.trim() === editingEventKey.oldName}
+                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition" 
+                >
+                  Simpan Perubahan
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {openDetailDrawer && formData && (
+          <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
+            <div className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"> 
               <div className="p-6">
                 <div className="flex items-center justify-between border-b pb-4 mb-6">
-                  <h2 className="text-2xl font-bold text-indigo-700">📝 Detail Jemaat</h2>
+                  <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat</h2>
                   <button
                     onClick={() => setOpenDetailDrawer(false)}
                     className="text-gray-500 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full"
@@ -1346,126 +1852,186 @@ export default function DatabasePage() {
                   </button>
                 </div>
                 
-                {formData && (
-                  <div className="space-y-5">
-                    <div className="flex justify-center mb-6">
-                      <div className="relative">
-                        <img 
-                          src={formData.foto} 
-                          alt={formData.nama} 
-                          className="rounded-full h-28 w-28 object-cover ring-4 ring-indigo-400 shadow-lg" 
-                        />
-                        <div className="absolute bottom-0 right-0 bg-green-500 h-6 w-6 rounded-full border-4 border-white"></div>
-                      </div>
+                <div className="space-y-5">
+                  <div className="flex justify-center mb-6">
+                    <div className="relative">
+                      <Image
+                        src={formData.foto}
+                        alt={formData.nama}
+                        width={112}
+                        height={112}
+                        className="rounded-full h-28 w-28 object-cover shadow-lg"
+                        unoptimized
+                      />
+                      <div className="absolute bottom-0 right-0 bg-green-500 h-6 w-6 rounded-full border-4 border-white"></div>
                     </div>
-                    <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
+                  </div>
+                  <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
 
-                    <div className="space-y-4">
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          📅 Tanggal Lahir
-                        </label>
-                        <input
-                          type="date"
-                          value={formData.tanggalLahir ?? ""}
-                          onChange={(e) => setFormData(f => f ? { ...f, tanggalLahir: e.target.value } : null)}
-                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Umur (Tahun)
-                        </label>
-                        <input
-                          type="text"
-                          value={calculatedAge || "-"} 
-                          disabled 
-                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                          placeholder="Akan terhitung otomatis"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          👨‍👩‍👧‍👦 Keluarga
-                        </label>
-                        <input
-                          type="text"
-                          value={formData.keluarga ?? ""}
-                          onChange={(e) => setFormData(f => f ? { ...f, keluarga: e.target.value } : null)}
-                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                          placeholder="Nama keluarga"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          ✉️ Email
-                        </label>
-                        <input
-                          type="email"
-                          value={formData.email ?? ""}
-                          onChange={(e) => setFormData(f => f ? { ...f, email: e.target.value } : null)}
-                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                          placeholder="email@example.com"
-                        />
-                      </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          📱 No. Telp
-                        </label>
-                        <input
-                          type="tel"
-                          value={formData.telepon ?? ""}
-                          onChange={(e) => setFormData(f => f ? { ...f, telepon: e.target.value } : null)}
-                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                          placeholder="08xxxxxxxxxx"
-                        />
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 pt-2">
-                        <div>
-                          <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            📊 Status Kehadiran
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Unggah Dokumen/Gambar
+                      </label>
+                      <div className="border-2 border-dashed border-gray-300 p-4 rounded-lg bg-gray-50">
+                          <input
+                              id={`file-upload-${formData.id}`}
+                              type="file"
+                              onChange={handleFileChange}
+                              className="hidden"
+                              accept=".jpg,.jpeg,.png,.pdf" 
+                          />
+                          <label htmlFor={`file-upload-${formData.id}`} className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition cursor-pointer"> 
+                              <UploadCloud size={18} />
+                              {selectedFile ? selectedFile.name : "Pilih File"}
                           </label>
-                          <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
-                            formData.statusKehadiran === "Aktif" 
-                              ? 'bg-green-100 text-green-800' 
-                              : formData.statusKehadiran === "Jarang Hadir"
-                              ? 'bg-yellow-100 text-yellow-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {formData.statusKehadiran}
-                          </span>
-                        </div>
-                        
-                        <div>
-                          <label className="block text-sm font-semibold text-gray-700 mb-2">
-                            🏷️ Status
-                          </label>
-                          <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
-                            formData.status === "Aktif" 
-                              ? 'bg-blue-100 text-blue-800' 
-                              : 'bg-yellow-100 text-yellow-800'
-                          }`}>
-                            {formData.status}
-                          </span>
-                        </div>
+                          
+                          {selectedFile && (
+                              <div className="mt-3 flex justify-between items-center text-sm">
+                                  <span className="truncate text-gray-700">{selectedFile.name}</span>
+                                  <button
+                                      onClick={handleFileUpload}
+                                      disabled={isUploading}
+                                      className={`ml-3 px-3 py-1 text-xs font-medium rounded-lg transition flex items-center gap-1 ${
+                                          isUploading 
+                                          ? 'bg-gray-400 text-white cursor-not-allowed'
+                                          : 'bg-green-500 text-white hover:bg-green-600'
+                                      }`}
+                                  >
+                                      {isUploading ? <><Loader2 size={14} className="animate-spin" /> Mengunggah...</> : 'Upload'}
+                                  </button>
+                              </div>
+                          )}
+                          <p className="text-xs text-gray-500 mt-2">Format: JPG, PNG, PDF (Maks. 5MB Simulasi)</p>
+                          
+                          {formData.dokumen && (
+                              <button
+                                  onClick={() => {
+                                    if (confirm("Yakin ingin menghapus dokumen ini?")) {
+                                      setFormData(f => f ? { ...f, dokumen: undefined } : null)
+                                    }
+                                  }}
+                                  className="mt-3 text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
+                              >
+                                  <X size={12} /> Hapus Dokumen Saat Ini
+                              </button>
+                          )}
                       </div>
-
-                      <div>
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          💼 Jabatan
-                        </label>
-                        <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
-                          {formData.jabatan}
+                      
+                      {(formData.dokumen ?? getPreviewUrl) && (
+                        <div className="mt-4 p-3 border-2 border-indigo-200 rounded-lg bg-indigo-50">
+                          <p className="text-sm font-semibold text-indigo-700 mb-2 flex items-center gap-1">
+                            Preview {(selectedFile && "File Baru") ?? "Tersimpan"}
+                          </p>
+                          {isImageUrlOrBase64(getPreviewUrl ?? '') ? (
+                            <Image
+                              src={getPreviewUrl ?? ""}
+                              alt="Dokumen Preview"
+                              width={64}
+                              height={64}
+                              className="w-16 h-16 object-cover rounded-md border border-gray-300 bg-white inline-block"
+                            />
+                          ) : (getPreviewUrl?.includes('.pdf') || selectedFile?.type?.includes('pdf')) ? (
+                            <div className="flex items-center gap-2 text-gray-700">
+                              <FileText size={24} />
+                              <p className="text-sm">File PDF siap (Preview di Modal)</p>
+                            </div>
+                          ) : (
+                            <p className="text-sm text-gray-500">Format tidak didukung untuk preview langsung.</p>
+                          )}
                         </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Tanggal Lahir
+                      </label>
+                      <input
+                        type="date"
+                        value={formData.tanggalLahir ?? ""}
+                        onChange={(e) => setFormData(f => f ? { ...f, tanggalLahir: e.target.value } : null)}
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Umur (Tahun)
+                      </label>
+                      <input
+                        type="text"
+                        value={calculatedAge || "-"} 
+                        disabled 
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        placeholder="Akan terhitung otomatis"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Keluarga
+                      </label>
+                      <input
+                        type="text"
+                        value={formData.keluarga ?? ""}
+                        onChange={(e) => setFormData(f => f ? { ...f, keluarga: e.target.value } : null)}
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
+                        placeholder="Nama keluarga"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Email
+                      </label>
+                      <input
+                        type="email"
+                        value={formData.email ?? ""}
+                        onChange={(e) => setFormData(f => f ? { ...f, email: e.target.value } : null)}
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
+                        placeholder="email@example.com"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        No. Telp
+                      </label>
+                      <input
+                        type="tel"
+                        value={formData.telepon ?? ""}
+                        onChange={(e) => setFormData(f => f ? { ...f, telepon: e.target.value } : null)}
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
+                        placeholder="08xxxxxxxxxx"
+                      />
+                    </div>
+
+                    <div className="pt-2"> 
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Status Kehadiran
+                        </label>
+                        <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
+                          formData.statusKehadiran === "Aktif" 
+                            ? 'bg-green-100 text-green-800' 
+                            : formData.statusKehadiran === "Jarang Hadir"
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {formData.statusKehadiran}
+                        </span>
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Jabatan
+                      </label>
+                      <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
+                        {formData.jabatan}
                       </div>
                     </div>
                   </div>
-                )}
+                </div>
                 
                 <div className="pt-6 flex justify-end space-x-3 border-t mt-8">
                   <button
@@ -1476,9 +2042,9 @@ export default function DatabasePage() {
                   </button>
                   <button
                     onClick={handleSaveForm}
-                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition shadow-md"
+                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition" 
                   >
-                    💾 Simpan
+                    Simpan
                   </button>
                 </div>
               </div>
@@ -1486,24 +2052,26 @@ export default function DatabasePage() {
           </div>
         )}
 
+        <DocumentPreviewModal data={previewModalData} onClose={closePreviewModal} />
+        
         {openDownloadDialog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-2xl">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
               <h3 className="text-xl font-semibold text-indigo-700 border-b pb-3 mb-4">
-                📥 Download Data
+                Download Data
               </h3>
               <p className="text-gray-700 mb-6">Pilih format file yang ingin diunduh:</p>
               <div className="flex flex-col gap-3 mb-6">
                 <button
                   onClick={() => handleDownload('csv')}
-                  className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition shadow-md flex items-center justify-center gap-2"
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
                 >
                   <Download size={20} />
                   Download CSV
                 </button>
                 <button
                   onClick={() => handleDownload('pdf')}
-                  className="w-full px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition shadow-md flex items-center justify-center gap-2"
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition" 
                 >
                   <Download size={20} />
                   Download PDF
