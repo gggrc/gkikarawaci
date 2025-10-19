@@ -10,7 +10,7 @@ export type Database = {
           gender: string
           email: string
           jabatan: string
-          isVerified: boolean
+          isVerified: string
           role: string
         }
         Insert: {

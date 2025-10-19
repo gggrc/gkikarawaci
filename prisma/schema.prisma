@@ -16,11 +16,14 @@ model Ibadah {
 }
 
 model Kehadiran {
-  id_kehadiran String @id
-  id_ibadah    String
-  id_jemaat    String
-  ibadah       Ibadah @relation(fields: [id_ibadah], references: [id_ibadah])
-  jemaat       Jemaat @relation(fields: [id_jemaat], references: [id_jemaat])
+  id_kehadiran   String    @id
+  id_ibadah      String
+  id_jemaat      String
+  waktu_presensi DateTime? @default(now()) @db.Timestamp(6)
+  status         String?   @default("Hadir")
+  name           String?
+  ibadah         Ibadah    @relation(fields: [id_ibadah], references: [id_ibadah])
+  jemaat         Jemaat    @relation(fields: [id_jemaat], references: [id_jemaat])
 }
 
 model Jemaat {
@@ -51,6 +54,6 @@ model User {
   gender        String    @default("unknown")
   email         String
   jabatan       String
-  isVerified    String   @default("pending") // "pending" | "accepted" | "rejected" 
+  isVerified    String    @default("pending")
   role          String
 }

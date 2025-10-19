@@ -1,5 +1,7 @@
 // src/app/api/jemaat/route.ts
+export const runtime = "nodejs";
 import { NextResponse } from "next/server";
+
 
 // Data type sent to the client (hanya dengan 'statusKehadiran' field)
 export interface JemaatClient {

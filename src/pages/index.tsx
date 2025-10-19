@@ -5,6 +5,17 @@ import { SignedOut, UserButton, SignedIn, useUser } from "@clerk/nextjs";
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/router";
 
+type UserData = {
+  clerkId: string;
+  nama: string;
+  email: string;
+  gender: string;
+  jabatan: string;
+  isVerified: "pending" | "accepted" | "rejected";
+  role: "admin" | "user";
+};
+
+
 export default function Home() {
   const [activeSection, setActiveSection] = useState<string>("home");
   const [showNavbar, setShowNavbar] = useState(true);
@@ -55,30 +66,31 @@ export default function Home() {
 
       try {
         const res = await fetch("/api/me");
-        const data = await res.json();
+        const data = (await res.json()) as UserData;
 
         if (!data) return;
 
         // admin langsung ke /statistic
         if (data.role === "admin") {
-          router.push("/statistic");
+          await router.push("/statistic");
+
           return;
         }
 
         // user biasa cek verifikasi
         if (data.isVerified === "pending") {
-          router.push("/waiting");
+          await router.push("/waiting");
         } else if (data.isVerified === "accepted") {
-          router.push("/statistic");
+          await router.push("/statistic");
         } else if (data.isVerified === "rejected") {
-          router.push("/rejected"); // kalau ada halaman rejected
+          await router.push("/rejected"); // kalau ada halaman rejected
         }
       } catch (err) {
         console.error("Error fetching user data:", err);
       }
     };
 
-    checkUser();
+    void checkUser();
   }, [user, router]);
 
   return (

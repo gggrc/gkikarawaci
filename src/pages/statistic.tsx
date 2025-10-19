@@ -123,7 +123,7 @@ const calculateDateStats = (jemaatList: Jemaat[], selectedDate: string) => {
           const sesi = jemaat.kehadiranSesi;
           const status = jemaat.statusKehadiran;
           
-          let isPresent = true; // Asumsi kehadiran 100% untuk yang sesinya cocok
+          const isPresent = true; // Asumsi kehadiran 100% untuk yang sesinya cocok
 
           if (isPresent) {
               totalKehadiranSemuaSesi++;
@@ -246,7 +246,7 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
                 }} // Adjusted to match the expected type
                 style={{ cursor: 'pointer' }}
                 onMouseEnter={(state: any) => {
-                  if (state && state.activePayload && state.activePayload.length > 0) {
+                  if (state?.activePayload && state.activePayload.length > 0) {
                     setHoveredSession(state.activePayload[0].payload.fullSessionName);
                   }
                 }}
@@ -329,7 +329,7 @@ const MonthLineChart = ({ data, month, year }: any) => {
     const currentYearKey = today.getFullYear();
 
     const handleDailyChartClick = (state: any) => {
-        if (state && state.activeLabel) {
+        if (state?.activeLabel) {
             const day = state.activeLabel;
             
             // Format tanggal yang diklik: YYYY-MM-DD
@@ -529,7 +529,7 @@ export default function StatisticPage() {
     const { dates } = router.query;
 
     if (typeof dates === 'string' && dates.length > 0) {
-      const datesArray = dates.split(',').filter(d => d.match(/^\d{4}-\d{2}-\d{2}$/));
+      const datesArray = dates.split(',').filter(d => /^\d{4}-\d{2}-\d{2}$/.exec(d));
       setSelectedDatesKeys(datesArray);
       
       if (datesArray.length > 0) {
@@ -604,7 +604,7 @@ export default function StatisticPage() {
             Object.entries(stats.statusKehadiranBySesi).forEach(([session, statusCounts]) => {
                 combined[session] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
                 
-                combined[session]['Aktif'] += statusCounts['Aktif'] || 0;
+                combined[session].Aktif += statusCounts.Aktif || 0;
                 combined[session]['Jarang Hadir'] += statusCounts['Jarang Hadir'] || 0;
                 combined[session]['Tidak Aktif'] += statusCounts['Tidak Aktif'] || 0;
             });
@@ -915,7 +915,7 @@ export default function StatisticPage() {
 
   // Handler untuk LineChart Tahunan (Navigasi ke database bulan itu)
   const handleYearlyChartClick = (state: any) => {
-    if (state && state.activeLabel) {
+    if (state?.activeLabel) {
       const monthName = state.activeLabel;
       const monthIndex = monthNames.findIndex(name => name.substring(0, 3) === monthName);
       
@@ -969,12 +969,12 @@ export default function StatisticPage() {
     let yPos = 20;
 
     doc.setFontSize(16);
-    (doc as any).setFont('helvetica', 'bold');
+    (doc).setFont('helvetica', 'bold');
     doc.text(headerTitle, margin, yPos);
     yPos += 7;
     
     doc.setFontSize(10);
-    (doc as any).setFont('helvetica', 'normal');
+    (doc).setFont('helvetica', 'normal');
     doc.text(`Tanggal Dibuat: ${new Date().toLocaleString('id-ID')}`, margin, yPos);
     yPos += 10;
     
@@ -988,12 +988,12 @@ export default function StatisticPage() {
         }
         
         doc.setFontSize(12);
-        (doc as any).setFont('helvetica', 'bold');
+        (doc).setFont('helvetica', 'bold');
         doc.text(title, margin, yPos);
         yPos += 5;
         
         // Panggil autoTable. Karena JsPDF diimpor statis/require, ini seharusnya berfungsi.
-        (doc as any).autoTable({
+        (doc).autoTable({
             startY: yPos,
             head: [head],
             body: body,
@@ -1006,7 +1006,7 @@ export default function StatisticPage() {
                 doc.text(`Halaman ${data.pageNumber}`, pageWidth - margin, doc.internal.pageSize.getHeight() - 10);
             }
         });
-        yPos = (doc as any).autoTable.previous.finalY + 10;
+        yPos = (doc).autoTable.previous.finalY + 10;
     };
 
     // 1. Data Tahunan / Bulanan

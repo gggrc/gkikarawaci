@@ -1,27 +1,34 @@
-// src/app/api/me/route.ts
+export const runtime = "nodejs";
 import { getAuth } from "@clerk/nextjs/server";
-import { PrismaClient } from "@prisma/client";
-import { NextRequest, NextResponse } from "next/server";
+import { NextResponse } from "next/server";
+import type { NextRequest } from "next/server";
+import prisma from "@/lib/prisma";
 
-const prisma = new PrismaClient();
-
+// ✅ Handler GET /api/me
 export async function GET(req: NextRequest) {
   const { userId } = getAuth(req);
 
+  // Jika belum login
   if (!userId) {
-    return NextResponse.json({ role: null, isVerified: null });
+    return NextResponse.json({ role: null, isVerified: "pending" });
   }
 
-  const user = await prisma.user.findUnique({
-    where: { clerkId: userId },
-    select: {
-      role: true,
-      isVerified: true,
-    },
-  });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { role: true, isVerified: true },
+    });
 
-  return NextResponse.json({
-    role: user?.role ?? null,
-    isVerified: user?.isVerified ?? "pending",
-  });
+    return NextResponse.json({
+      role: user?.role ?? "user",
+      isVerified: user?.isVerified ?? "pending",
+    });
+  } catch (error: unknown) {
+    if (error instanceof Error) {
+      console.error("❌ Error in /api/me:", error.message);
+    } else {
+      console.error("❌ Unknown error in /api/me:", error);
+    }
+    return NextResponse.json({ role: null, isVerified: "pending" });
+  }
 }

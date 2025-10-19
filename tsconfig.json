@@ -8,7 +8,7 @@
     "resolveJsonModule": true,
     "moduleDetection": "force",
     "isolatedModules": true,
-    "verbatimModuleSyntax": true,
+    "verbatimModuleSyntax": false,
 
     /* Strictness */
     "strict": true,
@@ -19,17 +19,18 @@
     "lib": ["dom", "dom.iterable", "ES2022"],
     "noEmit": true,
     "module": "ESNext",
-    "moduleResolution": "Bundler",
+    "moduleResolution": "node",
     "jsx": "preserve",
     "plugins": [{ "name": "next" }],
     "incremental": true,
     // Mempertahankan solusi untuk warning 'baseUrl is deprecated'
 
-    "baseUrl": ".",
+    "baseUrl": "src",
     // ❌ Menghapus rootDirs: ["./src"]
     "paths": {
       // ✅ Diperbaiki agar alias "~" menunjuk ke folder "src"
-      "~/*": ["./src/*"]
+      "@/*": ["*"],
+      "~/*": ["*"]
     }
   },
   
