@@ -516,6 +516,17 @@ const SelectedEventsSection = ({
 // --- KOMPONEN UTAMA ---
 export default function DatabasePage() {
   const router = useRouter();
+  useEffect(() => {
+    const checkRole = async () => {
+      const res = await fetch("/api/me");
+      const data = (await res.json()) as { role?: "admin" | "user" }; // ✅ typed
+      if (data.role !== "admin") {
+        void router.push("/unauthorized"); // ✅ tandai promise supaya no-floating-promises hilang
+      }
+    };
+    void checkRole();
+  }, [router]);
+
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
   const [isLoading, setIsLoading] = useState(true); 
   
@@ -1057,7 +1068,7 @@ export default function DatabasePage() {
         // Kita hanya perlu melihat event pertama, karena filter sesi berlaku untuk semua data di tabel itu
         const firstTable = selectedTables[0]; 
 
-        if (firstTable && firstTable.event === 'KESELURUHAN DATA HARI INI') {
+        if (firstTable?.event === 'KESELURUHAN DATA HARI INI') {
             const dateObj = new Date(firstTable.date);
             // Ambil hanya sesi yang tersedia di tanggal itu
             getAvailableSessionNames(dateObj).forEach(session => uniqueSessions.add(session));

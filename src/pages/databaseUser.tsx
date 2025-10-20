@@ -428,6 +428,17 @@ const SelectedEventsSection = ({
 // --- KOMPONEN UTAMA ---
 export default function DatabasePage() {
   const router = useRouter();
+    // 🧑‍💻 Role check (user only)
+    useEffect(() => {
+      const checkRole = async () => {
+        const res = await fetch("/api/me");
+        const data = (await res.json()) as { role?: "admin" | "user" };
+        if (data.role !== "user") {
+          void router.push("/unauthorized");
+        }
+      };
+      void checkRole();
+    }, [router]);
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
   const [isLoading, setIsLoading] = useState(true); 
   
@@ -853,7 +864,7 @@ export default function DatabasePage() {
     if (selectedTables.length > 0) {
         const firstTable = selectedTables[0]; 
 
-        if (firstTable && firstTable.event === 'KESELURUHAN DATA HARI INI') {
+        if (firstTable?.event === 'KESELURUHAN DATA HARI INI') {
             const dateObj = new Date(firstTable.date);
             getAvailableSessionNames(dateObj).forEach(session => uniqueSessions.add(session));
         } else if (firstTable) {
