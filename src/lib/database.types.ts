@@ -6,10 +6,7 @@ export type Database = {
           user_id: number
           clerkId: string
           nama: string
-          tanggal_lahir: string | null
-          gender: string
           email: string
-          jabatan: string
           isVerified: string
           role: string
         }
@@ -17,19 +14,13 @@ export type Database = {
           user_id?: number
           clerkId: string
           nama: string
-          tanggal_lahir?: string | null
-          gender?: string
           email: string
-          jabatan: string
           isVerified?: boolean
           role: string
         }
         Update: {
           nama?: string
-          tanggal_lahir?: string | null
-          gender?: string
           email?: string
-          jabatan?: string
           isVerified?: boolean
           role?: string
         }

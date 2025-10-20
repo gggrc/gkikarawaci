@@ -9,7 +9,6 @@ type User = {
   nama: string;
   email: string;
   gender: string;
-  jabatan: string;
   isVerified: string;
   role: string;
 };
@@ -55,8 +54,6 @@ export async function POST(req: Request) {
           clerkId: id,
           nama: name,
           email,
-          gender: "unknown",
-          jabatan: "Jemaat",
           isVerified: "pending",
           role: "user",
         },

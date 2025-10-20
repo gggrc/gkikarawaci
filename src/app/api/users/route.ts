@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const admin = await prisma.user.findUnique({ where: { clerkId: userId } });
-  if (!admin || admin.role !== "admin")
+  if (admin?.role !== "admin")
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
   const { searchParams } = new URL(req.url);
@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
       clerkId: true,
       nama: true,
       email: true,
-      jabatan: true,
       role: true,
       isVerified: true,
     },

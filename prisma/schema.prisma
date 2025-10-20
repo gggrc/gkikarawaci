@@ -50,10 +50,7 @@ model User {
   user_id       Int       @id @default(autoincrement())
   clerkId       String    @unique
   nama          String
-  tanggal_lahir DateTime?
-  gender        String    @default("unknown")
   email         String
-  jabatan       String
   isVerified    String    @default("pending")
   role          String
 }

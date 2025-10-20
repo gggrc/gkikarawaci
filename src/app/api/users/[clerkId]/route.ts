@@ -31,7 +31,7 @@ export async function PATCH(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     const admin = await prisma.user.findUnique({ where: { clerkId: userId } });
-    if (!admin || admin.role !== "admin")
+    if (admin?.role !== "admin")
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
     // ✅ Gunakan helper supaya tidak dianggap unsafe

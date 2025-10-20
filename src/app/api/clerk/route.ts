@@ -75,11 +75,8 @@ export async function POST(req: Request) {
           clerkId: id,
           nama: name,
           email,
-          gender: "unknown",
-          jabatan: "Jemaat",
           role: "user",
           isVerified: "pending",
-          tanggal_lahir: null,
         },
       });
 

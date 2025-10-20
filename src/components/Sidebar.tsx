@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { LogOut, BarChart3, ListChecks, Users } from "lucide-react";
 import { useClerk } from "@clerk/nextjs";
-import RequestDrawer from "./RequestDrawer";
 
 interface SidebarProps {
   activeView: string;
@@ -13,7 +12,6 @@ type UserRole = "user" | "admin" | null;
 
 export default function Sidebar({ activeView }: SidebarProps) {
   const { signOut } = useClerk();
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
   const [role, setRole] = useState<UserRole>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -27,8 +25,8 @@ export default function Sidebar({ activeView }: SidebarProps) {
           setRole(null);
           return;
         }
-        const data = await res.json();
-        setRole(data.role);
+        const data = (await res.json()) as { role?: UserRole };
+        setRole(data.role ?? null);
       } catch (err) {
         console.error("Failed to fetch role:", err);
         setRole(null);
@@ -36,7 +34,7 @@ export default function Sidebar({ activeView }: SidebarProps) {
         setIsLoading(false);
       }
     };
-    fetchRole();
+    void fetchRole();
   }, []);
 
   // ⏳ Tampilkan loading saat role belum siap
@@ -76,11 +74,10 @@ export default function Sidebar({ activeView }: SidebarProps) {
   // 🧑‍💼 Tambahkan menu admin hanya kalau role === "admin"
   if (role === "admin") {
     menuItems.push({
-      name: "Request",
+      name: "Users",
       icon: Users,
-      href: "#",
-      viewKey: "request",
-      onClick: () => setIsDrawerOpen(true),
+      href: "/user",
+      viewKey: "user",
     });
   }
 
@@ -120,10 +117,7 @@ export default function Sidebar({ activeView }: SidebarProps) {
         </button>
       </div>
 
-      {/* 🪄 Drawer hanya untuk admin */}
-      {role === "admin" && (
-        <RequestDrawer open={isDrawerOpen} onClose={() => setIsDrawerOpen(false)} />
-      )}
+      
     </div>
   );
 }
