@@ -42,7 +42,7 @@ export async function GET(req: NextRequest) {
     return {
       clerkId: dbUser.clerkId,
       nama:
-        dbUser.nama ||
+        dbUser.nama ??
         `${clerkUser?.firstName ?? ""} ${clerkUser?.lastName ?? ""}`.trim() ??
         clerkUser?.username ??
         "No Name",
