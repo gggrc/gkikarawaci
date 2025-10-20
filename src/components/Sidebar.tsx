@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { LogOut, BarChart3, ListChecks, Users } from "lucide-react";
-import { useClerk } from "@clerk/nextjs";
+import { useClerk, useUser } from "@clerk/nextjs";
+import Image from "next/image";
 
 interface SidebarProps {
   activeView: string;
@@ -12,10 +13,10 @@ type UserRole = "user" | "admin" | null;
 
 export default function Sidebar({ activeView }: SidebarProps) {
   const { signOut } = useClerk();
+  const { user } = useUser(); // ✅ Clerk user (ada imageUrl, fullName, email)
   const [role, setRole] = useState<UserRole>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // 🧠 Ambil role user dari API
   useEffect(() => {
     const fetchRole = async () => {
       try {
@@ -37,7 +38,6 @@ export default function Sidebar({ activeView }: SidebarProps) {
     void fetchRole();
   }, []);
 
-  // ⏳ Tampilkan loading saat role belum siap
   if (isLoading) {
     return (
       <div className="flex flex-col h-full w-64 bg-indigo-800 p-6 shadow-2xl text-white items-center justify-center">
@@ -47,7 +47,6 @@ export default function Sidebar({ activeView }: SidebarProps) {
     );
   }
 
-  // 📋 Menu default untuk semua user
   type MenuItem = {
     name: string;
     icon: React.ElementType;
@@ -57,38 +56,20 @@ export default function Sidebar({ activeView }: SidebarProps) {
   };
 
   const menuItems: MenuItem[] = [
-    {
-      name: "Statistik Jemaat",
-      icon: BarChart3,
-      href: "/statistic",
-      viewKey: "statistic",
-    },
-    {
-      name: "Data & Kehadiran",
-      icon: ListChecks,
-      href: "/database",
-      viewKey: "database",
-    },
+    { name: "Statistik Jemaat", icon: BarChart3, href: "/statistic", viewKey: "statistic" },
+    { name: "Data & Kehadiran", icon: ListChecks, href: "/database", viewKey: "database" },
   ];
 
-  // 🧑‍💼 Tambahkan menu admin hanya kalau role === "admin"
   if (role === "admin") {
-    menuItems.push({
-      name: "Users",
-      icon: Users,
-      href: "/user",
-      viewKey: "user",
-    });
+    menuItems.push({ name: "Users", icon: Users, href: "/user", viewKey: "user" });
   }
 
   return (
     <div className="flex flex-col h-full w-64 bg-indigo-800 p-6 shadow-2xl z-20">
-      {/* Logo / Header */}
       <div className="flex items-center space-x-3 pb-8 border-b border-white">
         <span className="text-xl font-extrabold text-white">GKI Karawaci</span>
       </div>
 
-      {/* Navigation */}
       <nav className="flex-grow mt-6 space-y-2">
         {menuItems.map((item) => (
           <button
@@ -106,18 +87,26 @@ export default function Sidebar({ activeView }: SidebarProps) {
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className="pt-6 border-t border-white mt-auto">
+      {/* ✅ Profile + Logout */}
+      <div className="pt-6 border-t border-white mt-auto flex items-center gap-3">
+        <Image
+          src={user?.imageUrl ?? "/default-avatar.png"}
+          alt={user?.fullName ?? "User"}
+          width={36}
+          height={36}
+          className="rounded-full border border-white"
+        />
+        <div className="flex-1">
+          <p className="text-sm font-semibold">{user?.fullName}</p>
+          <p className="text-xs text-gray-300 truncate">{user?.primaryEmailAddress?.emailAddress}</p>
+        </div>
         <button
-          className="text-white flex items-center text-lg space-x-3 hover:text-red-400 hover:font-bold transition"
           onClick={() => signOut({ redirectUrl: "/" })}
+          className="text-white hover:text-red-400 transition"
         >
-          <LogOut size={16} />
-          <span>Logout</span>
+          <LogOut size={18} />
         </button>
       </div>
-
-      
     </div>
   );
 }

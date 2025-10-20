@@ -4,17 +4,19 @@ import "./src/env.js";
 const config = {
   reactStrictMode: true,
 
-  // ❌ Hapus turbo
-  // experimental: {
-  //   turbo: false,
-  // },
-
-  // ✅ Biarkan Next tahu bahwa Prisma perlu dijalankan di Node.js
   serverExternalPackages: ["@prisma/client"],
 
-  // ✅ (Opsional tapi direkomendasikan)
   experimental: {
-    esmExternals: "loose", // biar kompatibel dengan ESM Prisma
+    esmExternals: "loose",
+  },
+
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: "img.clerk.com", // ✅ Izinkan gambar dari Clerk
+      },
+    ],
   },
 };
 

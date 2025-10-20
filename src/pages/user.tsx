@@ -9,7 +9,7 @@ interface User {
   clerkId: string;
   nama: string;
   email: string;
-  profile_pic?: string | null;
+  profile_pic: string | null;  // ✅ dari Clerk langsung
   status: "pending" | "accepted" | "rejected";
 }
 
@@ -17,7 +17,7 @@ interface RawUser {
   clerkId: string;
   nama: string;
   email: string;
-  profile_pic?: string | null;
+  profile_pic: string | null;
   isVerified: string;
 }
 
@@ -40,7 +40,7 @@ export default function UserPage() {
         clerkId: u.clerkId,
         nama: u.nama,
         email: u.email,
-        profile_pic: u.profile_pic ?? null,
+        profile_pic: u.profile_pic, // ✅ ini sudah diisi dari API
         status:
           u.isVerified === "accepted"
             ? "accepted"
