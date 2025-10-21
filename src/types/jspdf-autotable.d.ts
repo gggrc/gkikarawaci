@@ -1,13 +1,10 @@
-declare module "jspdf-autotable" {
-  import type { jsPDF } from "jspdf";
+import jsPDF from 'jspdf';
+import 'jspdf-autotable';
 
-  export interface UserOptions {
-    head?: string[][];
-    body?: (string | number)[][];
-    startY?: number;
-    [key: string]: unknown; 
+declare module 'jspdf' {
+  interface jsPDF {
+    autoTable: (options: any) => jsPDF;
+    // atau kalau mau lebih ketat:
+    // autoTable: (options: import('jspdf-autotable').UserOptions) => jsPDF;
   }
-
-  const autoTable: (doc: jsPDF, options: UserOptions) => void;
-  export default autoTable;
 }

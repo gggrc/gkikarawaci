@@ -1,14 +1,20 @@
+
 import { useEffect, useState, useMemo } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
 import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download, Settings, X, Loader2 } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
+import { useRef } from "react";
+import * as htmlToImage from "html-to-image";
+import jsPDF from "jspdf";
+import 'jspdf-autotable'; // ⬅️ ini HARUS langsung setelah jsPDF
 
-// START: PERBAIKAN IMPOR JS-PDF dan AUTO-TABLE (Kembali ke impor statis yang bersih)
-import JsPDF from 'jspdf'; 
-// PENTING: Pertahankan impor ini. Meskipun terlihat sepele, ini yang menjalankan kode pendaftaran plugin.
-import 'jspdf-autotable'; 
-// END: PERBAIKAN IMPOR JS-PDF dan AUTO-TABLE
+
+// 🩹 Patch global untuk menghindari error oklch di runtime
+if (typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('color', 'oklch(50% 0.2 200)')) {
+  console.warn('⚠️ Browser tidak mendukung OKLCH, warna akan dikonversi otomatis.');
+}
+
 
 // --- Tipe Data ---
 interface Jemaat {
@@ -153,45 +159,50 @@ const calculateDateStats = (jemaatList: Jemaat[], selectedDate: string) => {
   };
 };
 
-// --- FUNGSI HELPER GLOBAL UNTUK PIE CHART ---
+// Sesuaikan LegendPayload supaya kompatibel dengan Recharts (value bisa string|number, color optional)
 interface LegendPayload {
-    value: string;
-    color: string;
+  value: string | number;
+  color?: string;
 }
 
-const renderLegend = (props: { payload: LegendPayload[] }) => {
-    const { payload } = props;
-    return (
-      <div style={{ 
-          display: 'flex', 
-          flexWrap: 'wrap', 
-          justifyContent: 'center',
-          fontSize: '12px', 
-          lineHeight: '1.2'
-      }}>
-        {payload.map((entry, index) => (
-          <div
-            key={`item-${index}`}
-            style={{ 
-                color: entry.color, 
-                margin: '0 8px 4px 8px', 
-                fontWeight: '500', 
-                whiteSpace: 'nowrap' 
+// Ganti definisi renderLegend lama dengan ini
+const renderLegend = (props: any): React.ReactElement | null => {
+  const payload = props?.payload ?? [];
+  if (!payload || payload.length === 0) return null;
+
+  return (
+    <div style={{
+      display: 'flex',
+      flexWrap: 'wrap',
+      justifyContent: 'center',
+      fontSize: '12px',
+      lineHeight: '1.2'
+    }}>
+      {payload.map((entry: any, index: number) => (
+        <div
+          key={`item-${index}`}
+          style={{
+            color: entry?.color ?? '#000',
+            margin: '0 8px 4px 8px',
+            fontWeight: 500,
+            whiteSpace: 'nowrap'
+          }}
+        >
+          <span
+            style={{
+              display: 'inline-block',
+              width: 10,
+              height: 10,
+              backgroundColor: entry?.color ?? '#000',
+              borderRadius: '50%',
+              marginRight: 6
             }}
-          >
-            <span style={{ 
-                display: 'inline-block', 
-                width: '10px', 
-                height: '10px', 
-                backgroundColor: entry.color, 
-                borderRadius: '50%', 
-                marginRight: '4px' 
-            }}></span>
-            {entry.value}
-          </div>
-        ))}
-      </div>
-    );
+          />
+          {String(entry?.value ?? '')}
+        </div>
+      ))}
+    </div>
+  );
 };
 
 // --- Komponen Chart ---
@@ -370,8 +381,12 @@ const MonthLineChart = ({ data, month, year }: any) => {
                     />
                     <YAxis allowDecimals={false} />
                     <Tooltip 
-                        formatter={(value: number | null, name: string) => value === null ? ['Tidak Ada Data', name] : [value, name]} 
-                        labelFormatter={(label: number) => `Tanggal ${label} ${monthNames[month]}`}
+                      formatter={(value: unknown, name: string) => {
+                        if (value === null || value === undefined) return ['Tidak Ada Data', name];
+                        if (Array.isArray(value)) return [value.join(', '), name];
+                        return [String(value), name];
+                      }}
+                      labelFormatter={(label: number) => `Tanggal ${label} ${monthNames[month]}`}
                     />
                     <Legend />
                     {/* connectNulls=true untuk garis yang menyambung */}
@@ -455,15 +470,19 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
               />
             ))}
           </Pie>
-          <Tooltip 
-            formatter={(value: number, name: string) => [`${value} orang`, name]} // Format Tooltip lebih informatif
+          <Tooltip
+            formatter={(value: unknown, name: string) => {
+              if (value === null || value === undefined) return ['Tidak Ada Data', name];
+              if (Array.isArray(value)) return [`${value.join(', ')} orang`, name];
+              return [`${String(value)} orang`, name];
+            }}
           />
           <Legend 
             layout="horizontal" 
             align="center" 
             verticalAlign="bottom" 
-            wrapperStyle={{ paddingTop: '0px', marginBottom: '-30px' }} // Tambahkan padding bawah
-            content={renderLegend} // Menggunakan custom render legend
+            wrapperStyle={{ paddingTop: '0px', marginBottom: '-30px' }}
+            content={renderLegend}
           />
         </PieChart>
       </ResponsiveContainer>
@@ -477,6 +496,8 @@ export default function StatisticPage() {
   const router = useRouter();
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
   const [isLoading, setIsLoading] = useState(true); 
+  const contentRef = useRef<HTMLDivElement>(null);
+  
 
   // --- Start Month/Year untuk Tampilan Detail Statistik ---
   const [detailYear, setDetailYear] = useState(currentYear);
@@ -532,9 +553,12 @@ export default function StatisticPage() {
       const datesArray = dates.split(',').filter(d => /^\d{4}-\d{2}-\d{2}$/.exec(d));
       setSelectedDatesKeys(datesArray);
       
-      if (datesArray.length > 0) {
-        // Set calendar to the month of the first selected date
-        const firstDate = new Date(datesArray[0]);
+if (datesArray.length > 0) {
+  // Ambil nilai pertama dengan guard yang jelas
+  const firstIso = datesArray[0];
+    if (firstIso) {
+      const firstDate = new Date(firstIso);
+      if (!isNaN(firstDate.getTime())) {
         setDetailYear(firstDate.getFullYear());
         setDetailStartMonth(firstDate.getMonth());
         
@@ -542,6 +566,8 @@ export default function StatisticPage() {
         setYear(firstDate.getFullYear());
         setStartMonth(firstDate.getMonth());
       }
+    }
+  }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.isReady]);
@@ -715,10 +741,11 @@ export default function StatisticPage() {
   const yearlyStats = useMemo(() => generateMockOverallTrends(overallStats.totalJemaat || 200), [overallStats.totalJemaat]);
 
   const currentMonthStats = useMemo(() => {
-    // Ambil data dari array tahunan untuk bulan yang bersangkutan
-    const monthName = monthNames[startMonth].substring(0, 3);
-    const stats = yearlyStats[year.toString() as keyof typeof yearlyStats]?.find(m => m.bulan === monthName) || { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
-    return stats;
+    const monthLabel = monthNames[startMonth] ?? '';
+    const monthName = monthLabel.substring(0, 3);
+    const arr = (yearlyStats[year.toString() as keyof typeof yearlyStats] ?? []) as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
+    const found = arr.find(m => m.bulan === monthName);
+    return found ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
   }, [year, startMonth, yearlyStats]);
   
   const currentYearStats = useMemo(() => {
@@ -928,157 +955,67 @@ export default function StatisticPage() {
   };
   
   // --- LOGIKA DOWNLOAD UTAMA PDF (DIUBAH UNTUK MENGATASI AUTO-TABLE ERROR) ---
-  const handleDownload = async () => { 
-    setIsDownloading(true);
-
-    // BARU: Inisialisasi JsPDF dengan memastikan plugin dimuat.
-    // Kita gunakan require() agar kompatibel dengan cara plugin jspdf-autotable terdaftar.
-    let JsPDF: any;
+// ✅ versi perbaikan handleDownload tanpa ubah tampilan
+  const handleDownload = async () => {
     try {
-        // Menggunakan require untuk mendapatkan objek JsPDF yang sudah dimuat.
-        // Jika Anda menggunakan TypeScript ketat, Anda mungkin perlu menginstal @types/jspdf-autotable
-        JsPDF = (await import('jspdf')).default;
-        require('jspdf-autotable'); // Memastikan registrasi plugin
-    } catch (error) {
-        console.error("Gagal memuat pustaka PDF:", error);
-        setIsDownloading(false);
-        alert("Gagal memuat pustaka PDF. Pastikan 'jspdf' dan 'jspdf-autotable' terinstal dengan benar.");
+      const statElement = document.getElementById("statistic-content");
+      if (!statElement) {
+        alert("Elemen konten statistik tidak ditemukan.");
         return;
+      }
+
+      // Temporarily hilangkan sidebar dari view agar gak ikut ke screenshot
+      const sidebar = document.querySelector(".fixed.top-0.left-0.h-full") as HTMLElement;
+      if (sidebar) sidebar.style.display = "none";
+
+      // Scroll ke atas biar gak ke-capture posisi aneh
+      window.scrollTo(0, 0);
+
+      // Konversi elemen di layar langsung ke gambar
+      const dataUrl = await htmlToImage.toPng(statElement, {
+        cacheBust: true,
+        backgroundColor: "#ffffff",
+        pixelRatio: 2,
+      });
+
+      // Kembalikan sidebar
+      if (sidebar) sidebar.style.display = "";
+
+      // --- Generate PDF ---
+      const pdf = new jsPDF({
+        orientation: "portrait",
+        unit: "px",
+        format: "a4",
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((resolve) => (img.onload = resolve));
+
+      const imgWidth = img.width;
+      const imgHeight = img.height;
+
+      // scale supaya pas lebar halaman
+      const ratio = pageWidth / imgWidth;
+      const scaledHeight = imgHeight * ratio;
+
+      let yOffset = 0;
+      while (yOffset < scaledHeight) {
+        pdf.addImage(dataUrl, "PNG", 0, -yOffset, pageWidth, scaledHeight);
+        yOffset += pageHeight;
+        if (yOffset < scaledHeight) pdf.addPage();
+      }
+
+      pdf.save("Laporan-Statistik.pdf");
+    } catch (error) {
+      console.error("❌ Gagal membuat PDF:", error);
+      alert("Gagal membuat PDF. Silakan coba lagi.");
     }
-
-    let filename = `laporan_statistik_${new Date().toISOString().substring(0, 10)}`;
-    let headerTitle = "Laporan Statistik Kehadiran Jemaat";
-    
-    // Tentukan Judul dan Konten
-    if (viewMode === 'yearly') {
-        headerTitle = `Statistik Kehadiran Tahunan ${year}`;
-        filename = `statistik_tahunan_${year}`;
-    } else if (viewMode === 'monthly') {
-        headerTitle = `Statistik Kehadiran Bulanan ${monthNames[startMonth]} ${year}`;
-        filename = `statistik_bulanan_${monthNames[startMonth]}_${year}`;
-    } else if (selectedDatesKeys.length > 0) {
-        headerTitle = `Statistik Detail Kehadiran (${selectedDatesKeys.length} Tanggal)`;
-        filename = `statistik_detail_${selectedDatesKeys.length}_tanggal`;
-    }
-
-    // --- PDF LOGIC ---
-    // Gunakan JsPDF yang sudah diimpor dinamis
-    const doc = new JsPDF('p', 'mm', 'a4');
-    const pageWidth = doc.internal.pageSize.getWidth();
-    const margin = 15;
-    let yPos = 20;
-
-    doc.setFontSize(16);
-    (doc).setFont('helvetica', 'bold');
-    doc.text(headerTitle, margin, yPos);
-    yPos += 7;
-    
-    doc.setFontSize(10);
-    (doc).setFont('helvetica', 'normal');
-    doc.text(`Tanggal Dibuat: ${new Date().toLocaleString('id-ID')}`, margin, yPos);
-    yPos += 10;
-    
-    // Fungsi pembantu untuk menambahkan tabel dengan autoTable
-    // NOTE: Tidak perlu (doc as any) jika JsPDF dan plugin dimuat dengan benar,
-    // tapi kita pertahankan (doc as any) untuk kompatibilitas tipe yang lebih luas.
-    const addTable = (head: string[], body: any[], title: string) => {
-        if (yPos + 10 > doc.internal.pageSize.getHeight() - margin) {
-            doc.addPage();
-            yPos = margin;
-        }
-        
-        doc.setFontSize(12);
-        (doc).setFont('helvetica', 'bold');
-        doc.text(title, margin, yPos);
-        yPos += 5;
-        
-        // Panggil autoTable. Karena JsPDF diimpor statis/require, ini seharusnya berfungsi.
-        (doc).autoTable({
-            startY: yPos,
-            head: [head],
-            body: body,
-            margin: { left: margin, right: margin },
-            theme: 'striped',
-            headStyles: { fillColor: [79, 70, 229] }, // Indigo
-            didDrawPage: (data: any) => {
-                // Footer
-                doc.setFontSize(8);
-                doc.text(`Halaman ${data.pageNumber}`, pageWidth - margin, doc.internal.pageSize.getHeight() - 10);
-            }
-        });
-        yPos = (doc).autoTable.previous.finalY + 10;
-    };
-
-    // 1. Data Tahunan / Bulanan
-    if (viewMode === 'yearly') {
-        // Tampilkan Ringkasan di awal
-        const headSummary = ['Metrik', 'Jumlah'];
-        const bodySummary = [
-            ['Total Kehadiran Tahunan', totalKehadiranTahunan],
-            ['Total Status Aktif', totalAktifTahunan],
-            ['Total Jarang Hadir', totalJarangHadirlahTahunan],
-            ['Total Tidak Aktif', totalTidakAktifTahunan],
-            ['Rata-rata Kehadiran/Bulan', rataRataKehadiranPerBulan]
-        ];
-        addTable(headSummary, bodySummary, `Ringkasan Statistik Tahunan ${year}`);
-
-        // Tampilkan Tren Detail Bulanan
-        const headTrend = ['Bulan', 'Aktif', 'Jarang Hadir', 'Tidak Aktif', 'Total'];
-        const bodyTrend = currentYearStats.map(m => [m.bulan, m.aktif, m.jarangHadirlah, m.tidakAktif, m.total]);
-        addTable(headTrend, bodyTrend, 'Tren Status Kehadiran Bulanan');
-        
-    } else if (viewMode === 'monthly') {
-        const head = ['Status', 'Jumlah'];
-        const body = [
-            ['Total Kehadiran', currentMonthStats.total], // Tambahkan total di awal
-            ['Aktif', currentMonthStats.aktif],
-            ['Jarang Hadir', currentMonthStats.jarangHadirlah],
-            ['Tidak Aktif', currentMonthStats.tidakAktif]
-        ];
-        addTable(head, body, `Ringkasan Status Kehadiran Bulan ${monthNames[startMonth]}`);
-        
-        // Tambahkan detail harian (jika ada data)
-        const dailyDataForPdf = dailyTrendsData.filter(d => d.aktif !== null || d.jarangHadirlah !== null || d.tidakAktif !== null);
-        if (dailyDataForPdf.length > 0) {
-            const headDaily = ['Tanggal', 'Aktif', 'Jarang Hadir', 'Tidak Aktif'];
-            const bodyDaily = dailyDataForPdf.map(d => [
-                d.hari, d.aktif ?? '-', d.jarangHadirlah ?? '-', d.tidakAktif ?? '-'
-            ]);
-            addTable(headDaily, bodyDaily, 'Tren Harian (Sabtu/Minggu) Bulan Ini');
-        }
-    }
-    
-    // 2. Data Detail Multi-Tanggal
-    if (selectedDatesKeys.length > 0) {
-        // Tabel 1: Ringkasan Global Detail Tanggal
-        const headSummary = ['Metrik', 'Jumlah'];
-        const bodySummary = [
-            ['Total Kehadiran Akumulatif', totalKehadiranSelectedDates],
-            ['Total Tanggal Terpilih', selectedDatesKeys.length],
-            ['Persentase Potensi Kehadiran', combinedPresentaseKehadiran]
-        ];
-        addTable(headSummary, bodySummary, `Ringkasan Kehadiran Dari ${selectedDatesKeys.length} Tanggal`);
-
-        // Tabel 2: Total Hadir Per Sesi
-        const head1 = ['Sesi Kebaktian', 'Total Hadir'];
-        const body1 = Object.entries(combinedKehadiranBySesi)
-            .sort(([, a], [, b]) => b - a)
-            .map(([session, count]) => [session, count]);
-        addTable(head1, body1, 'Rincian Kehadiran Per Sesi (Akumulatif)');
-        
-        // Tabel 3: Status Kehadiran Per Sesi
-        const head2 = ['Sesi Kebaktian', 'Aktif', 'Jarang Hadir', 'Tidak Aktif'];
-        // Menggunakan combinedStatusBySession yang sudah diakumulasi
-        const body2 = combinedStatusBySession.map((row: any) => [
-            row.fullSessionName, row.Aktif, row['Jarang Hadir'], row['Tidak Aktif']
-        ]);
-        addTable(head2, body2, 'Rincian Status Kehadiran Per Sesi (Akumulatif)');
-    }
-    
-    doc.save(`${filename}.pdf`);
-
-    setIsDownloading(false);
   };
+
   // --- AKHIR LOGIKA DOWNLOAD UTAMA PDF ---
 
 
@@ -1091,11 +1028,16 @@ export default function StatisticPage() {
 
       {/* Main Content */}
       <main className="ml-64 flex-grow p-8">
+      <div id="statistic-content" ref={contentRef}>
         <div className="flex justify-between items-center mb-6">
             <h1 className="text-3xl font-bold text-gray-800">Laporan dan Statistik Jemaat</h1>
             <button 
                 onClick={handleDownload} // Langsung panggil handleDownload
-                disabled={isLoading || (selectedDatesKeys.length === 0 && viewMode === 'yearly' && currentYearStats.length === 0 && viewMode === 'monthly' && currentMonthStats.total === 0)}
+                disabled={
+                  isLoading || 
+                  (viewMode === 'yearly' && selectedDatesKeys.length === 0 && currentYearStats.length === 0) ||
+                  (viewMode === 'monthly' && selectedDatesKeys.length === 0 && currentMonthStats.total === 0)
+                }                
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg"
             >
                 <Download size={18} />
@@ -1710,8 +1652,12 @@ export default function StatisticPage() {
                                                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                                                             ))}
                                                         </Pie>
-                                                        <Tooltip 
-                                                            formatter={(value: number, name: string) => [`${value} orang`, name]}
+                                                        <Tooltip
+                                                          formatter={(value: unknown, name: string) => {
+                                                            if (value === null || value === undefined) return ['Tidak Ada Data', name];
+                                                            if (Array.isArray(value)) return [`${value.join(', ')} orang`, name];
+                                                            return [`${String(value)} orang`, name];
+                                                          }}
                                                         />
                                                         <Legend 
                                                             layout="horizontal" 
@@ -1813,7 +1759,7 @@ export default function StatisticPage() {
             </div>
         )}
         {/* END LOADING DOWNLOAD */}
-        
+      </div>
       </main>
       
       <style jsx>{`
