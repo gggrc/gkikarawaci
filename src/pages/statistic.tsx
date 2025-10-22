@@ -964,21 +964,34 @@ if (datesArray.length > 0) {
         return;
       }
 
-      // Temporarily hilangkan sidebar dari view agar gak ikut ke screenshot
+      // Sembunyikan sidebar sementara agar tidak ikut ke capture
       const sidebar = document.querySelector(".fixed.top-0.left-0.h-full") as HTMLElement;
       if (sidebar) sidebar.style.display = "none";
 
-      // Scroll ke atas biar gak ke-capture posisi aneh
+      // Scroll ke atas agar posisi benar
       window.scrollTo(0, 0);
 
-      // Konversi elemen di layar langsung ke gambar
-      const dataUrl = await htmlToImage.toPng(statElement, {
+      // 🧩 Buat klon untuk memberi margin dan skala aman
+      const cloned = statElement.cloneNode(true) as HTMLElement;
+      cloned.style.padding = "30px";
+      cloned.style.transform = "scale(0.85)";
+      cloned.style.transformOrigin = "top left";
+      cloned.style.backgroundColor = "#ffffff";
+      cloned.style.width = "calc(100% - 60px)";
+      cloned.style.maxWidth = "1200px";
+      cloned.style.margin = "0 auto";
+
+      document.body.appendChild(cloned);
+
+      // 🖼️ Konversi ke gambar (JPEG lebih kecil dari PNG)
+      const dataUrl = await htmlToImage.toJpeg(cloned, {
         cacheBust: true,
         backgroundColor: "#ffffff",
-        pixelRatio: 2,
+        pixelRatio: 1.5, // kurangi resolusi sedikit untuk efisiensi
+        quality: 0.5, // 50% kualitas → ukuran jauh lebih kecil
       });
 
-      // Kembalikan sidebar
+      document.body.removeChild(cloned);
       if (sidebar) sidebar.style.display = "";
 
       // --- Generate PDF ---
@@ -986,6 +999,7 @@ if (datesArray.length > 0) {
         orientation: "portrait",
         unit: "px",
         format: "a4",
+        compress: true, // aktifkan kompres internal jsPDF
       });
 
       const pageWidth = pdf.internal.pageSize.getWidth();
@@ -998,13 +1012,15 @@ if (datesArray.length > 0) {
       const imgWidth = img.width;
       const imgHeight = img.height;
 
-      // scale supaya pas lebar halaman
-      const ratio = pageWidth / imgWidth;
-      const scaledHeight = imgHeight * ratio;
+      // Fit otomatis agar muat di margin PDF
+      const margin = 20;
+      const availableWidth = pageWidth - margin * 2;
+      const scale = availableWidth / imgWidth;
+      const scaledHeight = imgHeight * scale;
 
       let yOffset = 0;
       while (yOffset < scaledHeight) {
-        pdf.addImage(dataUrl, "PNG", 0, -yOffset, pageWidth, scaledHeight);
+        pdf.addImage(dataUrl, "JPEG", margin, -yOffset, availableWidth, scaledHeight);
         yOffset += pageHeight;
         if (yOffset < scaledHeight) pdf.addPage();
       }
@@ -1015,6 +1031,7 @@ if (datesArray.length > 0) {
       alert("Gagal membuat PDF. Silakan coba lagi.");
     }
   };
+
 
   // --- AKHIR LOGIKA DOWNLOAD UTAMA PDF ---
 
