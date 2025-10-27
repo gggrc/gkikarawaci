@@ -1,3 +1,8 @@
+/**
+ * REFACTOR: Mengganti logika Event Management menjadi modal terpusat
+ * dan menambahkan fitur Event Berkala (Periodical Event) untuk penambahan,
+ * pengeditan, dan penghapusan event berulang (hanya di memori).
+ */
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
 import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil } from "lucide-react"; 
@@ -13,14 +18,14 @@ interface Jemaat {
   foto: string;
   nama: string;
   jabatan: string;
-  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif";
+  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif"; // Status kehadiran terhitung
   tanggalLahir?: string;
   umur?: string;
   keluarga?: string;
   email?: string;
   telepon?: string;
   kehadiranSesi: string; 
-  dokumen?: string; 
+  dokumen?: string; // NEW: Field untuk dokumen/gambar
 }
 
 interface PreviewModalData {
@@ -33,7 +38,30 @@ type ViewMode = 'event_per_table' | 'monthly_summary';
 type SelectedEventsByDate = Record<string, string[]>;
 type EventsCache = Record<string, string[]>;
 
+// --- Tipe Data Modal Baru ---
+type EventModalType = 'add-single' | 'add-periodical' | 'edit-single' | 'edit-periodical-confirm' | 'flow-select';
+
+interface EventModalData {
+    type: EventModalType;
+    // Data umum
+    dateKey: string | null;
+    oldName: string | null; // Untuk edit
+    newName: string; // Untuk add/edit
+    // Data untuk Periodical
+    periodicalDayOfWeek: number | null; // 0=Minggu, 1=Senin...
+    periodicalPeriod: string; // e.g., '2m', '1y'
+}
+
+
 // --- UTILITY FUNCTIONS & CONSTANTS ---
+
+const PERIOD_OPTIONS = [
+  { value: '1m', label: '1 Bulan' },
+  { value: '2m', label: '2 Bulan' },
+  { value: '6m', label: '6 Bulan' },
+  { value: '1y', label: '1 Tahun' },
+  { value: '10y', label: 'Selamanya (10 Tahun Simulasi)' }, // Untuk simulasi "selamanya"
+];
 
 const calculateAge = (dobString: string | undefined): string => {
   if (!dobString) return "";
@@ -81,6 +109,10 @@ const isImageUrlOrBase64 = (data: string): boolean => {
            data.includes('picsum.photos');
 };
 
+/**
+ * Mengembalikan daftar sesi ibadah yang secara default tersedia pada hari tersebut.
+ * FIX: Mengisi fungsi ini dengan sesi yang benar.
+ */
 const getAvailableSessionNames = (date: Date): string[] => {
     const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
     if (dayOfWeek === 6) { // Sabtu
@@ -88,7 +120,7 @@ const getAvailableSessionNames = (date: Date): string[] => {
     } else if (dayOfWeek === 0) { // Minggu
         return ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"];
     }
-    return [];
+    return []; 
 };
 
 
@@ -125,6 +157,60 @@ const getDatesWithEventsInMonth = (month: number, currentYear: number, currentEv
   return dates;
 };
 
+
+const getNextDayOfWeek = (date: Date, dayOfWeek: number) => {
+    const resultDate = new Date(date.getTime());
+    resultDate.setDate(date.getDate() + (7 + dayOfWeek - date.getDay()) % 7);
+    return resultDate;
+}
+
+/**
+ * Menghitung daftar tanggal berulang berdasarkan hari dan periode, dimulai dari tanggal yang dipilih.
+ * Hanya menghasilkan tanggal di masa depan (lebih besar dari hari ini).
+ */
+const generateDatesForPeriod = (startDayKey: string, dayOfWeek: number, period: string): string[] => {
+    const dates: string[] = [];
+    let currentDate = new Date(startDayKey);
+    
+    if (isNaN(currentDate.getTime())) return [];
+    
+    // 1. Tentukan tanggal mulai yang benar (Hari ini atau hari ke-n berikutnya)
+    // Mulai dari hari setelah hari ini.
+    currentDate = new Date(currentDate.getTime());
+    currentDate.setDate(currentDate.getDate() + 1); 
+    
+    // Maju ke hari yang benar berikutnya dari currentDate
+    currentDate = getNextDayOfWeek(currentDate, dayOfWeek);
+
+    // 2. Tentukan tanggal akhir
+    const endDate = new Date(currentDate.getTime());
+    const [duration, unit] = [parseInt(period.slice(0, -1), 10), period.slice(-1)];
+
+    if (unit === 'm') endDate.setMonth(endDate.getMonth() + duration);
+    else if (unit === 'y') endDate.setFullYear(endDate.getFullYear() + duration);
+    else if (period === '10y') endDate.setFullYear(endDate.getFullYear() + 10); 
+
+    // Batasi maksimum sampai 10 tahun (untuk alasan kinerja memori di browser)
+    const maxDate = new Date();
+    maxDate.setFullYear(maxDate.getFullYear() + 10);
+    if (endDate.getTime() > maxDate.getTime()) {
+        endDate.setTime(maxDate.getTime());
+    }
+    
+    const todayStartPlusOneDay = todayStart + (24 * 60 * 60 * 1000); // Batasi hanya untuk masa depan
+
+    // 3. Loop untuk mengumpulkan tanggal
+    while (currentDate.getTime() < endDate.getTime() && currentDate.getTime() >= todayStartPlusOneDay) {
+        const dayKey = getDayKey(currentDate);
+        dates.push(dayKey);
+        
+        // Pindah ke minggu berikutnya
+        currentDate.setDate(currentDate.getDate() + 7);
+    }
+    
+    return dates;
+}
+
 // --- Helper untuk in-memory storage ---
 const memoryStorage: { 
   selectedDates: string[], 
@@ -152,7 +238,7 @@ const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
   memoryStorage.selectedEventsByDate = events;
 };
 
-// --- Komponen Modal Preview Dokumen ---
+// --- Komponen Modal Preview Dokumen (TIDAK BERUBAH) ---
 const DocumentPreviewModal = ({ data, onClose }: { data: PreviewModalData | null, onClose: () => void }) => {
     if (!data) return null;
 
@@ -233,7 +319,214 @@ const DocumentPreviewModal = ({ data, onClose }: { data: PreviewModalData | null
     );
 };
 
-// --- LOGIKA KALENDER ---
+// --- Komponen Modal Event Management (BARU) ---
+const EventManagementModal = ({ data, onUpdateData, onClose, onAction }: { data: Partial<EventModalData>, onUpdateData: (newData: Partial<EventModalData>) => void, onClose: () => void, onAction: () => void }) => {
+    const { type, dateKey, oldName, newName, periodicalDayOfWeek, periodicalPeriod } = data;
+    
+    let title = '';
+    let actionButtonText = '';
+    let content;
+
+    const isEdit = type === 'edit-single';
+    const isAdd = type === 'add-single' || type === 'add-periodical' || type === 'flow-select';
+    const isPeriodicalAdd = type === 'add-periodical';
+    const isPeriodicalConfirm = type === 'edit-periodical-confirm';
+
+    // Safety check for dateKey
+    const dateDisplay = dateKey ? new Date(dateKey).toLocaleDateString("id-ID") : 'N/A';
+    const dayOptions = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+
+    if (type === 'flow-select') {
+        title = 'Pilih Mode Penambahan Event';
+        actionButtonText = 'Lanjut ke Mode Satuan';
+        
+        content = (
+            <div className="space-y-6">
+                <p className="text-lg text-gray-700">Event akan ditambahkan untuk tanggal: <span className="font-bold text-indigo-600">{dateDisplay}</span></p>
+                <div className="flex flex-col gap-3">
+                    <button 
+                        onClick={() => onUpdateData({ type: 'add-single' })}
+                        className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition shadow-md"
+                    >
+                        <span className="font-bold">Mode Satuan:</span> Hanya untuk tanggal ini
+                    </button>
+                    <button 
+                        onClick={() => onUpdateData({ type: 'add-periodical' })}
+                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition shadow-md"
+                    >
+                        <span className="font-bold">Mode Berkala:</span> Ulangi di masa depan
+                    </button>
+                </div>
+            </div>
+        );
+    } else if (isPeriodicalConfirm) {
+        title = oldName ? (newName ? `Edit Berkala: ${oldName}` : `Hapus Berkala: ${oldName}`) : 'Konfirmasi Aksi Berkala';
+        actionButtonText = newName ? 'Simpan Perubahan Berkala' : 'Hapus Semua Kejadian';
+        const actionText = newName ? `mengubah nama event dari "${oldName}" menjadi "${newName}"` : `menghapus event "${oldName}"`;
+
+        content = (
+            <div className="space-y-4 p-2">
+                <p className={`text-lg font-medium ${newName ? 'text-blue-700' : 'text-red-700'}`}>
+                    PERINGATAN! Aksi ini akan berlaku untuk **SEMUA** event bernama **"{oldName}"** pada tanggal **{dateDisplay}** dan **semua tanggal setelahnya**.
+                </p>
+                <p className="text-gray-700">Anda akan {actionText} mulai dari {dateDisplay} dan ke depannya (hingga 10 tahun simulasi).</p>
+                {newName !== undefined ? (
+                    <input
+                        type="text"
+                        value={newName}
+                        onChange={(e) => onUpdateData({ newName: e.target.value })}
+                        className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+                        placeholder="Nama Event Baru"
+                        autoFocus
+                    />
+                ) : null}
+            </div>
+        );
+    } else if (isEdit) {
+        title = `Edit Event: ${oldName}`;
+        actionButtonText = 'Simpan Perubahan';
+        
+        content = (
+            <div className="space-y-4">
+                <p className="text-sm text-gray-500">Tanggal: <span className="font-semibold">{dateDisplay}</span></p>
+                <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => onUpdateData({ newName: e.target.value })}
+                    className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+                    placeholder="Nama Event Baru"
+                    autoFocus
+                />
+            </div>
+        );
+    } else if (isAdd) {
+        title = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
+        actionButtonText = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
+        
+        content = (
+            <div className="space-y-4">
+                <div className="flex justify-between">
+                    <button 
+                        onClick={() => onUpdateData({ type: 'add-single', periodicalDayOfWeek: null, periodicalPeriod: '2m' })}
+                        className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${!isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                    >
+                        Mode Satuan
+                    </button>
+                    <button 
+                        onClick={() => onUpdateData({ type: 'add-periodical' })}
+                        className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
+                    >
+                        Mode Berkala
+                    </button>
+                </div>
+
+                <p className="text-sm text-gray-500 bg-indigo-50 p-2 rounded">
+                    Tanggal: <span className="font-semibold">{dateDisplay}</span>
+                </p>
+                
+                <input
+                    type="text"
+                    value={newName}
+                    onChange={(e) => onUpdateData({ newName: e.target.value })}
+                    className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+                    placeholder="Nama Event (Contoh: Kebaktian I : 07:00)"
+                    autoFocus
+                />
+                
+                {isPeriodicalAdd && (
+                    <div className="grid grid-cols-2 gap-3">
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Hari Perulangan</label>
+                            <select
+                                value={periodicalDayOfWeek ?? 0}
+                                onChange={(e) => onUpdateData({ periodicalDayOfWeek: parseInt(e.target.value, 10) })}
+                                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+                            >
+                                {dayOptions.map((day, index) => (
+                                    <option key={day} value={index}>{day}</option>
+                                ))}
+                            </select>
+                        </div>
+                        <div>
+                            <label className="block text-sm font-medium text-gray-700 mb-1">Periode Hingga</label>
+                            <select
+                                value={periodicalPeriod}
+                                onChange={(e) => onUpdateData({ periodicalPeriod: e.target.value })}
+                                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+                            >
+                                {PERIOD_OPTIONS.map((opt) => (
+                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                                ))}
+                            </select>
+                            <p className="text-xs text-gray-400 mt-1">*Berlaku mulai hari setelah tanggal ini</p>
+                        </div>
+                    </div>
+                )}
+            </div>
+        );
+    } else {
+        return null; 
+    }
+    
+    // Logika disesuaikan untuk delete (newName kosong) dan edit (newName ada)
+    const isActionDisabled = isPeriodicalConfirm 
+        ? (!oldName || (newName !== undefined && !newName.trim() && newName.length > 0))
+        : (isAdd && !newName?.trim());
+
+    // Sesuaikan tombol jika ini mode flow-select
+    if (type === 'flow-select') {
+         return (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+                <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+                    <div className="flex justify-between items-center p-4 border-b">
+                        <h3 className="text-xl font-bold text-indigo-600">{title}</h3>
+                        <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
+                            <X size={24} />
+                        </button>
+                    </div>
+                    <div className="p-6">
+                        {content}
+                    </div>
+                </div>
+            </div>
+        );
+    }
+
+
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
+                <div className="flex justify-between items-center p-4 border-b">
+                    <h3 className="text-xl font-bold text-indigo-600">{title}</h3>
+                    <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
+                        <X size={24} />
+                    </button>
+                </div>
+                <div className="p-6">
+                    {content}
+                </div>
+                <div className="p-4 border-t flex justify-end gap-2">
+                    <button
+                        onClick={onClose}
+                        className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                    >
+                        Batal
+                    </button>
+                    <button
+                        onClick={onAction}
+                        disabled={isActionDisabled}
+                        className={`px-6 py-2 ${isActionDisabled ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white rounded-lg transition`} 
+                    >
+                        {actionButtonText}
+                    </button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
+
+// --- LOGIKA KALENDER (TIDAK BERUBAH) ---
 interface CalendarSectionProps {
     year: number;
     setYear: React.Dispatch<React.SetStateAction<number>>;
@@ -391,14 +684,13 @@ interface SelectedEventsSectionProps {
     handleSelectEvent: (dateKey: string, event: string) => void;
     handleDeleteEvent: (dateKey: string, eventName: string) => void;
     handleOpenEditEvent: (dateKey: string, eventName: string) => void;
-    setShowAddEventDialog: React.Dispatch<React.SetStateAction<boolean>>;
-    setAddEventDateKey: React.Dispatch<React.SetStateAction<string | null>>;
+    handleOpenAddEvent: (dateKey: string) => void; // UPDATED PROP
 }
 
 const SelectedEventsSection = ({
     selectedDates, selectedEventsByDate, events, viewMode,
     handleSelectEvent, handleDeleteEvent, handleOpenEditEvent,
-    setShowAddEventDialog, setAddEventDateKey
+    handleOpenAddEvent // UPDATED PROP
 }: SelectedEventsSectionProps) => {
     
     const selectedDateKeys = useMemo(() => selectedDates.map(getDayKey), [selectedDates]);
@@ -430,12 +722,10 @@ const SelectedEventsSection = ({
                     <div key={key} className="p-4 border-2 border-indigo-200 rounded-lg bg-indigo-50"> 
                       <div className="flex justify-between items-center mb-3">
                         <span className="font-semibold text-gray-800 text-sm">{dateDisplay}</span>
+                        {/* UPDATED: Tombol untuk membuka modal terpusat */}
                         <button 
                           className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition" 
-                          onClick={() => { 
-                            setShowAddEventDialog(true); 
-                            setAddEventDateKey(key); 
-                          }}
+                          onClick={() => handleOpenAddEvent(key)}
                         >
                           + Event
                         </button>
@@ -540,13 +830,20 @@ export default function DatabasePage() {
   const [events, setEvents] = useState<EventsCache>({});
   const [viewMode, setViewMode] = useState<ViewMode>('event_per_table');
   
-  const [showAddEventDialog, setShowAddEventDialog] = useState(false);
-  const [newEventName, setNewEventName] = useState('');
-  const [addEventDateKey, setAddEventDateKey] = useState<string | null>(null);
+  // NEW: Unified State for Event Management Modal
+  const [showEventModal, setShowEventModal] = useState(false);
+  const [eventModalData, setEventModalData] = useState<Partial<EventModalData>>({
+      type: 'add-single', 
+      dateKey: null,
+      newName: '',
+      oldName: null,
+      periodicalDayOfWeek: 0,
+      periodicalPeriod: '2m',
+  });
 
-  const [showEditEventDialog, setShowEditEventDialog] = useState(false); 
-  const [editEventName, setEditEventName] = useState(''); 
-  const [editingEventKey, setEditingEventKey] = useState<{ dateKey: string; oldName: string } | null>(null); 
+  const updateEventModalData = (newData: Partial<EventModalData>) => {
+      setEventModalData(prev => ({ ...prev, ...newData }));
+  };
 
   const [tablePage, setTablePage] = useState(1);
   const [editMode, setEditMode] = useState(false);
@@ -593,6 +890,7 @@ export default function DatabasePage() {
         const res = await fetch("/api/jemaat"); 
         
         if (!res.ok) {
+          // Baris 888: Error jika status bukan 200/OK.
           throw new Error(`Gagal fetch data jemaat. Status: ${res.status}`);
         }
 
@@ -602,6 +900,31 @@ export default function DatabasePage() {
           const fetchedJemaat = data as Jemaat[];
           setJemaat(fetchedJemaat);
           setDraftJemaat(fetchedJemaat.map(j => ({ ...j })));
+          
+          // Inisialisasi events cache dengan event unik dari data jemaat yang dimuat
+          const allUniqueSessions = new Set<string>();
+          fetchedJemaat.forEach(j => {
+              if (j.kehadiranSesi) {
+                  allUniqueSessions.add(j.kehadiranSesi);
+              }
+          });
+          
+          // Logika inisialisasi cache event (hanya hari ini)
+          const todayKey = getDayKey(today);
+          const initialTodayEvents = [
+              "KESELURUHAN DATA HARI INI", 
+              ...Array.from(allUniqueSessions)
+          ].sort();
+
+          // Hanya set event jika belum ada di cache (mencegah overwrite event berkala)
+          if (!memoryStorage.events[todayKey] || memoryStorage.events[todayKey].length === 0) {
+              setEvents(prev => ({ 
+                  ...prev, 
+                  [todayKey]: initialTodayEvents
+              }));
+              memoryStorage.events[todayKey] = initialTodayEvents;
+          }
+
         } else {
           setJemaat([]);
           setDraftJemaat([]);
@@ -849,13 +1172,299 @@ export default function DatabasePage() {
     });
   }, [selectedDates]);
   
+  // NEW: Handler untuk membuka modal EventManagementModal (langsung add-single)
+  const handleOpenAddEvent = useCallback((dateKey: string) => {
+      
+      setEventModalData({
+          type: 'add-single', 
+          dateKey,
+          newName: '',
+          oldName: null,
+          periodicalDayOfWeek: new Date(dateKey).getDay(), 
+          periodicalPeriod: '2m',
+      });
+      
+      setShowEventModal(true);
+  }, []);
+
+  // NEW: Handler untuk menambahkan event satuan (dari modal)
+  const handleSingleAddEvent = useCallback(() => {
+    const key = eventModalData.dateKey;
+    const newName = eventModalData.newName?.trim();
+
+    if (!key || !newName) return;
+    
+    setViewMode('event_per_table');
+    
+    const currentEvents = events[key] ?? mockEventsGenerator(key, new Date(key));
+    
+    // Cek duplikasi untuk single add
+    if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === newName.toLowerCase())) {
+         alert(`Event "${newName}" sudah ada di tanggal ini!`);
+         return;
+    }
+
+    const newEvents = [
+        "KESELURUHAN DATA HARI INI", 
+        ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e !== newName), 
+        newName
+    ];
+    
+    setEvents(prevEvents => {
+      const updatedEvents = { ...prevEvents, [key]: newEvents };
+      memoryStorage.events = updatedEvents;
+      return updatedEvents;
+    });
+    
+    setSelectedEventsByDate(prev => {
+      const currentSelected = prev[key] ?? [];
+      const newSelected = [...currentSelected, newName];
+      const newEventsByDate = { ...prev, [key]: newSelected.filter(e => e) };
+      saveSelection(selectedDates, newEventsByDate);
+      return newEventsByDate;
+    });
+    
+    if (!selectedDates.some(d => getDayKey(d) === key)) {
+      setSelectedDates(prev => [...prev, new Date(key)].sort((a, b) => a.getTime() - b.getTime()));
+    }
+    
+    setShowEventModal(false);
+    setEventModalData({}); // Reset modal data
+  }, [eventModalData, events, selectedDates]);
+
+  // NEW: Handler untuk menambahkan event berkala (dari modal)
+  const handlePeriodicalAddEvent = useCallback(() => {
+    const { periodicalDayOfWeek, periodicalPeriod, newName, dateKey } = eventModalData;
+    const eventName = newName?.trim();
+    // Pastikan dayOfWeek diambil dari modal data
+    const dayOfWeek = periodicalDayOfWeek !== null ? periodicalDayOfWeek : new Date(dateKey ?? '').getDay();
+
+    if (!eventName || dayOfWeek === null || !dateKey || !periodicalPeriod) return;
+    
+    let initialUpdateCount = 0;
+    let periodicalUpdateCount = 0;
+
+    // 1. Tambahkan/Perbarui di tanggal awal yang diklik (dateKey)
+    setEvents(prevEvents => {
+      const updatedEvents = { ...prevEvents };
+      const currentEvents = updatedEvents[dateKey] ?? mockEventsGenerator(dateKey, new Date(dateKey));
+
+      // Cek duplikasi untuk tanggal awal
+      if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === eventName.toLowerCase())) {
+          updatedEvents[dateKey] = [
+              "KESELURUHAN DATA HARI INI", 
+              ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e !== eventName), 
+              eventName
+          ].filter((v, i, a) => a.indexOf(v) === i);
+          initialUpdateCount++;
+      } else {
+          // Hanya tambahkan jika benar-benar baru
+          updatedEvents[dateKey] = [
+              "KESELURUHAN DATA HARI INI", 
+              ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
+              eventName
+          ].filter((v, i, a) => a.indexOf(v) === i);
+          initialUpdateCount++;
+      }
+      memoryStorage.events = updatedEvents;
+      return updatedEvents;
+    });
+    
+    // 2. Hitung tanggal masa depan yang berulang
+    const datesToUpdate = generateDatesForPeriod(dateKey, dayOfWeek, periodicalPeriod);
+    
+    // 3. Terapkan event ke semua tanggal berulang
+    setEvents(prevEvents => {
+        const updatedEvents = { ...prevEvents };
+        
+        datesToUpdate.forEach(key => {
+            const date = new Date(key);
+            
+            const initialEvents = mockEventsGenerator(key, date);
+            const currentEvents = updatedEvents[key] ?? initialEvents;
+
+            // Jika event sudah ada, lewati.
+            if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === eventName.toLowerCase())) {
+                return;
+            }
+            
+            // Tambahkan event baru ke daftar event yang sudah ada
+            const newEventsList = [
+                "KESELURUHAN DATA HARI INI", 
+                ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
+                eventName
+            ].filter((v, i, a) => a.indexOf(v) === i); 
+
+            updatedEvents[key] = newEventsList;
+            periodicalUpdateCount++;
+        });
+
+        memoryStorage.events = updatedEvents;
+        return updatedEvents;
+    });
+
+    if (initialUpdateCount > 0 || periodicalUpdateCount > 0) {
+        alert(`${initialUpdateCount + periodicalUpdateCount} Event "${eventName}" telah ditambahkan. ${periodicalUpdateCount} di antaranya ditambahkan secara berkala dari ${new Date(dateKey).toLocaleDateString("id-ID")} hingga ${PERIOD_OPTIONS.find(p => p.value === periodicalPeriod)?.label ?? 'periode yang dipilih'}.`);
+        
+        // Cek dan tambahkan tanggal mulai (dateKey) jika belum dipilih
+        if (!selectedDates.some(d => getDayKey(d) === dateKey)) {
+             setSelectedDates(prev => [...prev, new Date(dateKey)].sort((a, b) => a.getTime() - b.getTime()));
+        }
+        
+        // Pilih event yang baru ditambahkan di tanggal awal (dateKey)
+        setSelectedEventsByDate(prev => {
+            const currentSelected = prev[dateKey] ?? [];
+            const newSelected = [...currentSelected, eventName];
+            const newEventsByDate = { ...prev, [dateKey]: newSelected.filter(e => e) };
+            saveSelection(selectedDates, newEventsByDate);
+            return newEventsByDate;
+        });
+
+    } else {
+         alert(`Gagal menambahkan event, atau event "${eventName}" sudah ada di semua periode yang dipilih.`);
+    }
+
+    setShowEventModal(false);
+    setEventModalData({}); // Reset modal data
+  }, [eventModalData, events, selectedDates]);
+
+
+  // NEW: Handler untuk aksi dari modal (gabungan dari single add/periodical add/edit/delete confirm)
+  const handleEventAction = useCallback(() => {
+    switch(eventModalData.type) {
+        case 'add-single':
+            handleSingleAddEvent();
+            break;
+        case 'add-periodical':
+            handlePeriodicalAddEvent();
+            break;
+        case 'edit-single':
+            // Lakukan edit untuk single
+            const { dateKey: key, oldName, newName: newN } = eventModalData;
+            const newNameTrim = newN?.trim();
+            if (!key || !oldName || !newNameTrim || oldName === newNameTrim) {
+                setShowEventModal(false);
+                return;
+            }
+            
+            setEvents(prevEvents => {
+                const currentEvents = prevEvents[key] ?? [];
+                const oldIndex = currentEvents.indexOf(oldName);
+                
+                if (oldIndex === -1) return prevEvents; 
+                
+                const updatedEvents = [...currentEvents];
+                updatedEvents[oldIndex] = newNameTrim;
+                
+                memoryStorage.events = { ...prevEvents, [key]: updatedEvents };
+                return { ...prevEvents, [key]: updatedEvents };
+            });
+            
+            setSelectedEventsByDate(prevSelected => {
+                const currentSelected = prevSelected[key] ?? [];
+                const updatedSelected = currentSelected.map(e => (e === oldName ? newNameTrim : e));
+                
+                saveSelection(selectedDates, { ...prevSelected, [key]: updatedSelected });
+                return { ...prevSelected, [key]: updatedSelected };
+            });
+            
+            setShowEventModal(false);
+            setEventModalData({});
+            break;
+        case 'edit-periodical-confirm':
+            // Lakukan edit/delete untuk semua event yang namanya sama di masa depan
+            const { dateKey: startKey, oldName: nameToChange, newName: newNPeriodic } = eventModalData;
+            const isDeletion = !newNPeriodic || newNPeriodic.trim() === ''; // If newName is empty/null, it's a deletion
+            const newNamePeriodic = newNPeriodic?.trim() ?? '';
+            
+            if (!startKey || !nameToChange || (!isDeletion && !newNamePeriodic)) return;
+
+            setEvents(prevEvents => {
+                const updatedEvents = { ...prevEvents };
+                const startDate = new Date(startKey).setHours(0, 0, 0, 0);
+                
+                Object.keys(updatedEvents).forEach(key => {
+                    const currentDate = new Date(key).setHours(0, 0, 0, 0);
+                    // Filter: Hanya tanggal yang sama atau lebih baru dari startKey
+                    if (currentDate >= startDate) {
+                        let eventsList = updatedEvents[key] ?? [];
+                        
+                        if (eventsList.includes(nameToChange)) {
+                            if (isDeletion) {
+                                // Hapus event
+                                eventsList = eventsList.filter(e => e !== nameToChange);
+                            } else {
+                                // Edit event
+                                eventsList = eventsList.map(e => (e === nameToChange ? newNamePeriodic : e));
+                            }
+                            updatedEvents[key] = eventsList.filter((v, i, a) => a.indexOf(v) === i); 
+                        }
+                    }
+                });
+
+                memoryStorage.events = updatedEvents;
+                return updatedEvents;
+            });
+            
+            // Update selected state (deselected jika dihapus, ganti nama jika diubah)
+             setSelectedEventsByDate(prevSelected => {
+                const updatedSelected = { ...prevSelected };
+                Object.keys(updatedSelected).forEach(key => {
+                    const currentDate = new Date(key).setHours(0, 0, 0, 0);
+                    const startDate = new Date(startKey).setHours(0, 0, 0, 0);
+
+                    // Hanya yang sama atau lebih baru dari startKey
+                    if (currentDate >= startDate) {
+                         let selectedList = updatedSelected[key] ?? [];
+                         if (selectedList.includes(nameToChange)) {
+                            if (isDeletion) {
+                                selectedList = selectedList.filter(e => e !== nameToChange);
+                            } else {
+                                selectedList = selectedList.map(e => (e === nameToChange ? newNamePeriodic : e));
+                            }
+                            updatedSelected[key] = selectedList.filter((v, i, a) => a.indexOf(v) === i);
+                         }
+                    }
+                });
+                
+                saveSelection(selectedDates, updatedSelected);
+                return updatedSelected;
+            });
+
+            alert(`Event "${nameToChange}" telah ${isDeletion ? 'dihapus' : 'diperbarui'} dari ${new Date(startKey).toLocaleDateString("id-ID")} dan semua tanggal setelahnya.`);
+            setShowEventModal(false);
+            setEventModalData({});
+            break;
+        case 'flow-select':
+            // Ini seharusnya tidak dipanggil karena di-handle di modal, tapi untuk safety, kita default ke single
+            onAction(); 
+            break;
+        default:
+            break;
+    }
+  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates]);
+
+  // Refactor `handleDeleteEvent`
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
       
-      if (!confirm(`Apakah Anda yakin ingin menghapus event "${eventName}" dari tanggal ${new Date(dateKey).toLocaleDateString("id-ID")}?`)) {
+      const isMockEvent = mockEventsGenerator(dateKey, new Date(dateKey)).includes(eventName);
+
+      if (isMockEvent || !confirm(`Event "${eventName}" mungkin berulang. Apakah Anda ingin menghapus HANYA untuk tanggal ini? (Pilih 'Batal' untuk menghapus semua event masa depan yang namanya sama).`)) {
+          // Jika Batal (untuk non-mock) atau default mock event, buka modal konfirmasi untuk delete periodical
+          setEventModalData({
+              type: 'edit-periodical-confirm',
+              dateKey,
+              oldName: eventName,
+              newName: '', // Kosong = delete
+              periodicalDayOfWeek: null,
+              periodicalPeriod: '',
+          });
+          setShowEventModal(true);
           return;
       }
       
+      // Lakukan penghapusan single instance
       setEvents(prevEvents => {
           const updatedEvents = {
               ...prevEvents,
@@ -875,83 +1484,48 @@ export default function DatabasePage() {
       });
   }, [selectedDates]);
 
+
+  // Refactor `handleOpenEditEvent`
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return;
       
-      setEditingEventKey({ dateKey, oldName: eventName });
-      setEditEventName(eventName);
-      setShowEditEventDialog(true);
-  }, []);
-
-  const handleSaveEditEvent = useCallback(() => {
-      if (!editingEventKey || !editEventName.trim()) return;
-
-      const { dateKey, oldName } = editingEventKey;
-      const newName = editEventName.trim();
-
-      if (oldName === newName) {
-          setShowEditEventDialog(false);
+      const isMockEvent = mockEventsGenerator(dateKey, new Date(dateKey)).includes(eventName);
+      
+      if (isMockEvent || confirm(`Event "${eventName}" mungkin berulang. Apakah Anda ingin mengedit nama event ini untuk SEMUA tanggal yang akan datang, dimulai dari ${new Date(dateKey).toLocaleDateString("id-ID")}${(isMockEvent ? ' (Ini adalah event default)' : '')}?`)) {
+          // Jika Ya (untuk non-mock) atau default mock event, set modal untuk konfirmasi edit periodical
+          setEventModalData({
+              type: 'edit-periodical-confirm',
+              dateKey,
+              oldName: eventName,
+              newName: eventName, 
+              periodicalDayOfWeek: null,
+              periodicalPeriod: '',
+          });
+          setShowEventModal(true);
           return;
       }
 
-      setEvents(prevEvents => {
-          const currentEvents = prevEvents[dateKey] ?? [];
-          const oldIndex = currentEvents.indexOf(oldName);
-          
-          if (oldIndex === -1) return prevEvents; 
-          
-          const updatedEvents = [...currentEvents];
-          updatedEvents[oldIndex] = newName;
-          
-          memoryStorage.events = { ...prevEvents, [dateKey]: updatedEvents };
-          return { ...prevEvents, [dateKey]: updatedEvents };
+      // Default ke edit single
+      setEventModalData({ 
+        type: 'edit-single', 
+        dateKey, 
+        oldName: eventName, 
+        newName: eventName,
+        periodicalDayOfWeek: null,
+        periodicalPeriod: '2m',
       });
-      
-      setSelectedEventsByDate(prevSelected => {
-          const currentSelected = prevSelected[dateKey] ?? [];
-          const updatedSelected = currentSelected.map(e => (e === oldName ? newName : e));
-          
-          saveSelection(selectedDates, { ...prevSelected, [dateKey]: updatedSelected });
-          return { ...prevSelected, [dateKey]: updatedSelected };
-      });
+      setShowEventModal(true);
+  }, []);
 
-      setShowEditEventDialog(false);
-      setEditingEventKey(null);
-  }, [editingEventKey, editEventName, selectedDates]);
+  const handleSaveEdit = useCallback(() => {
+    setEditMode(false);
+    setJemaat(draftJemaat.map(d => ({ ...d })));
+  }, [draftJemaat]);
   
-  const handleAddEvent = useCallback(() => {
-    const key = addEventDateKey;
-    if (!key || !newEventName.trim()) return;
-    
-    setViewMode('event_per_table');
-    
-    const trimmedName = newEventName.trim();
-    
-    const currentEvents = events[key] ?? mockEventsGenerator(key, new Date(key));
-    const newEvents = ["KESELURUHAN DATA HARI INI", ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e !== trimmedName), trimmedName];
-    
-    setEvents(prevEvents => {
-      const updatedEvents = { ...prevEvents, [key]: newEvents };
-      memoryStorage.events = updatedEvents;
-      return updatedEvents;
-    });
-    
-    setSelectedEventsByDate(prev => {
-      const currentSelected = prev[key] ?? [];
-      const newSelected = [...currentSelected, trimmedName];
-      const newEventsByDate = { ...prev, [key]: newSelected.filter(e => e) };
-      saveSelection(selectedDates, newEventsByDate);
-      return newEventsByDate;
-    });
-    
-    if (!selectedDates.some(d => getDayKey(d) === key)) {
-      setSelectedDates(prev => [...prev, new Date(key)].sort((a, b) => a.getTime() - b.getTime()));
-    }
-    
-    setShowAddEventDialog(false);
-    setNewEventName('');
-    setAddEventDateKey(null);
-  }, [addEventDateKey, newEventName, events, selectedDates]);
+  const handleCancelEdit = useCallback(() => {
+    setEditMode(false);
+    setDraftJemaat(jemaat.map(j => ({ ...j })));
+  }, [jemaat]);
   
   const handleSelectYearFromGrid = useCallback((selectedYear: number) => {
     setYear(selectedYear);
@@ -962,10 +1536,12 @@ export default function DatabasePage() {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
+  /**
+   * FIX LOGIC: Menggunakan getAvailableSessionNames(dateObj) untuk filter KESELURUHAN DATA HARI INI.
+   * Ini memastikan hanya Jemaat yang sesi kehadirannya (kehadiranSesi) sesuai dengan hari yang dipilih (Sabtu/Minggu) yang ditampilkan.
+   */
   const getFilteredJemaatPerEvent = useCallback((jemaatList: Jemaat[], dateKey: string, event: string): Jemaat[] => {
     
-    const dateObj = new Date(dateKey);
-
     let filteredData = jemaatList.filter(j =>
       (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
       (filterJabatan === "" || j.jabatan === filterJabatan)
@@ -979,29 +1555,26 @@ export default function DatabasePage() {
         return filteredData;
     }
     
-    // PERBAIKAN LOGIKA: Filter Jemaat berdasarkan Sesi yang tersedia di hari itu.
+    // KESELURUHAN DATA HARI INI (Simulasi Kehadiran untuk tanggal yang dipilih)
     if (event === "KESELURUHAN DATA HARI INI") {
         
-        const availableSessions = getAvailableSessionNames(dateObj);
+        const dateObj = new Date(dateKey);
+        // FIX: Dapatkan sesi yang tersedia di tanggal ini
+        const availableSessions = getAvailableSessionNames(dateObj); 
         
-        // Jemaat yang berpotensi hadir di hari ini
+        // Jemaat yang berpotensi hadir (kehadiranSesi-nya ada di daftar sesi yang tersedia hari ini)
         const jemaatPotentialyPresent = filteredData.filter(j => 
             availableSessions.includes(j.kehadiranSesi)
         );
 
-        // Jika filter Kehadiran Sesi (Jenis Ibadah) diaktifkan, kita gunakan filter itu
         if (filterKehadiranSesi !== "") {
-            // Filter hanya dari jemaat yang berpotensi hadir
             return jemaatPotentialyPresent.filter(j => j.kehadiranSesi === filterKehadiranSesi);
         }
         
-        // Jika filter Kehadiran Sesi (Jenis Ibadah) tidak diaktifkan, kembalikan 
-        // semua data yang sudah difilter Status/Jabatan DAN yang sesinya ada di hari itu.
         return jemaatPotentialyPresent; 
     }
     
-    // Logika untuk event spesifik (misalnya 'Kebaktian I : 07:00')
-    // Data yang muncul di event spesifik difilter berdasarkan KehadiranSesi yang sama dengan nama event.
+    // Logika untuk event spesifik (KehadiranSesi harus sama dengan nama event)
     return filteredData.filter(j => j.kehadiranSesi === event);
   }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
 
@@ -1049,50 +1622,31 @@ export default function DatabasePage() {
   const uniqueJabatan = useMemo(() => 
     [...new Set(jemaat.map((j) => j.jabatan))], [jemaat]);
     
-  // LOGIKA BARU: Menghitung Sesi yang unik dan *tersedia* berdasarkan tanggal yang dipilih
+  // Mengambil semua sesi unik dari Jemaat data yang dimuat
   const uniqueKehadiranSesiByDate = useMemo(() => {
-    if (selectedTables.length === 0) {
-        // Mode default atau tidak ada yang dipilih, tampilkan semua sesi unik dari database
-        return [...new Set(jemaat.map((j) => j.kehadiranSesi))];
-    }
     
-    const uniqueSessions = new Set<string>();
-    
-    // Jika mode Monthly Summary, tampilkan semua sesi unik di database
-    if (viewMode === 'monthly_summary') {
-        return [...new Set(jemaat.map((j) => j.kehadiranSesi))];
+    const allUniqueSessions = Array.from(new Set(jemaat.map((j) => j.kehadiranSesi)));
+
+    if (selectedTables.length === 0 || viewMode === 'monthly_summary') {
+        // Mode default atau Monthly Summary: tampilkan semua sesi unik yang ada
+        return allUniqueSessions;
     }
     
     // Jika mode Event Per Table dan event yang dipilih adalah 'KESELURUHAN DATA HARI INI'
-    if (selectedTables.length > 0) {
-        // Kita hanya perlu melihat event pertama, karena filter sesi berlaku untuk semua data di tabel itu
-        const firstTable = selectedTables[0]; 
-
-        if (firstTable?.event === 'KESELURUHAN DATA HARI INI') {
-            const dateObj = new Date(firstTable.date);
-            // Ambil hanya sesi yang tersedia di tanggal itu
-            getAvailableSessionNames(dateObj).forEach(session => uniqueSessions.add(session));
-        } else if (firstTable) {
-            // Jika event spesifik dipilih, filter sesi tidak perlu ditampilkan, 
-            // tapi kita kembalikan sesi yang dipilih agar tampilan tidak kosong.
-            return [firstTable.event];
-        }
+    if (selectedTables.length === 1 && selectedTables[0]?.event === 'KESELURUHAN DATA HARI INI') {
+        // Tampilkan semua sesi unik yang ada
+        return allUniqueSessions.sort();
+    } 
+    
+    // Jika event spesifik dipilih, tampilkan hanya event yang dipilih
+    if (selectedTables.length > 0 && selectedTables[0]) {
+        return [selectedTables[0].event];
     }
     
-    return Array.from(uniqueSessions).sort();
+    return allUniqueSessions.sort();
   }, [jemaat, selectedTables, viewMode]);
 
 
-  const handleSaveEdit = useCallback(() => {
-    setEditMode(false);
-    setJemaat(draftJemaat.map(d => ({ ...d })));
-  }, [draftJemaat]);
-  
-  const handleCancelEdit = useCallback(() => {
-    setEditMode(false);
-    setDraftJemaat(jemaat.map(j => ({ ...j })));
-  }, [jemaat]);
-  
   const handleRowClick = useCallback((row: Jemaat) => {
     if (!editMode) {
       setFormData({ ...row });
@@ -1427,8 +1981,7 @@ export default function DatabasePage() {
             handleSelectEvent={handleSelectEvent}
             handleDeleteEvent={handleDeleteEvent}
             handleOpenEditEvent={handleOpenEditEvent}
-            setShowAddEventDialog={setShowAddEventDialog}
-            setAddEventDateKey={setAddEventDateKey}
+            handleOpenAddEvent={handleOpenAddEvent} // UPDATED PROP
           />
         </div>
 
@@ -1542,7 +2095,7 @@ export default function DatabasePage() {
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status Kehadiran</th> 
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Jabatan</th>
                             <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Jenis Ibadah/Kebaktian</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Dokumen</th> 
+                            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Dokumen</th> 
                             <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Aksi</th>
                           </tr>
                         </thead>
@@ -1773,81 +2326,16 @@ export default function DatabasePage() {
           </div>
         )}
         
-        {showAddEventDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
-              <h3 className="text-xl font-bold text-indigo-600 mb-4 border-b pb-3">
-                Tambah Event Baru
-              </h3>
-              <input
-                type="text"
-                value={newEventName}
-                onChange={(e) => setNewEventName(e.target.value)}
-                className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 mb-2 focus:border-indigo-500 focus:outline-none"
-                placeholder="Nama Event (Contoh: Kebaktian I : 07:00)"
-                autoFocus
-              />
-              <p className="text-sm text-gray-500 mb-4 bg-indigo-50 p-2 rounded">
-                Tanggal: <span className="font-semibold">{selectedDates.find(d => getDayKey(d) === addEventDateKey)?.toLocaleDateString("id-ID") ?? 'N/A'}</span>
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => {
-                    setShowAddEventDialog(false);
-                    setNewEventName('');
-                    setAddEventDateKey(null);
-                  }}
-                  className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleAddEvent}
-                  disabled={!newEventName.trim()}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition" 
-                >
-                  Tambah
-                </button>
-              </div>
-            </div>
-          </div>
+        {/* NEW: Event Management Modal */}
+        {showEventModal && (
+            <EventManagementModal 
+                data={eventModalData}
+                onUpdateData={updateEventModalData}
+                onClose={() => setShowEventModal(false)}
+                onAction={handleEventAction}
+            />
         )}
 
-        {showEditEventDialog && editingEventKey && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
-              <h3 className="text-xl font-bold text-indigo-600 mb-4 border-b pb-3">
-                Edit Nama Event
-              </h3>
-              <p className="text-sm text-gray-500 mb-4">
-                Mengedit event untuk tanggal: <span className="font-semibold">{new Date(editingEventKey.dateKey).toLocaleDateString("id-ID")}</span>
-              </p>
-              <input
-                type="text"
-                value={editEventName}
-                onChange={(e) => setEditEventName(e.target.value)}
-                className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 mb-4 focus:border-indigo-500 focus:outline-none"
-                placeholder="Nama Event Baru"
-                autoFocus
-              />
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setShowEditEventDialog(false)}
-                  className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                >
-                  Batal
-                </button>
-                <button
-                  onClick={handleSaveEditEvent}
-                  disabled={!editEventName.trim() || editEventName.trim() === editingEventKey.oldName}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition" 
-                >
-                  Simpan Perubahan
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
 
         {openDetailDrawer && formData && (
           <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
@@ -2037,7 +2525,7 @@ export default function DatabasePage() {
                       <label className="block text-sm font-semibold text-gray-700 mb-2">
                         Jabatan
                       </label>
-                      <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
+                      <div className="bg-indigo-500 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
                         {formData.jabatan}
                       </div>
                     </div>
