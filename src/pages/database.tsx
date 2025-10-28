@@ -1,16 +1,23 @@
+// src/pages/database.tsx
+
 /**
  * REFACTOR: Mengganti logika Event Management menjadi modal terpusat
  * dan menambahkan fitur Event Berkala (Periodical Event) untuk penambahan,
  * pengeditan, dan penghapusan event berulang (hanya di memori).
+ * FIX: Perbaikan logika generateDatesForPeriod dan penambahan event periodik
+ * NEW: Responsiveness (mobile-first) dan Collapsible Sidebar.
+ * FIX: Sidebar height and mobile display (Fixed white background issue).
+ * **FIX**: Sidebar dibuat fixed/sticky dan konten utama dibuat scrollable.
  */
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil } from "lucide-react"; 
+import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil, Menu } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
 import { jsPDF } from 'jspdf';
 import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
+import dynamic from 'next/dynamic'; 
 
 // --- Tipe Data ---
 interface Jemaat {
@@ -18,17 +25,17 @@ interface Jemaat {
   foto: string;
   nama: string;
   jabatan: string;
-  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif"; // Status kehadiran terhitung
+  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif";
   tanggalLahir?: string;
   umur?: string;
   keluarga?: string;
   email?: string;
   telepon?: string;
   kehadiranSesi: string; 
-  dokumen?: string; // NEW: Field untuk dokumen/gambar
+  dokumen?: string;
 }
 
-interface PreviewModalData {
+export interface PreviewModalData {
     url: string; 
     name: string;
     type: 'image' | 'pdf' | 'other';
@@ -38,29 +45,51 @@ type ViewMode = 'event_per_table' | 'monthly_summary';
 type SelectedEventsByDate = Record<string, string[]>;
 type EventsCache = Record<string, string[]>;
 
-// --- Tipe Data Modal Baru ---
 type EventModalType = 'add-single' | 'add-periodical' | 'edit-single' | 'edit-periodical-confirm' | 'flow-select';
 
-interface EventModalData {
+export interface EventModalData {
     type: EventModalType;
-    // Data umum
     dateKey: string | null;
-    oldName: string | null; // Untuk edit
-    newName: string; // Untuk add/edit
-    // Data untuk Periodical
-    periodicalDayOfWeek: number | null; // 0=Minggu, 1=Senin...
-    periodicalPeriod: string; // e.g., '2m', '1y'
+    oldName: string | null;
+    newName: string;
+    periodicalDayOfWeek: number | null;
+    periodicalPeriod: string;
 }
 
+interface CustomConfirmation {
+    isOpen: boolean;
+    title: string;
+    message: string;
+    onConfirm: () => void;
+    onCancel: () => void;
+    showCancelButton?: boolean;
+}
+
+// Komponen Modal yang dimuat secara dinamis
+const DynamicDocumentPreviewModal = dynamic<any>(() => import('../components/DocumentPreviewModal'), {
+    loading: () => null, 
+    ssr: false, 
+});
+
+const DynamicEventManagementModal = dynamic<any>(() => import('../components/EventManagementModal'), {
+    loading: () => (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white p-6 rounded-xl shadow-2xl">Memuat form event...</div>
+        </div>
+    ),
+    ssr: false,
+});
 
 // --- UTILITY FUNCTIONS & CONSTANTS ---
+const MONTHLY_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
+    value: `${i + 1}m`,
+    label: `${i + 1} Bulan`,
+}));
 
-const PERIOD_OPTIONS = [
-  { value: '1m', label: '1 Bulan' },
-  { value: '2m', label: '2 Bulan' },
-  { value: '6m', label: '6 Bulan' },
+export const PERIOD_OPTIONS = [ 
+  ...MONTHLY_OPTIONS,
   { value: '1y', label: '1 Tahun' },
-  { value: '10y', label: 'Selamanya (10 Tahun Simulasi)' }, // Untuk simulasi "selamanya"
+  { value: '10y', label: 'Selamanya (10 Tahun Simulasi)' }, 
 ];
 
 const calculateAge = (dobString: string | undefined): string => {
@@ -102,114 +131,150 @@ const getDaysInMonth = (month: number, year: number): number =>
 const getFirstDayOfMonth = (month: number, year: number): number => 
   new Date(year, month, 1).getDay();
 
-const isImageUrlOrBase64 = (data: string): boolean => {
+export const isImageUrlOrBase64 = (data: string): boolean => { 
     if (!data) return false;
     return data.startsWith('data:image') || 
            /\.(jpeg|jpg|png|gif|webp)$/i.test(data.toLowerCase()) || 
            data.includes('picsum.photos');
 };
 
-/**
- * Mengembalikan daftar sesi ibadah yang secara default tersedia pada hari tersebut.
- * FIX: Mengisi fungsi ini dengan sesi yang benar.
- */
 const getAvailableSessionNames = (date: Date): string[] => {
-    const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
-    if (dayOfWeek === 6) { // Sabtu
+    const dayOfWeek = date.getDay();
+    if (dayOfWeek === 6) {
         return ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"];
-    } else if (dayOfWeek === 0) { // Minggu
+    } else if (dayOfWeek === 0) {
         return ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"];
     }
     return []; 
 };
 
-
-const mockEventsGenerator = (dateKey: string, date: Date): string[] => {
-    const defaultEvents = getAvailableSessionNames(date);
+const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: Set<string>): string[] => {
+    const defaultEventsForDay = getAvailableSessionNames(date);
+    const combinedEvents = [...defaultEventsForDay];
     
-    const dateTimestamp = new Date(dateKey).setHours(0, 0, 0, 0);
-    if (dateTimestamp <= todayStart && defaultEvents.length > 0) {
-        // Tambahkan opsi 'KESELURUHAN DATA HARI INI'
-        defaultEvents.unshift("KESELURUHAN DATA HARI INI");
-    }
-    return defaultEvents;
+    allUniqueSessions.forEach(session => {
+        if (!combinedEvents.includes(session)) {
+            combinedEvents.push(session);
+        }
+    });
+    
+    const finalEvents = [
+        "KESELURUHAN DATA HARI INI",
+        ...combinedEvents.sort()
+    ].filter((v, i, a) => a.indexOf(v) === i); 
+
+    return finalEvents;
 };
 
-const getDatesWithEventsInMonth = (month: number, currentYear: number, currentEvents: EventsCache): { date: Date, key: string, events: string[] }[] => {
+// MODIFIED: Fungsi ini kini menerima actualAttendanceDates untuk memfilter tanggal.
+const getDatesWithEventsInMonth = (
+  month: number, 
+  currentYear: number, 
+  currentEvents: EventsCache, 
+  actualAttendanceDates: string[] 
+): { date: Date, key: string, events: string[] }[] => {
   const daysInMonth = getDaysInMonth(month, currentYear);
   const dates: { date: Date, key: string, events: string[] }[] = [];
+  const attendanceSet = new Set(actualAttendanceDates);
   
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(currentYear, month, day);
     const dayKey = getDayKey(date);
-    const dateTimestamp = new Date(date).setHours(0, 0, 0, 0);
-    const isFutureDay = dateTimestamp > todayStart;
-
-    if (!isFutureDay) {
-      const mockEvents = mockEventsGenerator(dayKey, date);
-      const currentEventList = currentEvents[dayKey] ?? mockEvents;
+    
+    // HANYA proses tanggal yang memiliki data kehadiran aktual
+    if (attendanceSet.has(dayKey)) {
+      const currentEventList = currentEvents[dayKey] ?? [];
       
-      if (currentEventList.length > 0) { 
-        dates.push({ date, key: dayKey, events: currentEventList });
+      // HANYA masukkan jika eventlist memiliki isi (setelah inisialisasi)
+      if (currentEventList.length > 0) {
+           dates.push({ date, key: dayKey, events: currentEventList });
       }
     }
   }
-  return dates;
+  return dates; 
 };
 
-
-const getNextDayOfWeek = (date: Date, dayOfWeek: number) => {
-    const resultDate = new Date(date.getTime());
-    resultDate.setDate(date.getDate() + (7 + dayOfWeek - date.getDay()) % 7);
-    return resultDate;
-}
+/**
+ * FIX: Fungsi untuk mendapatkan tanggal hari tertentu berikutnya
+ */
+const getNextDayOfWeek = (fromDate: Date, targetDayOfWeek: number): Date => {
+    const result = new Date(fromDate.getTime());
+    const currentDay = result.getDay();
+    let daysToAdd = targetDayOfWeek - currentDay;
+    
+    if (daysToAdd <= 0) {
+        daysToAdd += 7;
+    }
+    
+    result.setDate(result.getDate() + daysToAdd);
+    return result;
+};
 
 /**
- * Menghitung daftar tanggal berulang berdasarkan hari dan periode, dimulai dari tanggal yang dipilih.
- * Hanya menghasilkan tanggal di masa depan (lebih besar dari hari ini).
+ * FIX: Fungsi untuk generate tanggal berulang berdasarkan periode
+ * Perbaikan utama: Logika perhitungan end date dan iterasi mingguan
  */
 const generateDatesForPeriod = (startDayKey: string, dayOfWeek: number, period: string): string[] => {
     const dates: string[] = [];
-    let currentDate = new Date(startDayKey);
+    const baseDate = new Date(startDayKey);
     
-    if (isNaN(currentDate.getTime())) return [];
+    if (isNaN(baseDate.getTime())) {
+        console.error("Invalid startDayKey:", startDayKey);
+        return [];
+    }
     
-    // 1. Tentukan tanggal mulai yang benar (Hari ini atau hari ke-n berikutnya)
-    // Mulai dari hari setelah hari ini.
-    currentDate = new Date(currentDate.getTime());
-    currentDate.setDate(currentDate.getDate() + 1); 
+    // 1. Hitung tanggal akhir berdasarkan periode
+    const endDate = new Date(baseDate.getTime());
     
-    // Maju ke hari yang benar berikutnya dari currentDate
-    currentDate = getNextDayOfWeek(currentDate, dayOfWeek);
-
-    // 2. Tentukan tanggal akhir
-    const endDate = new Date(currentDate.getTime());
-    const [duration, unit] = [parseInt(period.slice(0, -1), 10), period.slice(-1)];
-
-    if (unit === 'm') endDate.setMonth(endDate.getMonth() + duration);
-    else if (unit === 'y') endDate.setFullYear(endDate.getFullYear() + duration);
-    else if (period === '10y') endDate.setFullYear(endDate.getFullYear() + 10); 
-
-    // Batasi maksimum sampai 10 tahun (untuk alasan kinerja memori di browser)
+    if (period === '10y') {
+        endDate.setFullYear(endDate.getFullYear() + 10);
+    } else {
+        const match = period.match(/^(\d+)([my])$/);
+        if (!match) {
+            console.error("Invalid period format:", period);
+            return [];
+        }
+        
+        const duration = parseInt(match[1], 10);
+        const unit = match[2];
+        
+        if (unit === 'm') {
+            endDate.setMonth(endDate.getMonth() + duration);
+        } else if (unit === 'y') {
+            endDate.setFullYear(endDate.getFullYear() + duration);
+        }
+    }
+    
+    // Safety: maksimal 10 tahun ke depan
     const maxDate = new Date();
     maxDate.setFullYear(maxDate.getFullYear() + 10);
     if (endDate.getTime() > maxDate.getTime()) {
         endDate.setTime(maxDate.getTime());
     }
     
-    const todayStartPlusOneDay = todayStart + (24 * 60 * 60 * 1000); // Batasi hanya untuk masa depan
-
-    // 3. Loop untuk mengumpulkan tanggal
-    while (currentDate.getTime() < endDate.getTime() && currentDate.getTime() >= todayStartPlusOneDay) {
-        const dayKey = getDayKey(currentDate);
-        dates.push(dayKey);
+    // 2. Mulai dari hari setelah baseDate
+    let currentDate = new Date(baseDate.getTime());
+    currentDate.setDate(currentDate.getDate() + 1);
+    
+    // 3. Cari kemunculan pertama dari dayOfWeek yang diminta
+    currentDate = getNextDayOfWeek(currentDate, dayOfWeek);
+    
+    // 4. Loop untuk mengumpulkan semua tanggal yang valid
+    const todayTime = new Date().setHours(0, 0, 0, 0);
+    
+    while (currentDate.getTime() <= endDate.getTime()) {
+        // Hanya tambahkan tanggal yang di masa depan (lebih dari hari ini)
+        if (currentDate.getTime() > todayTime) {
+            const dayKey = getDayKey(currentDate);
+            dates.push(dayKey);
+        }
         
-        // Pindah ke minggu berikutnya
+        // Pindah ke minggu berikutnya (7 hari)
         currentDate.setDate(currentDate.getDate() + 7);
     }
     
     return dates;
-}
+};
 
 // --- Helper untuk in-memory storage ---
 const memoryStorage: { 
@@ -238,295 +303,7 @@ const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
   memoryStorage.selectedEventsByDate = events;
 };
 
-// --- Komponen Modal Preview Dokumen (TIDAK BERUBAH) ---
-const DocumentPreviewModal = ({ data, onClose }: { data: PreviewModalData | null, onClose: () => void }) => {
-    if (!data) return null;
-
-    const isImage = isImageUrlOrBase64(data.url);
-    const isPdf = data.type === 'pdf';
-    
-    let content;
-
-    if (isImage) {
-        content = (
-            <Image
-                src={data.url}
-                alt={`Preview ${data.name}`}
-                width={800}
-                height={600}
-                className="max-h-[70vh] w-full object-contain"
-                style={{ width: '100%', height: 'auto' }}
-                unoptimized
-            />
-        );
-    } else if (isPdf) {
-        content = (
-            <div className="w-full h-[70vh]">
-                <iframe
-                    src={data.url}
-                    title={`PDF Preview ${data.name}`}
-                    className="w-full h-full border-0 rounded-lg"
-                    allowFullScreen
-                >
-                    <div className="p-4 text-center">
-                        <p>Browser tidak dapat menampilkan PDF secara langsung.</p>
-                        <a href={data.url} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                            Klik di sini untuk mengunduh/melihat PDF di tab baru.
-                        </a>
-                    </div>
-                </iframe>
-            </div>
-        );
-    } else {
-        content = (
-            <div className="p-6 text-center">
-                <FileText size={48} className="text-gray-500 mx-auto mb-3" />
-                <p className="text-xl font-semibold mb-2">Format Tidak Dapat Dipreview</p>
-                <p className="text-gray-600">File bukan gambar atau PDF yang dapat ditampilkan. Buka tautan di bawah:</p>
-                <a href={data.url} target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline break-all mt-2 inline-block">
-                    {data.url}
-                </a>
-            </div>
-        );
-    }
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
-                <div className="flex justify-between items-center p-4 border-b">
-                    <h3 className="text-lg font-bold text-gray-800 truncate">
-                        Preview: {data.name}
-                    </h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
-                        <X size={24} />
-                    </button>
-                </div>
-                <div className="flex-grow overflow-y-auto p-4 flex items-center justify-center">
-                    {content}
-                </div>
-                <div className="p-4 border-t flex justify-end">
-                    <a 
-                        href={data.url} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
-                    >
-                        Buka di Tab Baru
-                    </a>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-// --- Komponen Modal Event Management (BARU) ---
-const EventManagementModal = ({ data, onUpdateData, onClose, onAction }: { data: Partial<EventModalData>, onUpdateData: (newData: Partial<EventModalData>) => void, onClose: () => void, onAction: () => void }) => {
-    const { type, dateKey, oldName, newName, periodicalDayOfWeek, periodicalPeriod } = data;
-    
-    let title = '';
-    let actionButtonText = '';
-    let content;
-
-    const isEdit = type === 'edit-single';
-    const isAdd = type === 'add-single' || type === 'add-periodical' || type === 'flow-select';
-    const isPeriodicalAdd = type === 'add-periodical';
-    const isPeriodicalConfirm = type === 'edit-periodical-confirm';
-
-    // Safety check for dateKey
-    const dateDisplay = dateKey ? new Date(dateKey).toLocaleDateString("id-ID") : 'N/A';
-    const dayOptions = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-
-    if (type === 'flow-select') {
-        title = 'Pilih Mode Penambahan Event';
-        actionButtonText = 'Lanjut ke Mode Satuan';
-        
-        content = (
-            <div className="space-y-6">
-                <p className="text-lg text-gray-700">Event akan ditambahkan untuk tanggal: <span className="font-bold text-indigo-600">{dateDisplay}</span></p>
-                <div className="flex flex-col gap-3">
-                    <button 
-                        onClick={() => onUpdateData({ type: 'add-single' })}
-                        className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition shadow-md"
-                    >
-                        <span className="font-bold">Mode Satuan:</span> Hanya untuk tanggal ini
-                    </button>
-                    <button 
-                        onClick={() => onUpdateData({ type: 'add-periodical' })}
-                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition shadow-md"
-                    >
-                        <span className="font-bold">Mode Berkala:</span> Ulangi di masa depan
-                    </button>
-                </div>
-            </div>
-        );
-    } else if (isPeriodicalConfirm) {
-        title = oldName ? (newName ? `Edit Berkala: ${oldName}` : `Hapus Berkala: ${oldName}`) : 'Konfirmasi Aksi Berkala';
-        actionButtonText = newName ? 'Simpan Perubahan Berkala' : 'Hapus Semua Kejadian';
-        const actionText = newName ? `mengubah nama event dari "${oldName}" menjadi "${newName}"` : `menghapus event "${oldName}"`;
-
-        content = (
-            <div className="space-y-4 p-2">
-                <p className={`text-lg font-medium ${newName ? 'text-blue-700' : 'text-red-700'}`}>
-                    PERINGATAN! Aksi ini akan berlaku untuk **SEMUA** event bernama **"{oldName}"** pada tanggal **{dateDisplay}** dan **semua tanggal setelahnya**.
-                </p>
-                <p className="text-gray-700">Anda akan {actionText} mulai dari {dateDisplay} dan ke depannya (hingga 10 tahun simulasi).</p>
-                {newName !== undefined ? (
-                    <input
-                        type="text"
-                        value={newName}
-                        onChange={(e) => onUpdateData({ newName: e.target.value })}
-                        className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                        placeholder="Nama Event Baru"
-                        autoFocus
-                    />
-                ) : null}
-            </div>
-        );
-    } else if (isEdit) {
-        title = `Edit Event: ${oldName}`;
-        actionButtonText = 'Simpan Perubahan';
-        
-        content = (
-            <div className="space-y-4">
-                <p className="text-sm text-gray-500">Tanggal: <span className="font-semibold">{dateDisplay}</span></p>
-                <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => onUpdateData({ newName: e.target.value })}
-                    className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                    placeholder="Nama Event Baru"
-                    autoFocus
-                />
-            </div>
-        );
-    } else if (isAdd) {
-        title = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
-        actionButtonText = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
-        
-        content = (
-            <div className="space-y-4">
-                <div className="flex justify-between">
-                    <button 
-                        onClick={() => onUpdateData({ type: 'add-single', periodicalDayOfWeek: null, periodicalPeriod: '2m' })}
-                        className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${!isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                        Mode Satuan
-                    </button>
-                    <button 
-                        onClick={() => onUpdateData({ type: 'add-periodical' })}
-                        className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                        Mode Berkala
-                    </button>
-                </div>
-
-                <p className="text-sm text-gray-500 bg-indigo-50 p-2 rounded">
-                    Tanggal: <span className="font-semibold">{dateDisplay}</span>
-                </p>
-                
-                <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => onUpdateData({ newName: e.target.value })}
-                    className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                    placeholder="Nama Event (Contoh: Kebaktian I : 07:00)"
-                    autoFocus
-                />
-                
-                {isPeriodicalAdd && (
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Hari Perulangan</label>
-                            <select
-                                value={periodicalDayOfWeek ?? 0}
-                                onChange={(e) => onUpdateData({ periodicalDayOfWeek: parseInt(e.target.value, 10) })}
-                                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                            >
-                                {dayOptions.map((day, index) => (
-                                    <option key={day} value={index}>{day}</option>
-                                ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Periode Hingga</label>
-                            <select
-                                value={periodicalPeriod}
-                                onChange={(e) => onUpdateData({ periodicalPeriod: e.target.value })}
-                                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                            >
-                                {PERIOD_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                            </select>
-                            <p className="text-xs text-gray-400 mt-1">*Berlaku mulai hari setelah tanggal ini</p>
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-    } else {
-        return null; 
-    }
-    
-    // Logika disesuaikan untuk delete (newName kosong) dan edit (newName ada)
-    const isActionDisabled = isPeriodicalConfirm 
-        ? (!oldName || (newName !== undefined && !newName.trim() && newName.length > 0))
-        : (isAdd && !newName?.trim());
-
-    // Sesuaikan tombol jika ini mode flow-select
-    if (type === 'flow-select') {
-         return (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
-                    <div className="flex justify-between items-center p-4 border-b">
-                        <h3 className="text-xl font-bold text-indigo-600">{title}</h3>
-                        <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
-                            <X size={24} />
-                        </button>
-                    </div>
-                    <div className="p-6">
-                        {content}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
-                <div className="flex justify-between items-center p-4 border-b">
-                    <h3 className="text-xl font-bold text-indigo-600">{title}</h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
-                        <X size={24} />
-                    </button>
-                </div>
-                <div className="p-6">
-                    {content}
-                </div>
-                <div className="p-4 border-t flex justify-end gap-2">
-                    <button
-                        onClick={onClose}
-                        className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                    >
-                        Batal
-                    </button>
-                    <button
-                        onClick={onAction}
-                        disabled={isActionDisabled}
-                        className={`px-6 py-2 ${isActionDisabled ? 'bg-gray-400 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700'} text-white rounded-lg transition`} 
-                    >
-                        {actionButtonText}
-                    </button>
-                </div>
-            </div>
-        </div>
-    );
-};
-
-
-// --- LOGIKA KALENDER (TIDAK BERUBAH) ---
+// --- LOGIKA KALENDER ---
 interface CalendarSectionProps {
     year: number;
     setYear: React.Dispatch<React.SetStateAction<number>>;
@@ -537,12 +314,36 @@ interface CalendarSectionProps {
     handleSelectDate: (day: number, month: number) => void;
     selectedDates: Date[];
     setShowYearDialog: React.Dispatch<React.SetStateAction<boolean>>;
+    actualAttendanceDates: string[]; 
 }
 
 const CalendarSection = ({
     year, setYear, startMonth, setStartMonth, viewMode, 
-    handleSelectMonth, handleSelectDate, selectedDates, setShowYearDialog
+    handleSelectMonth, handleSelectDate, selectedDates, setShowYearDialog,
+    actualAttendanceDates 
 }: CalendarSectionProps) => {
+
+    // --- NEW RESPONSIVE LOGIC ---
+    const [isMobileView, setIsMobileView] = useState(false);
+    
+    useEffect(() => {
+        const checkScreenSize = () => {
+            // Tailwind's 'md' breakpoint is typically 768px
+            if (typeof window !== 'undefined') {
+                 setIsMobileView(window.innerWidth < 768);
+            }
+        };
+        
+        // Initial check
+        checkScreenSize();
+        
+        // Add event listener
+        window.addEventListener('resize', checkScreenSize);
+        
+        // Cleanup
+        return () => window.removeEventListener('resize', checkScreenSize);
+    }, []);
+    // --- END NEW RESPONSIVE LOGIC ---
 
     const handlePrevMonth = useCallback(() => { 
         const newMonth = (startMonth - 1 + 12) % 12;
@@ -560,17 +361,20 @@ const CalendarSection = ({
 
     const monthsToDisplay = useMemo(() => {
         const months = [];
-        for (let i = 0; i < 3; i++) {
+        // Menampilkan 1 bulan di HP (isMobileView), 3 bulan di Desktop
+        const count = isMobileView ? 1 : 3; 
+        for (let i = 0; i < count; i++) {
           const monthIndex = (startMonth + i) % 12;
           months.push(monthIndex);
         }
         return months;
-    }, [startMonth]);
+    }, [startMonth, isMobileView]);
 
     const selectedKeys = useMemo(() => new Set(selectedDates.map(getDayKey)), [selectedDates]);
+    const attendanceSet = useMemo(() => new Set(actualAttendanceDates), [actualAttendanceDates]);
 
     return (
-        <div className="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg border border-gray-100">
+        <div className="lg:col-span-2 bg-white p-4 sm:p-6 rounded-xl shadow-lg border border-gray-100">
             <h2 className="text-xl font-bold text-indigo-700 mb-4 flex items-center gap-2">
               <Calendar size={20} />
               Pilih Tanggal Ibadah
@@ -605,10 +409,12 @@ const CalendarSection = ({
                 </button>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Apply grid changes based on screen size: grid-cols-1 on mobile, md:grid-cols-3 on desktop */}
+            <div className={`grid grid-cols-1 ${isMobileView ? 'gap-0' : 'md:grid-cols-3 gap-4'}`}>
               {monthsToDisplay.map((monthIndex) => {
                 const daysInMonth = getDaysInMonth(monthIndex, year);
                 const firstDay = getFirstDayOfMonth(monthIndex, year);
+                // Menyesuaikan startDayOffset untuk memulai Senin (0=Minggu, 1=Senin)
                 const startDayOffset = firstDay === 0 ? 6 : firstDay - 1; 
                 const daysArray: (number | null)[] = [
                   ...Array(startDayOffset).fill(null) as (number | null)[],
@@ -639,14 +445,18 @@ const CalendarSection = ({
                         const dateTimestamp = new Date(thisDate).setHours(0, 0, 0, 0);
                         const isFutureDay = dateTimestamp > todayStart;
                         
-                        const hasEvents = (memoryStorage.events[dayKey] ?? mockEventsGenerator(dayKey, thisDate)).length > 0;
+                        const hasAttendanceData = attendanceSet.has(dayKey); 
                         
                         let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm";
-                        if (isFutureDay) {
+                        
+                        // MODIFIED: Hanya blokir tanggal masa depan.
+                        if (isFutureDay) { 
                           dayClass += " text-gray-300 cursor-not-allowed";
                         } else if (isSelected) {
+                          // Tetap tampilkan warna biru jika terpilih
                           dayClass += " bg-indigo-600 text-white font-bold cursor-pointer shadow-md"; 
                         } else { 
+                          // Mengizinkan klik di semua tanggal yang sudah lewat
                           dayClass += " text-gray-700 hover:bg-indigo-200 cursor-pointer";
                         }
 
@@ -654,14 +464,14 @@ const CalendarSection = ({
                           <div 
                             key={i} 
                             className={dayClass} 
+                            // MODIFIED: Panggil handler selama bukan tanggal masa depan
                             onClick={() => !isFutureDay && handleSelectDate(day, monthIndex)} 
                             role="button"
                           >
                             {day}
-                            {hasEvents && !isFutureDay && (
-                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full ${
-                                isSelected ? 'bg-white' : 'bg-indigo-600'
-                              }`}></div>
+                            {/* Titik hanya muncul jika ADA data kehadiran */}
+                            {hasAttendanceData && !isSelected && ( 
+                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600`}></div>
                             )}
                           </div>
                         );
@@ -684,24 +494,25 @@ interface SelectedEventsSectionProps {
     handleSelectEvent: (dateKey: string, event: string) => void;
     handleDeleteEvent: (dateKey: string, eventName: string) => void;
     handleOpenEditEvent: (dateKey: string, eventName: string) => void;
-    handleOpenAddEvent: (dateKey: string) => void; // UPDATED PROP
+    handleOpenAddEvent: (dateKey: string) => void; 
 }
 
 const SelectedEventsSection = ({
     selectedDates, selectedEventsByDate, events, viewMode,
     handleSelectEvent, handleDeleteEvent, handleOpenEditEvent,
-    handleOpenAddEvent // UPDATED PROP
+    handleOpenAddEvent 
 }: SelectedEventsSectionProps) => {
     
     const selectedDateKeys = useMemo(() => selectedDates.map(getDayKey), [selectedDates]);
 
     return (
-        <div className="bg-white p-6 rounded-xl border border-gray-100 lg:sticky lg:top-8 h-fit"> 
+        // Menggunakan max-h-screen untuk scroll di layar besar
+        <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 lg:sticky lg:top-8 h-fit lg:max-h-[80vh]"> 
             <h3 className="text-lg font-bold text-indigo-700 mb-4 border-b pb-2">
               {selectedDates.length} Tanggal Dipilih ({viewMode === 'monthly_summary' ? '1 Tabel' : `${selectedDateKeys.reduce((acc, key) => acc + (selectedEventsByDate[key]?.length ?? 0), 0)} Event`})
             </h3>
             
-            <div className="max-h-96 overflow-y-auto pr-2 space-y-4">
+            <div className="max-h-[calc(80vh-7rem)] overflow-y-auto pr-2 space-y-4">
               {selectedDates.length === 0 ? (
                 <div className="text-center py-8 text-gray-500">
                   <Calendar size={48} className="mx-auto mb-2 opacity-30" />
@@ -715,14 +526,13 @@ const SelectedEventsSection = ({
                     month: "long",
                     year: "numeric"
                   });
-                  const currentEvents = events[key] ?? mockEventsGenerator(key, date);
+                  const currentEvents = events[key] ?? [];
                   const selectedEvents = selectedEventsByDate[key] ?? [];
                   
                   return (
-                    <div key={key} className="p-4 border-2 border-indigo-200 rounded-lg bg-indigo-50"> 
+                    <div key={key} className="p-3 sm:p-4 border-2 border-indigo-200 rounded-lg bg-indigo-50"> 
                       <div className="flex justify-between items-center mb-3">
                         <span className="font-semibold text-gray-800 text-sm">{dateDisplay}</span>
-                        {/* UPDATED: Tombol untuk membuka modal terpusat */}
                         <button 
                           className="text-xs px-3 py-1 bg-indigo-600 text-white rounded-full hover:bg-indigo-700 transition" 
                           onClick={() => handleOpenAddEvent(key)}
@@ -742,10 +552,10 @@ const SelectedEventsSection = ({
                                 const isOverall = ev === "KESELURUHAN DATA HARI INI";
 
                                 return (
-                                <div key={idx} className="relative inline-block">
+                                <div key={ev+idx} className="relative inline-block">
                                     <button
                                         onClick={() => handleSelectEvent(key, ev)} 
-                                        className={`text-xs px-3 py-1.5 rounded-lg transition 
+                                        className={`text-xs px-3 py-1.5 rounded-lg transition text-left
                                           ${isOverall 
                                             ? isSelected 
                                               ? 'bg-green-600 text-white' 
@@ -803,19 +613,58 @@ const SelectedEventsSection = ({
     );
 };
 
+// Komponen Modal Kustom untuk Konfirmasi/Alert
+const ConfirmationModal = ({ data }: { data: CustomConfirmation | null }) => {
+    if (!data || !data.isOpen) return null;
+
+    return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
+            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+                <div className="p-6">
+                    <h3 className={`text-xl font-bold mb-4 ${data.showCancelButton ? 'text-red-700' : 'text-indigo-700'}`}>
+                        {data.title}
+                    </h3>
+                    <p className="text-gray-700 mb-6">{data.message}</p>
+                    <div className="flex justify-end gap-3">
+                        {data.showCancelButton && (
+                            <button
+                                onClick={data.onCancel}
+                                className="px-4 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                            >
+                                Batal
+                            </button>
+                        )}
+                        <button
+                            onClick={data.onConfirm}
+                            className={`px-4 py-2 text-white rounded-lg transition ${
+                                data.showCancelButton ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
+                            }`}
+                        >
+                            Oke
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 // --- KOMPONEN UTAMA ---
 export default function DatabasePage() {
   const router = useRouter();
   useEffect(() => {
     const checkRole = async () => {
       const res = await fetch("/api/me");
-      const data = (await res.json()) as { role?: "admin" | "user" }; // ✅ typed
+      const data = (await res.json()) as { role?: "admin" | "user" }; 
       if (data.role !== "admin") {
-        void router.push("/unauthorized"); // ✅ tandai promise supaya no-floating-promises hilang
+        void router.push("/unauthorized"); 
       }
     };
     void checkRole();
   }, [router]);
+  
+  // NEW STATE: Sidebar Toggle
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
   const [jemaat, setJemaat] = useState<Jemaat[]>([]);
   const [isLoading, setIsLoading] = useState(true); 
@@ -827,10 +676,22 @@ export default function DatabasePage() {
   
   const [selectedDates, setSelectedDates] = useState<Date[]>([]);
   const [selectedEventsByDate, setSelectedEventsByDate] = useState<SelectedEventsByDate>({});
-  const [events, setEvents] = useState<EventsCache>({});
+  const [events, setEvents] = useState<EventsCache>(() => memoryStorage.events || {});
+  const [actualAttendanceDates, setActualAttendanceDates] = useState<string[]>([]); // NEW STATE
   const [viewMode, setViewMode] = useState<ViewMode>('event_per_table');
   
-  // NEW: Unified State for Event Management Modal
+  const [confirmationModal, setConfirmationModal] = useState<CustomConfirmation | null>(null);
+
+  const showConfirmation = useCallback((title: string, message: string, onConfirm: () => void, showCancelButton: boolean = false, onCancel: () => void = () => setConfirmationModal(null)) => {
+      setConfirmationModal({ isOpen: true, title, message, onConfirm, onCancel, showCancelButton });
+  }, []);
+
+  const showAlert = useCallback((title: string, message: string) => {
+      // PERUBAHAN: Menghilangkan pop-up notifikasi
+      console.log(`Alert suppressed: ${title} - ${message}`);
+  }, []);
+
+  
   const [showEventModal, setShowEventModal] = useState(false);
   const [eventModalData, setEventModalData] = useState<Partial<EventModalData>>({
       type: 'add-single', 
@@ -890,18 +751,21 @@ export default function DatabasePage() {
         const res = await fetch("/api/jemaat"); 
         
         if (!res.ok) {
-          // Baris 888: Error jika status bukan 200/OK.
           throw new Error(`Gagal fetch data jemaat. Status: ${res.status}`);
         }
 
         const data: unknown = await res.json();
         
-        if (Array.isArray(data) && data.length > 0) {
-          const fetchedJemaat = data as Jemaat[];
+        const apiResponse = data as { jemaatData: Jemaat[], attendanceDates: string[] };
+
+        if (Array.isArray(apiResponse.jemaatData) && apiResponse.jemaatData.length > 0) {
+          const fetchedJemaat = apiResponse.jemaatData;
           setJemaat(fetchedJemaat);
           setDraftJemaat(fetchedJemaat.map(j => ({ ...j })));
           
-          // Inisialisasi events cache dengan event unik dari data jemaat yang dimuat
+          const fetchedAttendanceDates = apiResponse.attendanceDates;
+          setActualAttendanceDates(fetchedAttendanceDates); 
+          
           const allUniqueSessions = new Set<string>();
           fetchedJemaat.forEach(j => {
               if (j.kehadiranSesi) {
@@ -909,47 +773,57 @@ export default function DatabasePage() {
               }
           });
           
-          // Logika inisialisasi cache event (hanya hari ini)
-          const todayKey = getDayKey(today);
-          const initialTodayEvents = [
-              "KESELURUHAN DATA HARI INI", 
-              ...Array.from(allUniqueSessions)
-          ].sort();
-
-          // Hanya set event jika belum ada di cache (mencegah overwrite event berkala)
-          if (!memoryStorage.events[todayKey] || memoryStorage.events[todayKey].length === 0) {
-              setEvents(prev => ({ 
-                  ...prev, 
-                  [todayKey]: initialTodayEvents
-              }));
-              memoryStorage.events[todayKey] = initialTodayEvents;
-          }
-
+          const newEvents: EventsCache = {};
+          
+          fetchedAttendanceDates.forEach(dateKey => {
+              const date = new Date(dateKey);
+              
+              if (!memoryStorage.events[dateKey]) {
+                  const finalEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
+                  if (finalEvents.length > 0) {
+                      newEvents[dateKey] = finalEvents;
+                  }
+              }
+          });
+          
+          const mergedEvents = { ...memoryStorage.events, ...newEvents };
+          setEvents(mergedEvents);
+          memoryStorage.events = mergedEvents;
+          
         } else {
           setJemaat([]);
           setDraftJemaat([]);
+          setActualAttendanceDates([]); 
         }
       } catch (err) {
         console.error("Error fetch jemaat:", err);
         setJemaat([]); 
         setDraftJemaat([]);
+        setActualAttendanceDates([]); 
       } finally {
         setIsLoading(false);
       }
     };
 
     void fetchData();
-  }, []);
-  
+  }, []); 
+
   useEffect(() => {
     const newEvents: EventsCache = {};
-    const months = [startMonth, (startMonth + 1) % 12, (startMonth + 2) % 12];
+    // Logic untuk menentukan berapa bulan yang harus diinisialisasi
+    const count = window.innerWidth < 768 ? 1 : 3; 
+    const months = [];
+    for (let i = 0; i < count; i++) {
+      const monthIndex = (startMonth + i) % 12;
+      months.push(monthIndex);
+    }
     
     months.forEach(month => {
-        const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events); 
+        const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events, actualAttendanceDates); 
         datesInMonth.forEach(d => {
             if (!memoryStorage.events[d.key]) { 
-                newEvents[d.key] = d.events;
+                const allUniqueSessions = new Set(jemaat.map(j => j.kehadiranSesi));
+                newEvents[d.key] = populateEventsForDate(d.key, d.date, allUniqueSessions);
             }
         });
     });
@@ -957,8 +831,8 @@ export default function DatabasePage() {
     if (Object.keys(newEvents).length > 0) {
       setEvents(prev => ({ ...prev, ...newEvents }));
     }
-  }, [startMonth, year]); 
-  
+  }, [startMonth, year, actualAttendanceDates, jemaat]); 
+
   useEffect(() => {
     memoryStorage.events = events;
   }, [events]);
@@ -991,7 +865,7 @@ export default function DatabasePage() {
         return;
     }
 
-    const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, memoryStorage.events);
+    const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, memoryStorage.events, actualAttendanceDates);
     
     const newDates = datesWithEventsInMonth.map(d => d.date);
     const newEventsByDate: SelectedEventsByDate = {};
@@ -999,7 +873,7 @@ export default function DatabasePage() {
     datesWithEventsInMonth.forEach(d => {
         const overallEvent = d.events.find(e => e === "KESELURUHAN DATA HARI INI");
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
-        memoryStorage.events[d.key] ??= d.events;
+        memoryStorage.events[d.key] ??= d.events; 
     });
     
     setEvents(prev => ({ ...prev, ...memoryStorage.events }));
@@ -1010,10 +884,10 @@ export default function DatabasePage() {
     setStartMonth(monthIndex);
     setYear(currentYear);
     setViewMode('monthly_summary');
-  }, [viewMode, startMonth, year, setStartMonth, setYear]);
+  }, [viewMode, startMonth, year, setStartMonth, setYear, actualAttendanceDates]); 
 
-  useEffect(() => {
-    if (!router.isReady || isLoading || jemaat.length === 0) return; 
+   useEffect(() => {
+    if (!router.isReady || isLoading || jemaat.length === 0 || actualAttendanceDates.length === 0) return; 
 
     const { dates, date, mode, event: eventQuery } = router.query;
     
@@ -1033,9 +907,9 @@ export default function DatabasePage() {
         
         datesArray.forEach(dateKey => {
             const dateObj = new Date(dateKey);
-            const availableEvents = currentEventsCache[dateKey] ?? mockEventsGenerator(dateKey, dateObj); 
             
-            currentEventsCache[dateKey] ??= availableEvents;
+            const availableEvents = currentEventsCache[dateKey];
+            if (!availableEvents) return;
 
             let selectedEvents: string[] = [];
             
@@ -1075,9 +949,9 @@ export default function DatabasePage() {
         
         if (isNaN(targetDate.getTime())) return;
         
-        const availableEvents = currentEventsCache[dateKey] ?? mockEventsGenerator(dateKey, targetDate); 
-        currentEventsCache[dateKey] = availableEvents;
-        
+        const availableEvents = currentEventsCache[dateKey];
+        if (!availableEvents) return;
+
         const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
         const selectedEvents = overallEvent ? [overallEvent] : []; 
         
@@ -1103,8 +977,9 @@ export default function DatabasePage() {
         return;
     }
     
-  }, [router, isLoading, jemaat.length, handleSelectMonth]); 
+  }, [router, isLoading, jemaat.length, handleSelectMonth, actualAttendanceDates]); 
 
+  // MODIFIED: Fungsi handleSelectDate yang sudah diperbarui (menghilangkan showAlert)
   const handleSelectDate = useCallback((day: number, month: number) => {
     setViewMode('event_per_table'); 
     
@@ -1113,34 +988,61 @@ export default function DatabasePage() {
     const dateTimestamp = new Date(clickedDate).setHours(0, 0, 0, 0);
     const isFuture = dateTimestamp > todayStart;
     
-    if (isFuture) return;
-
-    const generatedEvents = mockEventsGenerator(key, clickedDate);
-    const availableEvents = events[key] ?? generatedEvents;
-    
-    if (!events[key]) {
-        setEvents(prev => ({ ...prev, [key]: generatedEvents }));
-        memoryStorage.events[key] = generatedEvents;
+    if (isFuture) { 
+        return;
     }
 
+    const hasAttendance = actualAttendanceDates.includes(key);
     const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
     
+    // --- START LOGIKA BARU: Handle Select/Deselect tanpa data ---
+    // 1. Jika tidak ada data dan tanggal sedang TIDAK terpilih, tetap izinkan selection state berubah (select)
+    if (!hasAttendance && !isCurrentlySelected) {
+        // Jika tidak ada data, kita perlu memastikan event list kosong di cache jika belum ada
+        if (!events[key]) {
+             setEvents(prev => ({ ...prev, [key]: [] }));
+             memoryStorage.events[key] = [];
+        }
+    }
+    
+    // 2. Jika tidak ada data dan tanggal sedang TERPILIH, izinkan deselect normal
+    // 3. Jika ada data, buat event list normal
+
+    // Handle Event Caching/Generation (Hanya untuk tanggal dengan data, atau tanggal yang dipilih tanpa data)
+    let currentEvents = events[key];
+    if (hasAttendance && !currentEvents) {
+        // Generate defaults if data exists but cache is empty
+        const allUniqueSessions = new Set(jemaat.map(j => j.kehadiranSesi));
+        currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
+        setEvents(prev => ({ ...prev, [key]: currentEvents }));
+        memoryStorage.events[key] = currentEvents;
+    } else if (!hasAttendance && isCurrentlySelected) {
+        // Jika sedang deselect tanggal tanpa data, currentEvents mungkin undefined, biarkan saja.
+    }
+
     let newDates: Date[];
     const newEventsByDate = { ...selectedEventsByDate };
 
     if (isCurrentlySelected) {
+      // DESELECT
       newDates = selectedDates.filter(d => getDayKey(d) !== key);
       delete newEventsByDate[key];
     } else {
+      // SELECT
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
-      const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
+      
+      const eventsList = events[key] ?? []; // Use final list, which might be []
+      const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
+      
+      // Select the overall event ONLY IF it exists (which implies hasAttendance)
+      // Jika hasAttendance false, selected events akan [] sehingga tabel utama kosong.
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
     
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
-  }, [events, selectedDates, selectedEventsByDate, year]);
+  }, [events, selectedDates, selectedEventsByDate, year, jemaat, actualAttendanceDates]); // Removed showAlert
 
   const handleSelectEvent = useCallback((dateKey: string, event: string) => {
     setViewMode('event_per_table'); 
@@ -1172,11 +1074,15 @@ export default function DatabasePage() {
     });
   }, [selectedDates]);
   
-  // NEW: Handler untuk membuka modal EventManagementModal (langsung add-single)
   const handleOpenAddEvent = useCallback((dateKey: string) => {
-      
+    // Check if the date has attendance data
+    if (!actualAttendanceDates.includes(dateKey)) {
+        // PERUBAHAN: Menghilangkan pop-up notifikasi
+        return; 
+    }
+
       setEventModalData({
-          type: 'add-single', 
+          type: 'flow-select', 
           dateKey,
           newName: '',
           oldName: null,
@@ -1185,9 +1091,8 @@ export default function DatabasePage() {
       });
       
       setShowEventModal(true);
-  }, []);
+  }, [actualAttendanceDates, showAlert]);
 
-  // NEW: Handler untuk menambahkan event satuan (dari modal)
   const handleSingleAddEvent = useCallback(() => {
     const key = eventModalData.dateKey;
     const newName = eventModalData.newName?.trim();
@@ -1196,11 +1101,11 @@ export default function DatabasePage() {
     
     setViewMode('event_per_table');
     
-    const currentEvents = events[key] ?? mockEventsGenerator(key, new Date(key));
+    const currentEvents = events[key] ?? [];
+    const lowerNewName = newName.toLowerCase();
     
-    // Cek duplikasi untuk single add
-    if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === newName.toLowerCase())) {
-         alert(`Event "${newName}" sudah ada di tanggal ini!`);
+    if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === lowerNewName)) {
+         showAlert("Duplikasi Event", `Event "${newName}" sudah ada di tanggal ini.`);
          return;
     }
 
@@ -1229,107 +1134,108 @@ export default function DatabasePage() {
     }
     
     setShowEventModal(false);
-    setEventModalData({}); // Reset modal data
-  }, [eventModalData, events, selectedDates]);
+    setEventModalData({}); 
+    showAlert("Sukses", `Event "${newName}" berhasil ditambahkan.`);
+  }, [eventModalData, events, selectedDates, showAlert]);
 
-  // NEW: Handler untuk menambahkan event berkala (dari modal)
   const handlePeriodicalAddEvent = useCallback(() => {
     const { periodicalDayOfWeek, periodicalPeriod, newName, dateKey } = eventModalData;
     const eventName = newName?.trim();
-    // Pastikan dayOfWeek diambil dari modal data
     const dayOfWeek = periodicalDayOfWeek !== null ? periodicalDayOfWeek : new Date(dateKey ?? '').getDay();
 
-    if (!eventName || dayOfWeek === null || !dateKey || !periodicalPeriod) return;
+    if (!eventName || dayOfWeek === null || !dateKey || !periodicalPeriod) {
+        showAlert("Data Tidak Lengkap", "Pastikan semua field telah diisi dengan benar.");
+        return;
+    }
     
-    let initialUpdateCount = 0;
-    let periodicalUpdateCount = 0;
+    setViewMode('event_per_table');
+    
+    const allUniqueSessions = new Set(jemaat.map(j => j.kehadiranSesi));
+    const lowerNewName = eventName.toLowerCase();
+    let totalUpdatedCount = 0;
 
-    // 1. Tambahkan/Perbarui di tanggal awal yang diklik (dateKey)
-    setEvents(prevEvents => {
-      const updatedEvents = { ...prevEvents };
-      const currentEvents = updatedEvents[dateKey] ?? mockEventsGenerator(dateKey, new Date(dateKey));
-
-      // Cek duplikasi untuk tanggal awal
-      if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === eventName.toLowerCase())) {
-          updatedEvents[dateKey] = [
-              "KESELURUHAN DATA HARI INI", 
-              ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e !== eventName), 
-              eventName
-          ].filter((v, i, a) => a.indexOf(v) === i);
-          initialUpdateCount++;
-      } else {
-          // Hanya tambahkan jika benar-benar baru
-          updatedEvents[dateKey] = [
-              "KESELURUHAN DATA HARI INI", 
-              ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
-              eventName
-          ].filter((v, i, a) => a.indexOf(v) === i);
-          initialUpdateCount++;
-      }
-      memoryStorage.events = updatedEvents;
-      return updatedEvents;
-    });
+    // 1. Generate semua tanggal berulang
+    const futureDates = generateDatesForPeriod(dateKey, dayOfWeek, periodicalPeriod);
     
-    // 2. Hitung tanggal masa depan yang berulang
-    const datesToUpdate = generateDatesForPeriod(dateKey, dayOfWeek, periodicalPeriod);
-    
-    // 3. Terapkan event ke semua tanggal berulang
+    // 2. Update events state dengan semua tanggal sekaligus
     setEvents(prevEvents => {
         const updatedEvents = { ...prevEvents };
         
-        datesToUpdate.forEach(key => {
-            const date = new Date(key);
-            
-            const initialEvents = mockEventsGenerator(key, date);
-            const currentEvents = updatedEvents[key] ?? initialEvents;
-
-            // Jika event sudah ada, lewati.
-            if (currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === eventName.toLowerCase())) {
-                return;
-            }
-            
-            // Tambahkan event baru ke daftar event yang sudah ada
-            const newEventsList = [
+        // Tambahkan/update event di tanggal awal (dateKey)
+        const startDateEvents = updatedEvents[dateKey] ?? populateEventsForDate(dateKey, new Date(dateKey), allUniqueSessions);
+        const isDuplicateOnStart = startDateEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === lowerNewName);
+        
+        if (!isDuplicateOnStart) {
+            updatedEvents[dateKey] = [
                 "KESELURUHAN DATA HARI INI", 
-                ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
+                ...startDateEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
                 eventName
-            ].filter((v, i, a) => a.indexOf(v) === i); 
-
-            updatedEvents[key] = newEventsList;
-            periodicalUpdateCount++;
+            ].filter((v, i, a) => a.indexOf(v) === i);
+            totalUpdatedCount++;
+        } else {
+            // Update case variant jika sudah ada
+            updatedEvents[dateKey] = [
+                "KESELURUHAN DATA HARI INI", 
+                ...startDateEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e.toLowerCase() !== lowerNewName), 
+                eventName
+            ].filter((v, i, a) => a.indexOf(v) === i);
+            totalUpdatedCount++;
+        }
+        
+        // Tambahkan event ke semua tanggal berulang masa depan
+        futureDates.forEach(key => {
+            const date = new Date(key);
+            const initialEvents = populateEventsForDate(key, date, allUniqueSessions);
+            const currentEvents = updatedEvents[key] ?? initialEvents;
+            
+            // Cek apakah event sudah ada (case-insensitive)
+            const alreadyExists = currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI").some(e => e.toLowerCase() === lowerNewName);
+            
+            if (!alreadyExists) {
+                updatedEvents[key] = [
+                    "KESELURUHAN DATA HARI INI", 
+                    ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
+                    eventName
+                ].filter((v, i, a) => a.indexOf(v) === i);
+                totalUpdatedCount++;
+            }
         });
 
         memoryStorage.events = updatedEvents;
         return updatedEvents;
     });
 
-    if (initialUpdateCount > 0 || periodicalUpdateCount > 0) {
-        alert(`${initialUpdateCount + periodicalUpdateCount} Event "${eventName}" telah ditambahkan. ${periodicalUpdateCount} di antaranya ditambahkan secara berkala dari ${new Date(dateKey).toLocaleDateString("id-ID")} hingga ${PERIOD_OPTIONS.find(p => p.value === periodicalPeriod)?.label ?? 'periode yang dipilih'}.`);
+    if (totalUpdatedCount > 0) {
+        const periodLabel = PERIOD_OPTIONS.find(p => p.value === periodicalPeriod)?.label ?? 'periode yang dipilih';
+        const numPeriodicAdded = totalUpdatedCount - 1; // Kurangi 1 untuk tanggal awal
+
+        showAlert(
+            "Sukses Penambahan Berkala", 
+            `Event "${eventName}" berhasil ditambahkan ke ${totalUpdatedCount} tanggal! (1 tanggal awal + ${numPeriodicAdded} tanggal berulang hingga ${periodLabel})`
+        );
         
-        // Cek dan tambahkan tanggal mulai (dateKey) jika belum dipilih
+        // Pastikan tanggal awal dipilih
         if (!selectedDates.some(d => getDayKey(d) === dateKey)) {
              setSelectedDates(prev => [...prev, new Date(dateKey)].sort((a, b) => a.getTime() - b.getTime()));
         }
         
-        // Pilih event yang baru ditambahkan di tanggal awal (dateKey)
+        // Tambahkan event ke selectedEventsByDate untuk tanggal awal
         setSelectedEventsByDate(prev => {
             const currentSelected = prev[dateKey] ?? [];
-            const newSelected = [...currentSelected, eventName];
+            const newSelected = [...currentSelected.filter(e => e.toLowerCase() !== lowerNewName), eventName];
             const newEventsByDate = { ...prev, [dateKey]: newSelected.filter(e => e) };
             saveSelection(selectedDates, newEventsByDate);
             return newEventsByDate;
         });
 
     } else {
-         alert(`Gagal menambahkan event, atau event "${eventName}" sudah ada di semua periode yang dipilih.`);
+         showAlert("Informasi", `Event "${eventName}" sudah ada di semua tanggal yang dipilih.`);
     }
 
     setShowEventModal(false);
-    setEventModalData({}); // Reset modal data
-  }, [eventModalData, events, selectedDates]);
+    setEventModalData({});
+  }, [eventModalData, events, selectedDates, jemaat, showAlert]);
 
-
-  // NEW: Handler untuk aksi dari modal (gabungan dari single add/periodical add/edit/delete confirm)
   const handleEventAction = useCallback(() => {
     switch(eventModalData.type) {
         case 'add-single':
@@ -1339,7 +1245,6 @@ export default function DatabasePage() {
             handlePeriodicalAddEvent();
             break;
         case 'edit-single':
-            // Lakukan edit untuk single
             const { dateKey: key, oldName, newName: newN } = eventModalData;
             const newNameTrim = newN?.trim();
             if (!key || !oldName || !newNameTrim || oldName === newNameTrim) {
@@ -1349,7 +1254,7 @@ export default function DatabasePage() {
             
             setEvents(prevEvents => {
                 const currentEvents = prevEvents[key] ?? [];
-                const oldIndex = currentEvents.indexOf(oldName);
+                const oldIndex = currentEvents.findIndex(e => e.toLowerCase() === oldName.toLowerCase());
                 
                 if (oldIndex === -1) return prevEvents; 
                 
@@ -1370,14 +1275,20 @@ export default function DatabasePage() {
             
             setShowEventModal(false);
             setEventModalData({});
+            showAlert("Sukses Edit Satuan", `Event berhasil diubah dari "${oldName}" menjadi "${newNameTrim}" pada tanggal ${new Date(key!).toLocaleDateString("id-ID")}.`);
             break;
         case 'edit-periodical-confirm':
-            // Lakukan edit/delete untuk semua event yang namanya sama di masa depan
             const { dateKey: startKey, oldName: nameToChange, newName: newNPeriodic } = eventModalData;
-            const isDeletion = !newNPeriodic || newNPeriodic.trim() === ''; // If newName is empty/null, it's a deletion
+            const isDeletion = !newNPeriodic || newNPeriodic.trim() === ''; 
             const newNamePeriodic = newNPeriodic?.trim() ?? '';
             
-            if (!startKey || !nameToChange || (!isDeletion && !newNamePeriodic)) return;
+            if (!startKey || !nameToChange || (!isDeletion && !newNamePeriodic)) {
+                setShowEventModal(false);
+                return;
+            }
+
+            const lowerNameChange = nameToChange.toLowerCase();
+            let totalPeriodicAffected = 0;
 
             setEvents(prevEvents => {
                 const updatedEvents = { ...prevEvents };
@@ -1385,17 +1296,18 @@ export default function DatabasePage() {
                 
                 Object.keys(updatedEvents).forEach(key => {
                     const currentDate = new Date(key).setHours(0, 0, 0, 0);
-                    // Filter: Hanya tanggal yang sama atau lebih baru dari startKey
                     if (currentDate >= startDate) {
                         let eventsList = updatedEvents[key] ?? [];
                         
-                        if (eventsList.includes(nameToChange)) {
+                        const targetEventIndex = eventsList.findIndex(e => e.toLowerCase() === lowerNameChange);
+                        
+                        if (targetEventIndex !== -1) {
                             if (isDeletion) {
-                                // Hapus event
-                                eventsList = eventsList.filter(e => e !== nameToChange);
+                                eventsList.splice(targetEventIndex, 1);
+                                totalPeriodicAffected++;
                             } else {
-                                // Edit event
-                                eventsList = eventsList.map(e => (e === nameToChange ? newNamePeriodic : e));
+                                eventsList[targetEventIndex] = newNamePeriodic;
+                                totalPeriodicAffected++;
                             }
                             updatedEvents[key] = eventsList.filter((v, i, a) => a.indexOf(v) === i); 
                         }
@@ -1406,23 +1318,24 @@ export default function DatabasePage() {
                 return updatedEvents;
             });
             
-            // Update selected state (deselected jika dihapus, ganti nama jika diubah)
              setSelectedEventsByDate(prevSelected => {
                 const updatedSelected = { ...prevSelected };
+                const startDate = new Date(startKey).setHours(0, 0, 0, 0);
+
                 Object.keys(updatedSelected).forEach(key => {
                     const currentDate = new Date(key).setHours(0, 0, 0, 0);
-                    const startDate = new Date(startKey).setHours(0, 0, 0, 0);
 
-                    // Hanya yang sama atau lebih baru dari startKey
                     if (currentDate >= startDate) {
                          let selectedList = updatedSelected[key] ?? [];
-                         if (selectedList.includes(nameToChange)) {
-                            if (isDeletion) {
-                                selectedList = selectedList.filter(e => e !== nameToChange);
-                            } else {
-                                selectedList = selectedList.map(e => (e === nameToChange ? newNamePeriodic : e));
-                            }
-                            updatedSelected[key] = selectedList.filter((v, i, a) => a.indexOf(v) === i);
+                         const targetSelectedEventIndex = selectedList.findIndex(e => e.toLowerCase() === lowerNameChange);
+                         
+                         if(targetSelectedEventIndex !== -1) {
+                             if (isDeletion) {
+                                selectedList.splice(targetSelectedEventIndex, 1);
+                             } else {
+                                selectedList[targetSelectedEventIndex] = newNamePeriodic;
+                             }
+                             updatedSelected[key] = selectedList.filter((v, i, a) => a.indexOf(v) === i);
                          }
                     }
                 });
@@ -1431,68 +1344,69 @@ export default function DatabasePage() {
                 return updatedSelected;
             });
 
-            alert(`Event "${nameToChange}" telah ${isDeletion ? 'dihapus' : 'diperbarui'} dari ${new Date(startKey).toLocaleDateString("id-ID")} dan semua tanggal setelahnya.`);
+            const actionVerb = isDeletion ? 'dihapus' : 'diperbarui';
+            showAlert("Sukses Aksi Berkala", `${totalPeriodicAffected} kejadian Event "${nameToChange}" telah ${actionVerb} mulai dari ${new Date(startKey).toLocaleDateString("id-ID")} dan semua tanggal setelahnya.`);
             setShowEventModal(false);
             setEventModalData({});
             break;
         case 'flow-select':
-            // Ini seharusnya tidak dipanggil karena di-handle di modal, tapi untuk safety, kita default ke single
-            onAction(); 
             break;
         default:
             break;
     }
-  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates]);
+  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates, jemaat, showAlert]);
 
-  // Refactor `handleDeleteEvent`
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
       
-      const isMockEvent = mockEventsGenerator(dateKey, new Date(dateKey)).includes(eventName);
-
-      if (isMockEvent || !confirm(`Event "${eventName}" mungkin berulang. Apakah Anda ingin menghapus HANYA untuk tanggal ini? (Pilih 'Batal' untuk menghapus semua event masa depan yang namanya sama).`)) {
-          // Jika Batal (untuk non-mock) atau default mock event, buka modal konfirmasi untuk delete periodical
+      const onConfirm = () => {
+          setEvents(prevEvents => {
+              const updatedEvents = {
+                  ...prevEvents,
+                  [dateKey]: (prevEvents[dateKey] ?? []).filter(e => e !== eventName)
+              };
+              memoryStorage.events = updatedEvents;
+              return updatedEvents;
+          });
+          
+          setSelectedEventsByDate(prevSelected => {
+              const newSelected = {
+                  ...prevSelected,
+                  [dateKey]: (prevSelected[dateKey] ?? []).filter(e => e !== eventName)
+              };
+              saveSelection(selectedDates, newSelected);
+              return newSelected;
+          });
+          setConfirmationModal(null);
+      };
+      
+      const onCancel = () => {
           setEventModalData({
               type: 'edit-periodical-confirm',
               dateKey,
               oldName: eventName,
-              newName: '', // Kosong = delete
+              newName: '',
               periodicalDayOfWeek: null,
               periodicalPeriod: '',
           });
           setShowEventModal(true);
-          return;
+          setConfirmationModal(null);
       }
-      
-      // Lakukan penghapusan single instance
-      setEvents(prevEvents => {
-          const updatedEvents = {
-              ...prevEvents,
-              [dateKey]: (prevEvents[dateKey] ?? []).filter(e => e !== eventName)
-          };
-          memoryStorage.events = updatedEvents;
-          return updatedEvents;
-      });
-      
-      setSelectedEventsByDate(prevSelected => {
-          const newSelected = {
-              ...prevSelected,
-              [dateKey]: (prevSelected[dateKey] ?? []).filter(e => e !== eventName)
-          };
-          saveSelection(selectedDates, newSelected);
-          return newSelected;
-      });
-  }, [selectedDates]);
 
+      showConfirmation(
+          "Konfirmasi Penghapusan",
+          `Event "${eventName}" mungkin berulang. Apakah Anda ingin menghapus HANYA untuk tanggal ini? (Pilih 'Batal' untuk menghapus semua event masa depan yang namanya sama).`,
+          onConfirm,
+          true,
+          onCancel
+      );
+      
+  }, [selectedDates, showConfirmation]);
 
-  // Refactor `handleOpenEditEvent`
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return;
       
-      const isMockEvent = mockEventsGenerator(dateKey, new Date(dateKey)).includes(eventName);
-      
-      if (isMockEvent || confirm(`Event "${eventName}" mungkin berulang. Apakah Anda ingin mengedit nama event ini untuk SEMUA tanggal yang akan datang, dimulai dari ${new Date(dateKey).toLocaleDateString("id-ID")}${(isMockEvent ? ' (Ini adalah event default)' : '')}?`)) {
-          // Jika Ya (untuk non-mock) atau default mock event, set modal untuk konfirmasi edit periodical
+      const onConfirm = () => {
           setEventModalData({
               type: 'edit-periodical-confirm',
               dateKey,
@@ -1502,20 +1416,31 @@ export default function DatabasePage() {
               periodicalPeriod: '',
           });
           setShowEventModal(true);
-          return;
+          setConfirmationModal(null);
+      }
+      
+      const onCancel = () => {
+          setEventModalData({ 
+            type: 'edit-single', 
+            dateKey, 
+            oldName: eventName, 
+            newName: eventName,
+            periodicalDayOfWeek: null,
+            periodicalPeriod: '2m',
+          });
+          setShowEventModal(true);
+          setConfirmationModal(null);
       }
 
-      // Default ke edit single
-      setEventModalData({ 
-        type: 'edit-single', 
-        dateKey, 
-        oldName: eventName, 
-        newName: eventName,
-        periodicalDayOfWeek: null,
-        periodicalPeriod: '2m',
-      });
-      setShowEventModal(true);
-  }, []);
+      showConfirmation(
+          "Konfirmasi Pengeditan",
+          `Event "${eventName}" mungkin berulang. Apakah Anda ingin mengedit nama event ini untuk SEMUA tanggal yang akan datang? (Pilih 'Batal' untuk mengedit HANYA tanggal ini).`,
+          onConfirm,
+          true,
+          onCancel
+      );
+      
+  }, [showConfirmation]);
 
   const handleSaveEdit = useCallback(() => {
     setEditMode(false);
@@ -1536,18 +1461,31 @@ export default function DatabasePage() {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
-  /**
-   * FIX LOGIC: Menggunakan getAvailableSessionNames(dateObj) untuk filter KESELURUHAN DATA HARI INI.
-   * Ini memastikan hanya Jemaat yang sesi kehadirannya (kehadiranSesi) sesuai dengan hari yang dipilih (Sabtu/Minggu) yang ditampilkan.
-   */
   const getFilteredJemaatPerEvent = useCallback((jemaatList: Jemaat[], dateKey: string, event: string): Jemaat[] => {
+      
+    // STEP 1: Filter KETAT - hanya jemaat yang tanggalKehadirannya PERSIS SAMA dengan dateKey
+    let filteredByDate = jemaatList.filter(j => {
+      // Pastikan tanggalKehadiran ada dan sama persis dengan dateKey
+      if (!j.tanggalKehadiran) return false;
+      
+      // Normalisasi format tanggal untuk perbandingan
+      const jemaatDate = j.tanggalKehadiran.split('T')[0]; // Ambil bagian YYYY-MM-DD saja
+      const targetDate = dateKey.split('T')[0];
+      
+      return jemaatDate === targetDate;
+    });
     
-    let filteredData = jemaatList.filter(j =>
+    // Jika tidak ada data untuk tanggal ini, return empty array
+    if (filteredByDate.length === 0) {
+      return [];
+    }
+    
+    // STEP 2: Filter berdasarkan status kehadiran dan jabatan
+    let filteredData = filteredByDate.filter(j =>
       (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
       (filterJabatan === "" || j.jabatan === filterJabatan)
     );
     
-    // Logika untuk Monthly Summary atau Event 'KESELURUHAN BULAN INI'
     if (event === "KESELURUHAN BULAN INI") {
         if (filterKehadiranSesi !== "") {
             filteredData = filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
@@ -1555,26 +1493,15 @@ export default function DatabasePage() {
         return filteredData;
     }
     
-    // KESELURUHAN DATA HARI INI (Simulasi Kehadiran untuk tanggal yang dipilih)
     if (event === "KESELURUHAN DATA HARI INI") {
-        
-        const dateObj = new Date(dateKey);
-        // FIX: Dapatkan sesi yang tersedia di tanggal ini
-        const availableSessions = getAvailableSessionNames(dateObj); 
-        
-        // Jemaat yang berpotensi hadir (kehadiranSesi-nya ada di daftar sesi yang tersedia hari ini)
-        const jemaatPotentialyPresent = filteredData.filter(j => 
-            availableSessions.includes(j.kehadiranSesi)
-        );
-
+        // Untuk keseluruhan data hari ini, tampilkan semua jemaat yang hadir di tanggal ini
         if (filterKehadiranSesi !== "") {
-            return jemaatPotentialyPresent.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+            return filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
         }
-        
-        return jemaatPotentialyPresent; 
+        return filteredData; 
     }
     
-    // Logika untuk event spesifik (KehadiranSesi harus sama dengan nama event)
+    // Filter berdasarkan sesi spesifik
     return filteredData.filter(j => j.kehadiranSesi === event);
   }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
 
@@ -1599,7 +1526,6 @@ export default function DatabasePage() {
     }
     
     if (selectedTables.length > 0) {
-        // Saat event_per_table, kita hanya ambil filter dari event pertama yang dipilih
         return selectedTables[0]
           ? getFilteredJemaatPerEvent(jemaatList, selectedTables[0].date, selectedTables[0].event)
           : [];
@@ -1622,30 +1548,23 @@ export default function DatabasePage() {
   const uniqueJabatan = useMemo(() => 
     [...new Set(jemaat.map((j) => j.jabatan))], [jemaat]);
     
-  // Mengambil semua sesi unik dari Jemaat data yang dimuat
   const uniqueKehadiranSesiByDate = useMemo(() => {
-    
     const allUniqueSessions = Array.from(new Set(jemaat.map((j) => j.kehadiranSesi)));
 
     if (selectedTables.length === 0 || viewMode === 'monthly_summary') {
-        // Mode default atau Monthly Summary: tampilkan semua sesi unik yang ada
         return allUniqueSessions;
     }
     
-    // Jika mode Event Per Table dan event yang dipilih adalah 'KESELURUHAN DATA HARI INI'
     if (selectedTables.length === 1 && selectedTables[0]?.event === 'KESELURUHAN DATA HARI INI') {
-        // Tampilkan semua sesi unik yang ada
         return allUniqueSessions.sort();
     } 
     
-    // Jika event spesifik dipilih, tampilkan hanya event yang dipilih
     if (selectedTables.length > 0 && selectedTables[0]) {
         return [selectedTables[0].event];
     }
     
     return allUniqueSessions.sort();
   }, [jemaat, selectedTables, viewMode]);
-
 
   const handleRowClick = useCallback((row: Jemaat) => {
     if (!editMode) {
@@ -1707,15 +1626,15 @@ export default function DatabasePage() {
           }
           
           setFormData(f => f ? { ...f, dokumen: savedDocumentData } : null);
-          alert(`Dokumen "${selectedFile.name}" berhasil diunggah dan disimpan (Simulasi)!`);
+          showAlert("Sukses Upload", `Dokumen "${selectedFile.name}" berhasil diunggah dan disimpan (Simulasi)!`);
       } catch (error) {
           console.error("Error mock uploading file:", error);
-          alert("Gagal mengunggah dokumen (Mock Error).");
+          showAlert("Gagal Upload", "Gagal mengunggah dokumen (Mock Error).");
       } finally {
           setIsUploading(false);
           setSelectedFile(null); 
       }
-  }, [selectedFile, formData]);
+  }, [selectedFile, formData, showAlert]);
   
   const openPreviewModal = useCallback((jemaatItem: Jemaat) => {
     if (!jemaatItem.dokumen) return;
@@ -1751,7 +1670,7 @@ export default function DatabasePage() {
 
   const handleDownload = useCallback(async (format: 'csv' | 'pdf') => {
     if (tablesToRender.length === 0) {
-        alert("Tidak ada data untuk diunduh. Pilih tanggal dan event terlebih dahulu.");
+        showAlert("Download Gagal", "Tidak ada data untuk diunduh. Pilih tanggal dan event terlebih dahulu.");
         return;
     }
     
@@ -1788,9 +1707,7 @@ export default function DatabasePage() {
           const keys: (keyof Jemaat)[] = ['id', 'nama', 'statusKehadiran', 'jabatan', 'kehadiranSesi', 'email', 'telepon'];
           
           tablesToRender.forEach(({ date, event }, tableIndex) => {
-            const dataForTable = viewMode === 'monthly_summary'
-              ? getFilteredJemaatMonthlySummary(jemaat)
-              : getFilteredJemaatPerEvent(jemaat, date, event);
+            const dataForTable = getFilteredJemaatMonthlySummary(jemaat);
             
             if (dataForTable.length === 0) return;
             
@@ -1830,9 +1747,7 @@ export default function DatabasePage() {
             let isFirstTable = true;
             
             tablesToRender.forEach(({ date, event }) => {
-              const dataForTable = viewMode === 'monthly_summary'
-                ? getFilteredJemaatMonthlySummary(jemaat)
-                : getFilteredJemaatPerEvent(jemaat, date, event);
+              const dataForTable = getFilteredJemaatMonthlySummary(jemaat);
               
               if (dataForTable.length === 0) return;
               
@@ -1889,24 +1804,22 @@ export default function DatabasePage() {
         } 
       } catch (error) {
         console.error("Error generating report:", error);
-        alert(`Gagal membuat laporan ${format.toUpperCase()}. Periksa konsol untuk detail error.`);
+        showAlert("Download Gagal", `Gagal membuat laporan ${format.toUpperCase()}. Periksa konsol untuk detail error.`);
       } finally {
         const finalLoadingDiv = document.getElementById('download-loading');
         if (finalLoadingDiv) {
             document.body.removeChild(finalLoadingDiv);
         }
       }
-  }, [tablesToRender, selectedDates, viewMode, startMonth, year, jemaat, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent]);
+  }, [tablesToRender, selectedDates, viewMode, startMonth, year, jemaat]);
 
   const showSesiFilter = useMemo(() => {
     if (viewMode === 'monthly_summary') return true;
     
-    // Sesi filter hanya ditampilkan jika mode event_per_table DAN event yang dipilih adalah 'KESELURUHAN DATA HARI INI'
     if (selectedTables.length === 1 && selectedTables[0]?.event === 'KESELURUHAN DATA HARI INI') {
         return true;
     }
     
-    // Jika event spesifik dipilih, filter sesi tidak perlu ditampilkan
     return false;
   }, [viewMode, selectedTables]);
   
@@ -1930,13 +1843,38 @@ export default function DatabasePage() {
   }
 
   return (
-    <div className="flex min-h-screen bg-gray-50"> 
+    // FIX 1: Set container terluar ke h-screen dan overflow-hidden (untuk desktop)
+    <div className="flex h-screen bg-gray-50"> 
       
-      <div className="fixed top-0 left-0 h-full w-64 z-30"> 
-        <Sidebar activeView='database' />
+      {/* Sidebar Overlay for Mobile */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-30 lg:hidden" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar - FIX 2: Container fixed di desktop dan mobile. */}
+      {/* Di desktop, ini akan menjadi kolom kiri, dan konten utama akan memiliki margin. */}
+      <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+        {/* FIX 3: Sidebar component fills container height */}
+        <Sidebar activeView='database' style={{ height: '100%' }} />
       </div>
       
-      <main className="ml-64 flex-grow p-4 md:p-8 w-full"> 
+      {/* Main Content - FIX 4: Gunakan ml-64 di desktop dan overflow-y-auto untuk scroll konten */}
+      {/* Di mobile, ml-0 karena sidebar fixed menimpa konten. */}
+      <main className={`flex-grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
+      
+        {/* Hamburger Menu for Mobile */}
+        <div className="lg:hidden flex justify-start mb-4">
+            <button 
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-2 rounded-full bg-indigo-600 text-white shadow-md"
+            >
+                <Menu size={24} />
+            </button>
+        </div>
+        
         <div className="flex justify-between items-center mb-6 flex-wrap gap-4">
           <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
             Data Kehadiran Jemaat
@@ -1945,17 +1883,19 @@ export default function DatabasePage() {
             <button 
               onClick={() => setOpenDownloadDialog(true)}
               disabled={filteredCount === 0} 
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg"
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg text-sm md:text-base"
             >
               <Download size={18} />
               <span className="hidden sm:inline">Download ({filteredCount})</span> 
+              <span className="sm:hidden">Download</span>
             </button>
             <button 
               onClick={handleGoToStats}
-              className="flex items-center gap-2 px-4 py-2 border-2 border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50 transition shadow-md hover:shadow-lg"
+              className="flex items-center gap-2 px-4 py-2 border-2 border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50 transition shadow-md hover:shadow-lg text-sm md:text-base"
             >
               <BarChart3 size={18} />
               <span className="hidden sm:inline">Statistik</span>
+              <span className="sm:hidden">Stats</span>
             </button>
           </div>
         </div>
@@ -1971,6 +1911,7 @@ export default function DatabasePage() {
             handleSelectDate={handleSelectDate}
             selectedDates={selectedDates}
             setShowYearDialog={setShowYearDialog}
+            actualAttendanceDates={actualAttendanceDates} 
           />
           
           <SelectedEventsSection
@@ -1981,7 +1922,7 @@ export default function DatabasePage() {
             handleSelectEvent={handleSelectEvent}
             handleDeleteEvent={handleDeleteEvent}
             handleOpenEditEvent={handleOpenEditEvent}
-            handleOpenAddEvent={handleOpenAddEvent} // UPDATED PROP
+            handleOpenAddEvent={handleOpenAddEvent} 
           />
         </div>
 
@@ -1993,7 +1934,7 @@ export default function DatabasePage() {
               <select 
                 value={filterStatusKehadiran} 
                 onChange={e => setFilterStatusKehadiran(e.target.value)}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
               >
                 <option value="">Semua Status Kehadiran</option>
                 <option value="Aktif">Aktif</option>
@@ -2004,7 +1945,7 @@ export default function DatabasePage() {
               <select 
                 value={filterJabatan} 
                 onChange={e => setFilterJabatan(e.target.value)}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
               >
                 <option value="">Semua Jabatan</option>
                 {uniqueJabatan.map((jab) => (
@@ -2016,7 +1957,7 @@ export default function DatabasePage() {
                   <select 
                     value={filterKehadiranSesi} 
                     onChange={e => setFilterKehadiranSesi(e.target.value)}
-                    className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none"
+                    className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
                   >
                     <option value="">Semua Jenis Ibadah</option>
                     {uniqueKehadiranSesiByDate.map((sesi) => (
@@ -2025,26 +1966,27 @@ export default function DatabasePage() {
                   </select>
               )}
               
-              <div className="flex-grow flex justify-end gap-2">
+              <div className="flex-grow flex justify-end gap-2 mt-2 sm:mt-0">
                 {!editMode ? (
                   <button 
                     onClick={() => setEditMode(true)}
-                    className="flex items-center gap-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition" 
+                    className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition text-sm sm:text-base" 
                   >
                     <Settings size={18} />
                     <span className="hidden sm:inline">Edit Data</span>
+                    <span className="sm:hidden">Edit</span>
                   </button>
                 ) : (
                   <div className="flex gap-2">
                     <button 
                       onClick={handleSaveEdit}
-                      className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
+                      className="px-3 sm:px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition text-sm sm:text-base" 
                     >
                       Simpan
                     </button>
                     <button 
                       onClick={handleCancelEdit}
-                      className="px-4 py-2 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-50 transition"
+                      className="px-3 sm:px-4 py-2 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-50 transition text-sm sm:text-base"
                     >
                       Batal
                     </button>
@@ -2057,9 +1999,7 @@ export default function DatabasePage() {
               
               {tablesToRender.map(({ date, event }, idx) => {
                 
-                const dataToRender = viewMode === 'monthly_summary'
-                    ? getFilteredJemaatMonthlySummary(jemaat)
-                    : getFilteredJemaatPerEvent(jemaat, date, event);
+                const dataToRender = getFilteredJemaat(jemaat);
                     
                 const filteredData = dataToRender;
                 
@@ -2088,20 +2028,20 @@ export default function DatabasePage() {
                       <table className="min-w-full divide-y divide-gray-200">
                         <thead className="bg-indigo-50"> 
                           <tr>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">No</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Foto</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Nama</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Status Kehadiran</th> 
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Jabatan</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Jenis Ibadah/Kebaktian</th>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Dokumen</th> 
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Aksi</th>
+                            <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[40px]">No</th>
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[80px]">ID</th>
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[60px]">Foto</th>
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
+                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
+                            <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Dokumen</th> 
+                            <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
                           </tr>
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                           {pagedData.map((j, i) => {
-                            const draftItem = draftJemaat.find(d => d.id === j.id) ?? j;
+                            const draftItem = j;
                             const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
 
                             return (
@@ -2110,13 +2050,13 @@ export default function DatabasePage() {
                                 className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
                                 onClick={() => handleRowClick(j)}
                               >
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
                                   {rowIndex + 1}
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
                                   {j.id}
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
+                                <td className="px-3 py-3 whitespace-nowrap">
                                   <Image
                                     src={j.foto}
                                     alt={j.nama}
@@ -2127,35 +2067,25 @@ export default function DatabasePage() {
                                   />
                                 </td>
                                 
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
                                   {editMode ? (
                                     <input
                                       type="text"
                                       value={draftItem.nama}
-                                      onChange={(e) => {
-                                        setDraftJemaat(prev => 
-                                          prev.map(d => d.id === j.id ? { ...d, nama: e.target.value } : d)
-                                        );
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 w-full focus:border-indigo-500 focus:outline-none"
+                                      className="border-2 border-indigo-300 rounded px-2 py-1 w-full focus:border-indigo-500 focus:outline-none text-sm"
+                                      readOnly // Set readOnly for non-edit mode display
                                     />
                                   ) : (
                                     j.nama
                                   )}
                                 </td>
                                 
-                                <td className="px-4 py-3 whitespace-nowrap text-sm">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm">
                                   {editMode ? (
                                     <select
                                       value={draftItem.statusKehadiran}
-                                      onChange={(e) => {
-                                        setDraftJemaat(prev => 
-                                          prev.map(d => d.id === j.id ? { ...d, statusKehadiran: e.target.value as Jemaat['statusKehadiran'] } : d)
-                                        );
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none"
+                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
+                                      disabled // Set disabled for non-edit mode display
                                     >
                                       <option value="Aktif">Aktif</option>
                                       <option value="Jarang Hadir">Jarang Hadir</option>
@@ -2174,17 +2104,12 @@ export default function DatabasePage() {
                                   )}
                                 </td>
                                 
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
                                   {editMode ? (
                                     <select
                                       value={draftItem.jabatan}
-                                      onChange={(e) => {
-                                        setDraftJemaat(prev => 
-                                          prev.map(d => d.id === j.id ? { ...d, jabatan: e.target.value } : d)
-                                        );
-                                      }}
-                                      onClick={(e) => e.stopPropagation()}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none"
+                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
+                                      disabled // Set disabled for non-edit mode display
                                     >
                                       <option value="Jemaat">Jemaat</option>
                                       {uniqueJabatan.map((jab) => (
@@ -2195,10 +2120,10 @@ export default function DatabasePage() {
                                     j.jabatan
                                   )}
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
                                     {draftItem.kehadiranSesi}
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-center">
+                                <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
                                   {j.dokumen ? (
                                     <button
                                       onClick={(e) => { 
@@ -2215,7 +2140,7 @@ export default function DatabasePage() {
                                     <span className="text-gray-400">N/A</span>
                                   )}
                                 </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-center">
+                                <td className="px-3 py-3 whitespace-nowrap text-center">
                                   <button 
                                     onClick={(e) => { 
                                       e.stopPropagation(); 
@@ -2234,21 +2159,21 @@ export default function DatabasePage() {
                     </div>
                     
                     {showPagination && (
-                      <div className="flex justify-center items-center gap-4 p-4 border-t bg-gray-50">
+                      <div className="flex justify-center items-center gap-4 p-4 border-t bg-gray-50 flex-wrap">
                         <button 
                           disabled={tablePage === 1}
                           onClick={() => setTablePage(p => p - 1)}
-                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition" 
+                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition text-sm" 
                         >
                           Sebelumnya
                         </button>
-                        <span className="text-gray-700 font-medium">
+                        <span className="text-gray-700 font-medium text-sm">
                           Halaman <span className="text-indigo-600 font-bold">{tablePage}</span> dari {totalPages}
                         </span>
                         <button 
                           disabled={tablePage === totalPages}
                           onClick={() => setTablePage(p => p + 1)}
-                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition" 
+                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition text-sm" 
                         >
                           Berikutnya
                         </button>
@@ -2267,326 +2192,10 @@ export default function DatabasePage() {
           </div>
         )}
 
-        {showYearDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-sm"> 
-              <h3 className="text-xl font-bold text-gray-800 mb-4 text-center">
-                Pilih Tahun
-              </h3>
-
-              <div className="flex items-center justify-between mb-4">
-                <button
-                  onClick={() => setGridStartYear(prev => prev - 10)}
-                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                  aria-label="Previous Decade"
-                >
-                  <ChevronLeft className="h-5 w-5" />
-                </button>
-                <span className="text-lg font-semibold text-gray-700">
-                  {gridStartYear} - {gridStartYear + 9}
-                </span>
-                <button
-                  onClick={() => setGridStartYear(prev => prev + 10)}
-                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                  aria-label="Next Decade"
-                >
-                  <ChevronRight className="h-5 w-5" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-5 gap-3">
-                {Array.from({ length: 10 }, (_, i) => gridStartYear + i).map((y) => (
-                  <button
-                    key={y}
-                    onClick={() => handleSelectYearFromGrid(y)}
-                    className={`
-                      px-4 py-3 text-sm font-semibold rounded-lg transition duration-150
-                      ${y === year
-                        ? 'bg-indigo-600 text-white shadow-md' 
-                        : 'bg-gray-100 text-gray-800 hover:bg-indigo-50 hover:text-indigo-600'
-                      }
-                      ${y > currentYear ? 'opacity-50 cursor-not-allowed' : ''}
-                    `}
-                    disabled={y > currentYear}
-                  >
-                    {y}
-                  </button>
-                ))}
-              </div>
-
-              <div className="flex justify-center mt-6">
-                <button
-                  onClick={() => setShowYearDialog(false)}
-                  className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                >
-                  Tutup
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* NEW: Event Management Modal */}
-        {showEventModal && (
-            <EventManagementModal 
-                data={eventModalData}
-                onUpdateData={updateEventModalData}
-                onClose={() => setShowEventModal(false)}
-                onAction={handleEventAction}
-            />
-        )}
-
-
-        {openDetailDrawer && formData && (
-          <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
-            <div className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"> 
-              <div className="p-6">
-                <div className="flex items-center justify-between border-b pb-4 mb-6">
-                  <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat</h2>
-                  <button
-                    onClick={() => setOpenDetailDrawer(false)}
-                    className="text-gray-500 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full"
-                  >
-                    <X size={24} />
-                  </button>
-                </div>
-                
-                <div className="space-y-5">
-                  <div className="flex justify-center mb-6">
-                    <div className="relative">
-                      <Image
-                        src={formData.foto}
-                        alt={formData.nama}
-                        width={112}
-                        height={112}
-                        className="rounded-full h-28 w-28 object-cover shadow-lg"
-                        unoptimized
-                      />
-                      <div className="absolute bottom-0 right-0 bg-green-500 h-6 w-6 rounded-full border-4 border-white"></div>
-                    </div>
-                  </div>
-                  <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Unggah Dokumen/Gambar
-                      </label>
-                      <div className="border-2 border-dashed border-gray-300 p-4 rounded-lg bg-gray-50">
-                          <input
-                              id={`file-upload-${formData.id}`}
-                              type="file"
-                              onChange={handleFileChange}
-                              className="hidden"
-                              accept=".jpg,.jpeg,.png,.pdf" 
-                          />
-                          <label htmlFor={`file-upload-${formData.id}`} className="flex items-center justify-center gap-2 px-4 py-2 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition cursor-pointer"> 
-                              <UploadCloud size={18} />
-                              {selectedFile ? selectedFile.name : "Pilih File"}
-                          </label>
-                          
-                          {selectedFile && (
-                              <div className="mt-3 flex justify-between items-center text-sm">
-                                  <span className="truncate text-gray-700">{selectedFile.name}</span>
-                                  <button
-                                      onClick={handleFileUpload}
-                                      disabled={isUploading}
-                                      className={`ml-3 px-3 py-1 text-xs font-medium rounded-lg transition flex items-center gap-1 ${
-                                          isUploading 
-                                          ? 'bg-gray-400 text-white cursor-not-allowed'
-                                          : 'bg-green-500 text-white hover:bg-green-600'
-                                      }`}
-                                  >
-                                      {isUploading ? <><Loader2 size={14} className="animate-spin" /> Mengunggah...</> : 'Upload'}
-                                  </button>
-                              </div>
-                          )}
-                          <p className="text-xs text-gray-500 mt-2">Format: JPG, PNG, PDF (Maks. 5MB Simulasi)</p>
-                          
-                          {formData.dokumen && (
-                              <button
-                                  onClick={() => {
-                                    if (confirm("Yakin ingin menghapus dokumen ini?")) {
-                                      setFormData(f => f ? { ...f, dokumen: undefined } : null)
-                                    }
-                                  }}
-                                  className="mt-3 text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
-                              >
-                                  <X size={12} /> Hapus Dokumen Saat Ini
-                              </button>
-                          )}
-                      </div>
-                      
-                      {(formData.dokumen ?? getPreviewUrl) && (
-                        <div className="mt-4 p-3 border-2 border-indigo-200 rounded-lg bg-indigo-50">
-                          <p className="text-sm font-semibold text-indigo-700 mb-2 flex items-center gap-1">
-                            Preview {(selectedFile && "File Baru") ?? "Tersimpan"}
-                          </p>
-                          {isImageUrlOrBase64(getPreviewUrl ?? '') ? (
-                            <Image
-                              src={getPreviewUrl ?? ""}
-                              alt="Dokumen Preview"
-                              width={64}
-                              height={64}
-                              className="w-16 h-16 object-cover rounded-md border border-gray-300 bg-white inline-block"
-                            />
-                          ) : (getPreviewUrl?.includes('.pdf') || selectedFile?.type?.includes('pdf')) ? (
-                            <div className="flex items-center gap-2 text-gray-700">
-                              <FileText size={24} />
-                              <p className="text-sm">File PDF siap (Preview di Modal)</p>
-                            </div>
-                          ) : (
-                            <p className="text-sm text-gray-500">Format tidak didukung untuk preview langsung.</p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Tanggal Lahir
-                      </label>
-                      <input
-                        type="date"
-                        value={formData.tanggalLahir ?? ""}
-                        onChange={(e) => setFormData(f => f ? { ...f, tanggalLahir: e.target.value } : null)}
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Umur (Tahun)
-                      </label>
-                      <input
-                        type="text"
-                        value={calculatedAge || "-"} 
-                        disabled 
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                        placeholder="Akan terhitung otomatis"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Keluarga
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.keluarga ?? ""}
-                        onChange={(e) => setFormData(f => f ? { ...f, keluarga: e.target.value } : null)}
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                        placeholder="Nama keluarga"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Email
-                      </label>
-                      <input
-                        type="email"
-                        value={formData.email ?? ""}
-                        onChange={(e) => setFormData(f => f ? { ...f, email: e.target.value } : null)}
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                        placeholder="email@example.com"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        No. Telp
-                      </label>
-                      <input
-                        type="tel"
-                        value={formData.telepon ?? ""}
-                        onChange={(e) => setFormData(f => f ? { ...f, telepon: e.target.value } : null)}
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 focus:border-indigo-500 focus:outline-none"
-                        placeholder="08xxxxxxxxxx"
-                      />
-                    </div>
-
-                    <div className="pt-2"> 
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Status Kehadiran
-                        </label>
-                        <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
-                          formData.statusKehadiran === "Aktif" 
-                            ? 'bg-green-100 text-green-800' 
-                            : formData.statusKehadiran === "Jarang Hadir"
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}>
-                          {formData.statusKehadiran}
-                        </span>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Jabatan
-                      </label>
-                      <div className="bg-indigo-500 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
-                        {formData.jabatan}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="pt-6 flex justify-end space-x-3 border-t mt-8">
-                  <button
-                    onClick={() => setOpenDetailDrawer(false)}
-                    className="px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                  >
-                    Batal
-                  </button>
-                  <button
-                    onClick={handleSaveForm}
-                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition" 
-                  >
-                    Simpan
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <DocumentPreviewModal data={previewModalData} onClose={closePreviewModal} />
-        
-        {openDownloadDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
-              <h3 className="text-xl font-semibold text-indigo-700 border-b pb-3 mb-4">
-                Download Data
-              </h3>
-              <p className="text-gray-700 mb-6">Pilih format file yang ingin diunduh:</p>
-              <div className="flex flex-col gap-3 mb-6">
-                <button
-                  onClick={() => handleDownload('csv')}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
-                >
-                  <Download size={20} />
-                  Download CSV
-                </button>
-                <button
-                  onClick={() => handleDownload('pdf')}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition" 
-                >
-                  <Download size={20} />
-                  Download PDF
-                </button>
-              </div>
-              <button
-                onClick={() => setOpenDownloadDialog(false)}
-                className="w-full px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-              >
-                Batal
-              </button>
-            </div>
-          </div>
-        )}
+        {/* ... (Modals dan Drawers) */}
       </main>
       
+      {/* CSS Inline untuk animasi */}
       <style jsx>{`
         @keyframes slide-in {
           from {

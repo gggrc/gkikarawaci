@@ -1,10 +1,10 @@
+// src/pages/statistic.tsx
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef, useCallback } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
-import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download, Settings, X, Loader2 } from "lucide-react"; 
+import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download, Settings, X, Loader2, Menu } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
-import { useRef } from "react";
 import * as htmlToImage from "html-to-image";
 import jsPDF from "jspdf";
 import 'jspdf-autotable'; // ⬅️ ini HARUS langsung setelah jsPDF
@@ -30,6 +30,13 @@ interface Jemaat {
   telepon?: string;
   kehadiranSesi: string;
   dokumen?: string; // NEW: Field untuk dokumen/gambar
+  tanggalKehadiran: string; // Format: YYYY-MM-DD (dari API)
+}
+
+// Tipe response dari /api/jemaat
+interface JemaatAPIResponse {
+    jemaatData: Jemaat[];
+    attendanceDates: string[];
 }
 
 // --- Konstanta Kalender ---
@@ -96,18 +103,23 @@ const getCleanSessionName = (session: string) => {
 /**
  * MODIFIKASI: Menghitung statistik berdasarkan status Kehadiran dan Sesi Kehadiran
  * tanpa menggunakan simulasi kehadiran acak. ASUMSI: Jemaat HADIR jika sesi kehadiran mereka
- * (kehadiranSesi) cocok dengan sesi yang tersedia di tanggal yang dipilih.
- * * @param jemaatList 
+ * (kehadiranSesi) cocok dengan sesi yang tersedia di tanggal yang dipilih DAN JEMAAT MEMILIKI DATA KEHADIRAN DI TANGGAL TERSEBUT.
+ * @param jemaatList 
  * @param selectedDate 
  * @returns 
  */
 const calculateDateStats = (jemaatList: Jemaat[], selectedDate: string) => {
-  const totalJemaat = jemaatList.length;
-  
+  // Hanya filter jemaat yang tercatat hadir pada tanggal yang dipilih
+  const jemaatHadirDiTanggalIni = jemaatList.filter(j => 
+    getDayKey(new Date(j.tanggalKehadiran)) === selectedDate
+  );
+
+  const totalJemaat = jemaatHadirDiTanggalIni.length; // Total jemaat yang *hadir* di tanggal ini
+
+  // 1. Tentukan sesi yang *seharusnya* ada di tanggal ini (untuk menghitung potensi)
   const dateObj = new Date(selectedDate);
   const dayOfWeek = dateObj.getDay(); // 0 = Minggu
   
-  // 1. Tentukan sesi yang *seharusnya* ada di tanggal ini
   const availableSessions = new Set<string>();
   if (dayOfWeek === 0) { // Minggu
       ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"].forEach(s => availableSessions.add(s));
@@ -116,41 +128,38 @@ const calculateDateStats = (jemaatList: Jemaat[], selectedDate: string) => {
   }
   
   let totalKehadiranSemuaSesi = 0;
-  let totalPotentialAttendees = 0;
+  // Potensi adalah jumlah jemaat yang SESINYA cocok dengan hari ini
+  let totalPotentialAttendees = jemaatList.filter(j => 
+      availableSessions.has(j.kehadiranSesi)
+  ).length; 
+
   const kehadiranBySesi: Record<string, number> = {};
   const statusKehadiranBySesi: Record<string, Record<Jemaat['statusKehadiran'], number>> = {}; 
 
-  // 2. Hitung distribusi berdasarkan jemaat yang memiliki 'kehadiranSesi' yang cocok.
-  // ASUMSI: jemaat yang memiliki 'kehadiranSesi' cocok dengan hari itu, MEREKA HADIR di sesi tersebut.
-  jemaatList.forEach(jemaat => {
-      // Hanya proses jemaat yang memiliki sesi kehadiran yang cocok dengan hari ini
-      if (availableSessions.has(jemaat.kehadiranSesi)) {
-          totalPotentialAttendees++; 
-          const sesi = jemaat.kehadiranSesi;
-          const status = jemaat.statusKehadiran;
-          
-          const isPresent = true; // Asumsi kehadiran 100% untuk yang sesinya cocok
+  // 2. Hitung distribusi berdasarkan jemaat yang HADIR di tanggal ini.
+  jemaatHadirDiTanggalIni.forEach(jemaat => {
+      // ASUMSI: Karena sudah difilter jemaat yang hadir, kita bisa langsung hitung
+      const sesi = jemaat.kehadiranSesi;
+      const status = jemaat.statusKehadiran;
+      
+      totalKehadiranSemuaSesi++;
+      kehadiranBySesi[sesi] = (kehadiranBySesi[sesi] ?? 0) + 1;
 
-          if (isPresent) {
-              totalKehadiranSemuaSesi++;
-              kehadiranBySesi[sesi] = (kehadiranBySesi[sesi] ?? 0) + 1;
-
-              // Catat status jemaat yang hadir
-              statusKehadiranBySesi[sesi] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
-              statusKehadiranBySesi[sesi][status] = (statusKehadiranBySesi[sesi][status] || 0) + 1;
-          }
-      }
+      // Catat status jemaat yang hadir
+      statusKehadiranBySesi[sesi] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
+      statusKehadiranBySesi[sesi][status] = (statusKehadiranBySesi[sesi][status] || 0) + 1;
   });
 
-  // Karena kita mengasumsikan kehadiran 100% untuk yang sesinya cocok,
-  // presentase ini adalah persentase potensi kehadiran yang hadir.
+  // Karena data jemaat yang masuk adalah data kehadiran, maka total kehadiran = total jemaat yang di filter.
+  // Presentase dihitung terhadap POTENSI
   const presentaseKehadiran = totalPotentialAttendees > 0 
       ? `${((totalKehadiranSemuaSesi / totalPotentialAttendees) * 100).toFixed(1)}%`
       : "0%";
 
   return { 
     totalHadir: totalKehadiranSemuaSesi, 
-    totalTidakHadir: totalJemaat - totalKehadiranSemuaSesi, 
+    // Total tidak hadir sulit dihitung akurat tanpa mengetahui seluruh potensi database
+    totalTidakHadir: totalPotentialAttendees - totalKehadiranSemuaSesi, 
     presentaseKehadiran, 
     kehadiranBySesi, 
     statusKehadiranBySesi, 
@@ -499,6 +508,9 @@ export default function StatisticPage() {
   const contentRef = useRef<HTMLDivElement>(null);
   
 
+  // --- State Sidebar Toggle ---
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // DEKLARASI TUNGGAL
+
   // --- Start Month/Year untuk Tampilan Detail Statistik ---
   const [detailYear, setDetailYear] = useState(currentYear);
   const [detailStartMonth, setDetailStartMonth] = useState(currentMonth);
@@ -517,6 +529,7 @@ export default function StatisticPage() {
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
 
   const [isDownloading, setIsDownloading] = useState(false); // State untuk loading download
+  const [actualAttendanceDates, setActualAttendanceDates] = useState<string[]>([]); // NEW STATE: Simpan tanggal kehadiran aktual dari API
   
   // Mengambil data dari /api/jemaat
   useEffect(() => {
@@ -528,11 +541,16 @@ export default function StatisticPage() {
 
         const data: unknown = await res.json();
         
-        if (Array.isArray(data) && data.length > 0 && typeof (data[0] as Jemaat).statusKehadiran === 'string') {
-          setJemaat(data as Jemaat[]);
+        // --- START FIX: Mengakomodasi format response API baru ---
+        const apiResponse = data as JemaatAPIResponse;
+        
+        if (Array.isArray(apiResponse.jemaatData) && apiResponse.jemaatData.length > 0) {
+          setJemaat(apiResponse.jemaatData);
+          setActualAttendanceDates(apiResponse.attendanceDates); // Simpan tanggal kehadiran aktual
         } else {
-          throw new Error("Data jemaat tidak valid");
+          throw new Error("Data jemaat tidak valid atau kosong");
         }
+        // --- END FIX ---
       } catch (err) {
         console.error("Error fetch jemaat:", err);
       } finally {
@@ -582,11 +600,14 @@ if (datesArray.length > 0) {
     const stats: Record<string, ReturnType<typeof calculateDateStats>> = {};
     
     selectedDatesKeys.forEach(dateKey => {
-      stats[dateKey] = calculateDateStats(jemaat, dateKey);
+      // Hanya hitung statistik jika ada data kehadiran yang tercatat untuk tanggal ini
+      if (actualAttendanceDates.includes(dateKey)) {
+        stats[dateKey] = calculateDateStats(jemaat, dateKey);
+      }
     });
     
     return stats;
-  }, [jemaat, selectedDatesKeys]);
+  }, [jemaat, selectedDatesKeys, actualAttendanceDates]);
 
   const totalKehadiranSelectedDates = useMemo(() => {
       return Object.values(dateStatsMap).reduce((sum, stats) => 
@@ -700,32 +721,22 @@ if (datesArray.length > 0) {
       
       const date = new Date(year, month, day);
       const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
+      const dateKey = getDayKey(date);
 
       let aktif = null;
       let jarangHadirlah = null;
       let tidakAktif = null;
 
-      // HANYA hitung data untuk Sabtu dan Minggu
-      if (dayOfWeek === 0 || dayOfWeek === 6) {
-          const targetSessions = dayOfWeek === 0 ? ['Minggu'] : ['Sabtu'];
-          
-          // Filter jemaat yang memiliki sesi di hari ini (Asumsi: Mereka HADIR)
-          const filteredJemaat = jemaat.filter(j => 
-              targetSessions.some(ts => j.kehadiranSesi.includes(ts))
-          );
+      // HANYA hitung data jika ada kehadiran aktual di hari itu
+      if (actualAttendanceDates.includes(dateKey)) {
+          // Filter jemaat yang HADIR di tanggal ini (diasumsikan data jemaat sudah mencakup filter tanggal)
+          const filteredJemaat = jemaat.filter(j => j.tanggalKehadiran === dateKey);
           
           const stats = calculateOverallStats(filteredJemaat).kehadiranDistribution;
           
-          // Tambahkan sedikit noise agar tidak terlalu datar
-          const noiseFactor = Math.random() * 0.2 - 0.1; 
-
-          aktif = Math.round((stats.Aktif ?? 0) * (1 + noiseFactor));
-          jarangHadirlah = Math.round((stats['Jarang Hadir'] ?? 0) * (1 + noiseFactor));
-          tidakAktif = Math.round((stats['Tidak Aktif'] ?? 0) * (1 + noiseFactor));
-      
-          aktif = Math.max(0, aktif);
-          jarangHadirlah = Math.max(0, jarangHadirlah);
-          tidakAktif = Math.max(0, tidakAktif);
+          aktif = stats.Aktif ?? 0;
+          jarangHadirlah = stats['Jarang Hadir'] ?? 0;
+          tidakAktif = stats['Tidak Aktif'] ?? 0;
       }
       
       data.push({
@@ -790,7 +801,7 @@ if (datesArray.length > 0) {
   const dailyTrendsData = useMemo(() => {
       if (jemaat.length === 0) return []; 
       return generateMockDailyTrends(startMonth, year, currentMonthStats);
-  }, [startMonth, year, currentMonthStats, jemaat]); 
+  }, [startMonth, year, currentMonthStats, jemaat, actualAttendanceDates]); // Tambahkan actualAttendanceDates
 
   // --- END MOCK LOGIC ---
 
@@ -906,15 +917,22 @@ if (datesArray.length > 0) {
 
   const monthsToDisplay = useMemo(() => {
     const months = [];
-    // Tampilkan 3 bulan agar kalender lebih lengkap
-    for (let i = -1; i <= 1; i++) {
-        const targetDate = new Date(detailYear, detailStartMonth + i, 1);
+    // Tentukan jumlah bulan yang akan ditampilkan: 1 untuk mobile, 3 untuk desktop
+    const isMobile = typeof window !== 'undefined' && window.innerWidth < 768; 
+    const count = isMobile ? 1 : 3;
+    
+    // Tentukan bulan awal tampilan.
+    const startMonthOffset = isMobile ? 0 : -1;
+
+    for (let i = 0; i < count; i++) {
+        const targetDate = new Date(detailYear, detailStartMonth + startMonthOffset + i, 1);
         const monthIndex = targetDate.getMonth();
         const year = targetDate.getFullYear();
         months.push({ monthIndex, year });
     }
     return months;
   }, [detailStartMonth, detailYear]);
+
 
   // Generate tahun untuk year picker
   const currentYearForGrid = new Date().getFullYear();
@@ -923,18 +941,21 @@ if (datesArray.length > 0) {
     return Array.from({ length: 10 }, (_, i) => startYear + i);
   }, [gridStartYear]);
   
-  // Tanggal yang memiliki statistik (Hanya hari Minggu dan Sabtu)
-  const getDatesWithStats = (month: number, year: number) => {
+  // Konversi actualAttendanceDates ke Set untuk lookup yang efisien
+  const actualAttendanceSet = useMemo(() => new Set(actualAttendanceDates), [actualAttendanceDates]); 
+
+  // Tanggal yang memiliki statistik (yaitu, ada data kehadiran aktual)
+  const getDatesWithStats = (month: number, year: number, actualAttendanceSet: Set<string>) => {
     const dates = new Set<string>();
     const daysInMonth = getDaysInMonth(month, year);
     
     for (let day = 1; day <= daysInMonth; day++) {
       const date = new Date(year, month, day);
-      const dayOfWeek = date.getDay();
+      const dayKey = getDayKey(date);
       
-      // Filter hanya hari Minggu (0) dan Sabtu (6) yang sudah lewat
-      if ((dayOfWeek === 0 || dayOfWeek === 6) && date.getTime() <= todayStart) {
-        dates.add(getDayKey(date));
+      // Filter hanya hari yang ADA di data kehadiran yang sudah lewat
+      if (actualAttendanceSet.has(dayKey) && date.getTime() <= todayStart) {
+        dates.add(dayKey);
       }
     }
     return dates;
@@ -954,8 +975,7 @@ if (datesArray.length > 0) {
     }
   };
   
-  // --- LOGIKA DOWNLOAD UTAMA PDF (DIUBAH UNTUK MENGATASI AUTO-TABLE ERROR) ---
-// ✅ versi perbaikan handleDownload tanpa ubah tampilan
+  // LOGIKA DOWNLOAD UTAMA PDF (DIUBAH UNTUK MENGATASI AUTO-TABLE ERROR)
   const handleDownload = async () => {
     try {
       const statElement = document.getElementById("statistic-content");
@@ -965,8 +985,12 @@ if (datesArray.length > 0) {
       }
 
       // Sembunyikan sidebar sementara agar tidak ikut ke capture
-      const sidebar = document.querySelector(".fixed.top-0.left-0.h-full") as HTMLElement;
+      const sidebar = document.querySelector(".fixed.top-0.left-0.h-screen") as HTMLElement;
       if (sidebar) sidebar.style.display = "none";
+      // Sembunyikan tombol burger menu
+      const menuButton = document.getElementById("mobile-menu-button");
+      if (menuButton) menuButton.style.display = "none";
+
 
       // Scroll ke atas agar posisi benar
       window.scrollTo(0, 0);
@@ -981,6 +1005,21 @@ if (datesArray.length > 0) {
       cloned.style.maxWidth = "1200px";
       cloned.style.margin = "0 auto";
 
+      // Hapus tombol-tombol yang tidak perlu di PDF (seperti tombol download/statistik)
+      cloned.querySelectorAll('button').forEach(btn => {
+        if (btn.textContent?.includes('Download') || btn.textContent?.includes('Statistik')) {
+          btn.style.display = 'none';
+        }
+      });
+      // Sembunyikan juga tombol navigasi bulan/tahun
+      cloned.querySelectorAll('.rounded-full.p-3').forEach(btn => btn.style.display = 'none');
+      // Sembunyikan juga keterangan "Klik titik pada grafik"
+      cloned.querySelectorAll('p').forEach(p => {
+        if (p.textContent?.includes('Klik titik pada grafik')) {
+            p.style.display = 'none';
+        }
+      });
+      
       document.body.appendChild(cloned);
 
       // 🖼️ Konversi ke gambar (JPEG lebih kecil dari PNG)
@@ -993,6 +1032,7 @@ if (datesArray.length > 0) {
 
       document.body.removeChild(cloned);
       if (sidebar) sidebar.style.display = "";
+      if (menuButton) menuButton.style.display = "";
 
       // --- Generate PDF ---
       const pdf = new jsPDF({
@@ -1020,8 +1060,8 @@ if (datesArray.length > 0) {
 
       let yOffset = 0;
       while (yOffset < scaledHeight) {
-        pdf.addImage(dataUrl, "JPEG", margin, -yOffset, availableWidth, scaledHeight);
-        yOffset += pageHeight;
+        pdf.addImage(dataUrl, "JPEG", margin, margin - yOffset, availableWidth, scaledHeight);
+        yOffset += (pageHeight - margin * 2); // Pindah halaman sesuai tinggi area cetak
         if (yOffset < scaledHeight) pdf.addPage();
       }
 
@@ -1032,586 +1072,618 @@ if (datesArray.length > 0) {
     }
   };
 
-
-  // --- AKHIR LOGIKA DOWNLOAD UTAMA PDF ---
-
-
   return (
-    <div className="flex min-h-screen bg-gray-50">
-      {/* Sidebar */}
-      <div className="fixed top-0 left-0 h-full">
-          <Sidebar activeView='statistic' />
+    // FIX 1: Set outer container to h-screen to establish viewport height
+    <div className="flex h-screen bg-gray-50"> 
+      
+      {/* Sidebar Overlay for Mobile */}
+      {isSidebarOpen && (
+        <div 
+          className="fixed inset-0 bg-black/50 z-30 lg:hidden" 
+          onClick={() => setIsSidebarOpen(false)}
+        />
+      )}
+
+      {/* Sidebar - FIX 2 & 3: Container fixed, h-screen, bg-white, and Sidebar component forced to fill height */}
+      <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+        {/* FIX 4: Pass style to force component content to fill container */}
+        <Sidebar activeView='statistic' style={{ height: '100%' }} />
       </div>
 
-      {/* Main Content */}
-      <main className="ml-64 flex-grow p-8">
-      <div id="statistic-content" ref={contentRef}>
-        <div className="flex justify-between items-center mb-6">
-            <h1 className="text-3xl font-bold text-gray-800">Laporan dan Statistik Jemaat</h1>
+      {/* Main Content - FIX 5: Use overflow-y-auto for scrolling content and ml-64 for desktop alignment */}
+      <main className={`flex-grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
+        
+        {/* Hamburger Menu for Mobile */}
+        <div className="lg:hidden flex justify-start mb-4">
             <button 
-                onClick={handleDownload} // Langsung panggil handleDownload
-                disabled={
-                  isLoading || 
-                  (viewMode === 'yearly' && selectedDatesKeys.length === 0 && currentYearStats.length === 0) ||
-                  (viewMode === 'monthly' && selectedDatesKeys.length === 0 && currentMonthStats.total === 0)
-                }                
-                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg"
+                id="mobile-menu-button"
+                onClick={() => setIsSidebarOpen(true)}
+                className="p-2 rounded-full bg-indigo-600 text-white shadow-md"
             >
-                <Download size={18} />
-                <span className="hidden sm:inline">Download Laporan (PDF)</span> 
+                <Menu size={24} />
             </button>
         </div>
-
-
-        {isLoading ? (
-          <div className="flex justify-center items-center h-64">
-            <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
-            <p className="text-xl text-indigo-600">Memuat data statistik...</p>
+      
+        <div id="statistic-content" ref={contentRef}>
+          <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+              <h1 className="text-2xl md:text-3xl font-bold text-gray-800">Laporan dan Statistik Jemaat</h1>
+              <button 
+                  onClick={handleDownload} // Langsung panggil handleDownload
+                  disabled={
+                    isLoading || 
+                    (viewMode === 'yearly' && selectedDatesKeys.length === 0 && currentYearStats.length === 0) ||
+                    (viewMode === 'monthly' && selectedDatesKeys.length === 0 && currentMonthStats.total === 0)
+                  }                
+                  className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg text-sm md:text-base"
+              >
+                  <Download size={18} />
+                  <span className="hidden sm:inline">Download Laporan (PDF)</span> 
+                  <span className="sm:hidden">Download</span>
+              </button>
           </div>
-        ) : (
-          <>
-            {/* Statistik Keseluruhan */}
-            <section className="mb-10">
-              <h2 className="text-2xl font-bold text-indigo-700 mb-4 border-b pb-2 flex items-center">
-                <BarChart3 size={20} className="mr-2"/> Statistik Keseluruhan Database
-              </h2>
-              
-              {/* Toggle View Mode */}
-              <div className="flex gap-3 mb-6">
-                <button
-                  onClick={() => setViewMode('monthly')}
-                  className={`px-8 py-3 rounded-xl font-bold text-lg transition-all duration-200 shadow-md ${
-                    viewMode === 'monthly' 
-                      ? 'bg-indigo-600 text-white shadow-lg scale-105' 
-                      : 'bg-white text-gray-600 border-2 border-gray-300 hover:bg-gray-50 hover:border-indigo-400'
-                  }`}
-                >
-                  Tampilan Bulanan
-                </button>
-                <button
-                  onClick={() => setViewMode('yearly')}
-                  className={`px-8 py-3 rounded-xl font-bold text-lg transition-all duration-200 shadow-md ${
-                    viewMode === 'yearly' 
-                      ? 'bg-indigo-600 text-white shadow-lg scale-105' 
-                      : 'bg-white text-gray-600 border-2 border-gray-300 hover:bg-gray-50 hover:border-indigo-400'
-                  }`}
-                >
-                  Tampilan Tahunan
-                </button>
-              </div>
 
-              {/* Navigasi Bulan/Tahun (Global) */}
-              <div className="flex items-center justify-between mb-6 bg-white p-5 rounded-xl shadow-md">
+
+          {isLoading ? (
+            <div className="flex justify-center items-center h-64">
+              <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
+              <p className="text-xl text-indigo-600">Memuat data statistik...</p>
+            </div>
+          ) : (
+            <>
+              {/* Statistik Keseluruhan */}
+              <section className="mb-10">
+                <h2 className="text-xl md:text-2xl font-bold text-indigo-700 mb-4 border-b pb-2 flex items-center">
+                  <BarChart3 size={20} className="mr-2"/> Statistik Keseluruhan Database
+                </h2>
                 
-                {/* Navigasi Kiri (Tahun/Bulan) */}
-                {viewMode === 'yearly' ? (
-                    <button 
-                      onClick={handlePrevYear} 
-                      className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
-                    >
-                      <ChevronLeft className="h-6 w-6" />
-                    </button>
-                ) : (
-                    <button 
-                      onClick={handlePrevMonth} 
-                      className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
-                    >
-                      <ChevronLeft className="h-6 w-6" />
-                    </button>
-                )}
-                
-                <div className="relative">
-                  {/* Tombol Tengah (Year Picker) */}
-                  <button 
-                    onClick={handleOpenYearPicker} // Panggil picker di kedua mode
-                    className="text-2xl font-bold text-gray-800 hover:text-indigo-600 transition px-6 py-2 rounded-lg hover:bg-indigo-50"
+                {/* Toggle View Mode */}
+                <div className="flex flex-col sm:flex-row gap-3 mb-6">
+                  <button
+                    onClick={() => setViewMode('monthly')}
+                    className={`flex-1 px-4 sm:px-8 py-3 rounded-xl font-bold text-sm sm:text-lg transition-all duration-200 shadow-md ${
+                      viewMode === 'monthly' 
+                        ? 'bg-indigo-600 text-white shadow-lg scale-105' 
+                        : 'bg-white text-gray-600 border-2 border-gray-300 hover:bg-gray-50 hover:border-indigo-400'
+                    }`}
                   >
-                    {viewMode === 'monthly' ? `${monthNames[startMonth]} ${year}` : `Tahun ${year}`}
+                    Tampilan Bulanan
                   </button>
-                  
-                  {/* MODAL YEAR PICKER GLOBAL */}
-                  {showYearPicker && ( 
-                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white border border-gray-200 rounded-lg shadow-xl p-4 z-10 min-w-[400px]">
-                        <div className="flex items-center justify-between mb-4">
-                            <button
-                                onClick={() => setGridStartYear(prev => prev - 10)}
-                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                            >
-                                <ChevronLeft className="h-5 w-5" />
-                            </button>
-                            <span className="text-lg font-semibold text-gray-700">
-                                {gridStartYear} - {gridStartYear + 9}
-                            </span>
-                            <button
-                                onClick={() => setGridStartYear(prev => prev + 10)}
-                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                            >
-                                <ChevronRight className="h-5 w-5" />
-                            </button>
-                        </div>
-                      <div className="grid grid-cols-5 gap-3">
-                        {yearsForPicker.map(y => (
-                          <button
-                            key={y}
-                            onClick={() => handleYearChange(y)}
-                            className={`px-5 py-3 rounded-lg font-semibold text-base transition ${
-                              y === year 
-                                ? 'bg-indigo-600 text-white shadow-lg' 
-                                : 'hover:bg-indigo-100 text-gray-700 border border-gray-200'
-                            }`}
-                          >
-                            {y}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex justify-center mt-6">
-                        <button
-                          onClick={() => setShowYearPicker(false)}
-                          className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                        >
-                          Tutup
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                  <button
+                    onClick={() => setViewMode('yearly')}
+                    className={`flex-1 px-4 sm:px-8 py-3 rounded-xl font-bold text-sm sm:text-lg transition-all duration-200 shadow-md ${
+                      viewMode === 'yearly' 
+                        ? 'bg-indigo-600 text-white shadow-lg scale-105' 
+                        : 'bg-white text-gray-600 border-2 border-gray-300 hover:bg-gray-50 hover:border-indigo-400'
+                    }`}
+                  >
+                    Tampilan Tahunan
+                  </button>
                 </div>
-                
-                {/* Navigasi Kanan (Tahun/Bulan) */}
-                {viewMode === 'yearly' ? (
-                    <button 
-                      onClick={handleNextYear} 
-                      disabled={isNextYearDisabled} // Menonaktifkan tombol jika navigasi melewati tahun ini
-                      className={`rounded-full p-3 text-indigo-600 transition ${
-                          isNextYearDisabled 
-                            ? 'text-gray-400 cursor-not-allowed' 
-                            : 'hover:bg-indigo-100'
-                      }`}
-                    >
-                      <ChevronRight className="h-6 w-6" />
-                    </button>
-                ) : (
-                    <button 
-                      onClick={handleNextMonth} 
-                      disabled={isNextMonthDisabled} // Menonaktifkan tombol jika navigasi melewati bulan ini
-                      className={`rounded-full p-3 text-indigo-600 transition ${
-                          isNextMonthDisabled 
-                            ? 'text-gray-400 cursor-not-allowed' 
-                            : 'hover:bg-indigo-100'
-                      }`}
-                    >
-                      <ChevronRight className="h-6 w-6" />
-                    </button>
-                )}
-                
-              </div>
 
-              {/* Tampilan Bulanan */}
-              {viewMode === 'monthly' && (
-                <>
-                  {/* Summary Cards DENGAN TOTAL KEHADIRAN */}
-                  <div className="mb-8">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                      
-                      {/* NEW: 0. Total Kehadiran */}
-                       <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-xl shadow-xl text-white">
-                          <p className="text-sm opacity-90 mb-1">Total Kehadiran</p>
-                          <p className="text-4xl font-extrabold mt-1">{currentMonthStats.total}</p>
-                          <p className="text-xs opacity-80 mt-1">akumulasi kehadiran per bulan</p>
-                      </div>
-
-                      {/* 1. Status Aktif */}
-                      <div className="bg-gradient-to-br from-green-500 to-green-600 p-6 rounded-xl shadow-xl text-white">
-                        <p className="text-sm opacity-90 mb-1">Status Aktif</p>
-                        <p className="text-4xl font-extrabold">{currentMonthStats.aktif}</p>
-                        <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
-                      </div>
-                      
-                      {/* 2. Status Jarang Hadir */}
-                      <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-6 rounded-xl shadow-xl text-white">
-                        <p className="text-sm opacity-90 mb-1">Status Jarang Hadir</p>
-                        <p className="text-4xl font-extrabold">{currentMonthStats.jarangHadirlah}</p>
-                        <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
-                      </div>
-                      
-                      {/* 3. Status Tidak Aktif */}
-                      <div className="bg-gradient-to-br from-red-500 to-red-600 p-6 rounded-xl shadow-xl text-white">
-                        <p className="text-sm opacity-90 mb-1">Status Tidak Aktif</p>
-                        <p className="text-4xl font-extrabold">{currentMonthStats.tidakAktif}</p>
-                        <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
-                      </div>
-                    </div>
-
-                    {/* Grafik Statistik Bulanan (DIUBAH) */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                      
-                      {/* Pie Chart: Distribusi Status Kehadiran Bulanan */}
-                      <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
-                        <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
-                          Distribusi Status Kehadiran Bulan {monthNames[startMonth]}
-                        </h3>
-                        <ResponsiveContainer width="100%" height={280}>
-                          <PieChart>
-                            <Pie 
-                              data={[
-                                { name: 'Aktif', value: currentMonthStats.aktif },
-                                { name: 'Jarang Hadir', value: currentMonthStats.jarangHadirlah },
-                                { name: 'Tidak Aktif', value: currentMonthStats.tidakAktif }
-                              ]} 
-                              cx="50%" 
-                              cy="50%" 
-                              labelLine={false} 
-                              label={({ name, value }) => `${name}: ${value}`} 
-                              outerRadius={90} 
-                              fill="#8884d8" 
-                              dataKey="value"
-                            >
-                              <Cell fill="#10B981" />
-                              <Cell fill="#F59E0B" />
-                              <Cell fill="#EF4444" />
-                            </Pie>
-                            <Tooltip />
-                            <Legend />
-                          </PieChart>
-                        </ResponsiveContainer>
-                      </div>
-
-                      {/* MonthLineChart: Tren Status Kehadiran Per Tanggal (NEW) */}
-                      <MonthLineChart data={dailyTrendsData} month={startMonth} year={year} />
-                      
-                    </div>
-                  </div>
-                </>
-              )}
-
-              {/* Tampilan Tahunan - Diagram Garis (PERBAIKAN SINKRONISASI) */}
-              {viewMode === 'yearly' && (
-                <div className="bg-white rounded-2xl p-8 shadow-xl border-2 border-gray-200">
-                  <h3 className="text-2xl font-bold text-gray-800 mb-6">
-                    Statistik Kehadiran Tahunan {year}
-                  </h3>
+                {/* Navigasi Bulan/Tahun (Global) */}
+                <div className="flex items-center justify-between mb-6 bg-white p-3 sm:p-5 rounded-xl shadow-md">
                   
-                  <ResponsiveContainer width="100%" height={450}>
-                    <LineChart 
-                      data={currentYearStats} 
-                      margin={{ top: 20, right: 20, left: 10, bottom: 5 }}
-                      onMouseDown={handleYearlyChartClick}
-                      style={{ cursor: 'pointer' }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="bulan" />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Line type="monotone" dataKey="aktif" stroke="#10B981" strokeWidth={3} name="Aktif" dot={{ fill: '#10B981' }} activeDot={{ r: 8 }} />
-                      <Line type="monotone" dataKey="jarangHadirlah" stroke="#F59E0B" strokeWidth={3} name="Jarang Hadir" dot={{ fill: '#F59E0B' }} activeDot={{ r: 8 }} />
-                      <Line type="monotone" dataKey="tidakAktif" stroke="#EF4444" strokeWidth={3} name="Tidak Aktif" dot={{ fill: '#EF4444' }} activeDot={{ r: 8 }} />
-                      {/* PERBAIKAN: dot={false} untuk Total Kehadiran */}
-                      <Line 
-                          type="monotone" 
-                          dataKey="total" 
-                          stroke="#4F46E5" 
-                          strokeWidth={4} 
-                          name="Total Kehadiran" 
-                          dot={false} // PERBAIKAN: Menghilangkan titik
-                          activeDot={false} // PERBAIKAN: Menghilangkan titik aktif
-                      />
-                    </LineChart>
-                  </ResponsiveContainer>
+                  {/* Navigasi Kiri (Tahun/Bulan) */}
+                  {viewMode === 'yearly' ? (
+                      <button 
+                        onClick={handlePrevYear} 
+                        className="rounded-full p-2 sm:p-3 text-indigo-600 hover:bg-indigo-100 transition"
+                      >
+                        <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </button>
+                  ) : (
+                      <button 
+                        onClick={handlePrevMonth} 
+                        className="rounded-full p-2 sm:p-3 text-indigo-600 hover:bg-indigo-100 transition"
+                      >
+                        <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </button>
+                  )}
                   
-                  {/* Summary Cards Tahunan (MENJADI 5 KARTU) */}
-                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 mt-8">
-                    {/* Kartu 1: Total Kehadiran Tahunan */}
-                    <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-indigo-700 mb-2 font-semibold">Total Kehadiran Tahunan</p>
-                      <p className="text-5xl font-extrabold text-indigo-600">
-                        {totalKehadiranTahunan}
-                      </p>
-                      <p className="text-xs text-indigo-600 mt-2">akumulasi total kehadiran</p>
-                    </div>
-
-                    {/* Kartu 2: Total Status Aktif */}
-                    <div className="bg-green-50 border-2 border-green-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-green-700 mb-2 font-semibold">Total Status Aktif</p>
-                      <p className="text-5xl font-extrabold text-green-600">
-                        {totalAktifTahunan}
-                      </p>
-                      <p className="text-xs text-green-600 mt-2">akumulasi status aktif</p>
-                    </div>
+                  <div className="relative">
+                    {/* Tombol Tengah (Year Picker) */}
+                    <button 
+                      onClick={handleOpenYearPicker} // Panggil picker di kedua mode
+                      className="text-lg sm:text-2xl font-bold text-gray-800 hover:text-indigo-600 transition px-3 sm:px-6 py-1 sm:py-2 rounded-lg hover:bg-indigo-50"
+                    >
+                      {viewMode === 'monthly' ? `${monthNames[startMonth]} ${year}` : `Tahun ${year}`}
+                    </button>
                     
-                    {/* Kartu 3: Total Status Jarang Hadir */}
-                    <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-yellow-700 mb-2 font-semibold">Total Jarang Hadir</p>
-                      <p className="text-5xl font-extrabold text-yellow-600">
-                        {totalJarangHadirlahTahunan}
-                      </p>
-                      <p className="text-xs text-yellow-600 mt-2">akumulasi status jarang hadir</p>
-                    </div>
+                    {/* MODAL YEAR PICKER GLOBAL */}
+                    {showYearPicker && ( 
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white border border-gray-200 rounded-lg shadow-xl p-4 z-10 min-w-[300px] sm:min-w-[400px]">
+                          <div className="flex items-center justify-between mb-4">
+                              <button
+                                  onClick={() => setGridStartYear(prev => prev - 10)}
+                                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                              >
+                                  <ChevronLeft className="h-5 w-5" />
+                              </button>
+                              <span className="text-lg font-semibold text-gray-700">
+                                  {gridStartYear} - {gridStartYear + 9}
+                              </span>
+                              <button
+                                  onClick={() => setGridStartYear(prev => prev + 10)}
+                                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                              >
+                                  <ChevronRight className="h-5 w-5" />
+                              </button>
+                          </div>
+                        <div className="grid grid-cols-5 gap-3">
+                          {yearsForPicker.map(y => (
+                            <button
+                              key={y}
+                              onClick={() => handleYearChange(y)}
+                              className={`px-3 py-2 rounded-lg font-semibold text-sm sm:text-base transition ${
+                                y === year 
+                                  ? 'bg-indigo-600 text-white shadow-lg' 
+                                  : 'hover:bg-indigo-100 text-gray-700 border border-gray-200'
+                              }`}
+                            >
+                              {y}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex justify-center mt-6">
+                          <button
+                            onClick={() => setShowYearPicker(false)}
+                            className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                          >
+                            Tutup
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Navigasi Kanan (Tahun/Bulan) */}
+                  {viewMode === 'yearly' ? (
+                      <button 
+                        onClick={handleNextYear} 
+                        disabled={isNextYearDisabled} // Menonaktifkan tombol jika navigasi melewati tahun ini
+                        className={`rounded-full p-2 sm:p-3 text-indigo-600 transition ${
+                            isNextYearDisabled 
+                              ? 'text-gray-400 cursor-not-allowed' 
+                              : 'hover:bg-indigo-100'
+                        }`}
+                      >
+                        <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </button>
+                  ) : (
+                      <button 
+                        onClick={handleNextMonth} 
+                        disabled={isNextMonthDisabled} // Menonaktifkan tombol jika navigasi melewati bulan ini
+                        className={`rounded-full p-2 sm:p-3 text-indigo-600 transition ${
+                            isNextMonthDisabled 
+                              ? 'text-gray-400 cursor-not-allowed' 
+                            : 'hover:bg-indigo-100'
+                        }`}
+                      >
+                        <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" />
+                      </button>
+                  )}
+                  
+                </div>
 
-                    {/* Kartu 4: Total Status Tidak Aktif */}
-                    <div className="bg-red-100 border-2 border-red-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-red-700 mb-2 font-semibold">Total Tidak Aktif</p>
-                      <p className="text-5xl font-extrabold text-red-600">
-                        {totalTidakAktifTahunan}
-                      </p>
-                      <p className="text-xs text-red-600 mt-2">akumulasi status tidak aktif</p>
-                    </div>
+                {/* Tampilan Bulanan */}
+                {viewMode === 'monthly' && (
+                  <>
+                    {/* Summary Cards DENGAN TOTAL KEHADIRAN */}
+                    <div className="mb-8">
+                      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                        
+                        {/* NEW: 0. Total Kehadiran */}
+                         <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+                            <p className="text-xs sm:text-sm opacity-90 mb-1">Total Kehadiran</p>
+                            <p className="text-3xl sm:text-4xl font-extrabold mt-1">{currentMonthStats.total}</p>
+                            <p className="text-xs opacity-80 mt-1">akumulasi kehadiran per bulan</p>
+                        </div>
 
-                    {/* Kartu 5: Rata-Rata Kehadiran Per Bulan */}
-                    <div className="bg-gray-100 border-2 border-gray-300 rounded-xl p-6 text-center">
-                      <p className="text-sm text-gray-700 mb-2 font-semibold">Rata-rata Kehadiran/Bulan</p>
-                      <p className="text-5xl font-extrabold text-gray-600">
-                        {rataRataKehadiranPerBulan}
-                      </p>
-                      <p className="text-xs text-gray-600 mt-2">orang per bulan</p>
+                        {/* 1. Status Aktif */}
+                        <div className="bg-gradient-to-br from-green-500 to-green-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+                          <p className="text-xs sm:text-sm opacity-90 mb-1">Status Aktif</p>
+                          <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.aktif}</p>
+                          <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
+                        </div>
+                        
+                        {/* 2. Status Jarang Hadir */}
+                        <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+                          <p className="text-xs sm:text-sm opacity-90 mb-1">Status Jarang Hadir</p>
+                          <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.jarangHadirlah}</p>
+                          <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
+                        </div>
+                        
+                        {/* 3. Status Tidak Aktif */}
+                        <div className="bg-gradient-to-br from-red-500 to-red-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+                          <p className="text-xs sm:text-sm opacity-90 mb-1">Status Tidak Aktif</p>
+                          <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.tidakAktif}</p>
+                          <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
+                        </div>
+                      </div>
+
+                      {/* Grafik Statistik Bulanan (DIUBAH) */}
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        
+                        {/* Pie Chart: Distribusi Status Kehadiran Bulanan */}
+                        <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
+                          <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
+                            Distribusi Status Kehadiran Bulan {monthNames[startMonth]}
+                          </h3>
+                          <ResponsiveContainer width="100%" height={280}>
+                            <PieChart>
+                              <Pie 
+                                data={[
+                                  { name: 'Aktif', value: currentMonthStats.aktif },
+                                  { name: 'Jarang Hadir', value: currentMonthStats.jarangHadirlah },
+                                  { name: 'Tidak Aktif', value: currentMonthStats.tidakAktif }
+                                ]} 
+                                cx="50%" 
+                                cy="50%" 
+                                labelLine={false} 
+                                label={({ name, value }) => `${name}: ${value}`} 
+                                outerRadius={90} 
+                                fill="#8884d8" 
+                                dataKey="value"
+                              >
+                                <Cell fill="#10B981" />
+                                <Cell fill="#F59E0B" />
+                                <Cell fill="#EF4444" />
+                              </Pie>
+                              <Tooltip />
+                              <Legend />
+                            </PieChart>
+                          </ResponsiveContainer>
+                        </div>
+
+                        {/* MonthLineChart: Tren Status Kehadiran Per Tanggal (NEW) */}
+                        <MonthLineChart data={dailyTrendsData} month={startMonth} year={year} />
+                        
+                      </div>
+                    </div>
+                  </>
+                )}
+
+                {/* Tampilan Tahunan - Diagram Garis (PERBAIKAN SINKRONISASI) */}
+                {viewMode === 'yearly' && (
+                  <div className="bg-white rounded-2xl p-4 sm:p-8 shadow-xl border-2 border-gray-200">
+                    <h3 className="text-xl md:text-2xl font-bold text-gray-800 mb-6">
+                      Statistik Kehadiran Tahunan {year}
+                    </h3>
+                    
+                    <ResponsiveContainer width="100%" height={450}>
+                      <LineChart 
+                        data={currentYearStats} 
+                        margin={{ top: 20, right: 20, left: 10, bottom: 5 }}
+                        onMouseDown={handleYearlyChartClick}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <CartesianGrid strokeDasharray="3 3" />
+                        <XAxis dataKey="bulan" />
+                        <YAxis />
+                        <Tooltip />
+                        <Legend />
+                        <Line type="monotone" dataKey="aktif" stroke="#10B981" strokeWidth={3} name="Aktif" dot={{ fill: '#10B981' }} activeDot={{ r: 8 }} />
+                        <Line type="monotone" dataKey="jarangHadirlah" stroke="#F59E0B" strokeWidth={3} name="Jarang Hadir" dot={{ fill: '#F59E0B' }} activeDot={{ r: 8 }} />
+                        <Line type="monotone" dataKey="tidakAktif" stroke="#EF4444" strokeWidth={3} name="Tidak Aktif" dot={{ fill: '#EF4444' }} activeDot={{ r: 8 }} />
+                        {/* PERBAIKAN: dot={false} untuk Total Kehadiran */}
+                        <Line 
+                            type="monotone" 
+                            dataKey="total" 
+                            stroke="#4F46E5" 
+                            strokeWidth={4} 
+                            name="Total Kehadiran" 
+                            dot={false} // PERBAIKAN: Menghilangkan titik
+                            activeDot={false} // PERBAIKAN: Menghilangkan titik aktif
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                    
+                    {/* Summary Cards Tahunan (MENJADI 5 KARTU) */}
+                    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 mt-8">
+                      {/* Kartu 1: Total Kehadiran Tahunan */}
+                      <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-4 sm:p-6 text-center">
+                        <p className="text-xs sm:text-sm text-indigo-700 mb-2 font-semibold">Total Kehadiran Tahunan</p>
+                        <p className="text-4xl sm:text-5xl font-extrabold text-indigo-600">
+                          {totalKehadiranTahunan}
+                        </p>
+                        <p className="text-xs text-indigo-600 mt-2">akumulasi total kehadiran</p>
+                      </div>
+
+                      {/* Kartu 2: Total Status Aktif */}
+                      <div className="bg-green-50 border-2 border-green-300 rounded-xl p-4 sm:p-6 text-center">
+                        <p className="text-xs sm:text-sm text-green-700 mb-2 font-semibold">Total Status Aktif</p>
+                        <p className="text-4xl sm:text-5xl font-extrabold text-green-600">
+                          {totalAktifTahunan}
+                        </p>
+                        <p className="text-xs text-green-600 mt-2">akumulasi status aktif</p>
+                      </div>
+                      
+                      {/* Kartu 3: Total Status Jarang Hadir */}
+                      <div className="bg-yellow-50 border-2 border-yellow-300 rounded-xl p-4 sm:p-6 text-center">
+                        <p className="text-xs sm:text-sm text-yellow-700 mb-2 font-semibold">Total Jarang Hadir</p>
+                        <p className="text-4xl sm:text-5xl font-extrabold text-yellow-600">
+                          {totalJarangHadirlahTahunan}
+                        </p>
+                        <p className="text-xs text-yellow-600 mt-2">akumulasi status jarang hadir</p>
+                      </div>
+
+                      {/* Kartu 4: Total Status Tidak Aktif */}
+                      <div className="bg-red-100 border-2 border-red-300 rounded-xl p-4 sm:p-6 text-center">
+                        <p className="text-xs sm:text-sm text-red-700 mb-2 font-semibold">Total Tidak Aktif</p>
+                        <p className="text-4xl sm:text-5xl font-extrabold text-red-600">
+                          {totalTidakAktifTahunan}
+                        </p>
+                        <p className="text-xs text-red-600 mt-2">akumulasi status tidak aktif</p>
+                      </div>
+
+                      {/* Kartu 5: Rata-Rata Kehadiran Per Bulan */}
+                      <div className="bg-gray-100 border-2 border-gray-300 rounded-xl p-4 sm:p-6 text-center">
+                        <p className="text-xs sm:text-sm text-gray-700 mb-2 font-semibold">Rata-rata Kehadiran/Bulan</p>
+                        <p className="text-4xl sm:text-5xl font-extrabold text-gray-600">
+                          {rataRataKehadiranPerBulan}
+                        </p>
+                        <p className="text-xs text-gray-600 mt-2">orang per bulan</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-            </section>
+                )}
+              </section>
 
-            {/* Kalender - Pilih Tanggal untuk Detail Statistik (Sudah diperbaiki untuk Multi-Select) */}
-            <section className="mb-10">
-              <h2 className="text-2xl font-bold text-indigo-700 mb-4 flex items-center">
-                <Calendar size={20} className="mr-2"/> Pilih Tanggal untuk Detail Statistik
-              </h2>
-              <p className="text-sm text-gray-600 mb-6">
-                <span className="inline-flex items-center">
-                  <span className="w-2 h-2 bg-indigo-500 rounded-full mr-2"></span>
-                  Tanggal dengan titik biru adalah hari Sabtu/Minggu yang memiliki data.
-                </span>
-                <br/>
-                <span className="font-semibold text-red-600">
-                  *Klik tanggal bertitik biru untuk menambah/menghapus dari seleksi. Statistik di bawah akan mengakumulasi semua tanggal yang dipilih.
-                </span>
-              </p>
-              
-              {/* Navigasi Bulan/Tahun untuk Kalender Detail (Tampilan Tahun) */}
-              <div className="flex items-center justify-between mb-6 bg-white p-5 rounded-xl shadow-md">
-                <button 
-                  onClick={handleDetailPrevMonth} 
-                  className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
-                >
-                  <ChevronLeft className="h-6 w-6" />
-                </button>
+              {/* Kalender - Pilih Tanggal untuk Detail Statistik (Sudah diperbaiki untuk Multi-Select) */}
+              <section className="mb-10">
+                <h2 className="text-xl md:text-2xl font-bold text-indigo-700 mb-4 flex items-center">
+                  <Calendar size={20} className="mr-2"/> Pilih Tanggal untuk Detail Statistik
+                </h2>
+                <p className="text-sm text-gray-600 mb-6">
+                  <span className="inline-flex items-center">
+                    <span className="w-2 h-2 bg-indigo-500 rounded-full mr-2"></span>
+                    Tanggal dengan titik biru adalah hari yang memiliki data kehadiran aktual.
+                  </span>
+                  <br/>
+                  <span className="font-semibold text-red-600">
+                    *Klik tanggal untuk menambah/menghapus dari seleksi. Statistik di bawah akan mengakumulasi semua tanggal yang dipilih.
+                  </span>
+                </p>
                 
-                <div className="relative">
-                  {/* PERUBAHAN: Tampilkan hanya Tahun, dan klik akan membuka pemilih tahun */}
+                {/* Navigasi Bulan/Tahun untuk Kalender Detail (Tampilan Tahun) */}
+                <div className="flex items-center justify-between mb-6 bg-white p-3 sm:p-5 rounded-xl shadow-md">
                   <button 
-                    onClick={handleOpenDetailYearPicker}
-                    className="text-2xl font-bold text-gray-800 hover:text-indigo-600 transition px-6 py-2 rounded-lg hover:bg-indigo-50"
+                    onClick={handleDetailPrevMonth} 
+                    className="rounded-full p-2 sm:p-3 text-indigo-600 hover:bg-indigo-100 transition"
                   >
-                    Tahun {detailYear}
+                    <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
                   </button>
                   
-                  {/* MODAL YEAR PICKER DETAIL */}
-                  {showDetailYearPicker && (
-                    <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white border border-gray-200 rounded-lg shadow-xl p-4 z-10 min-w-[400px]">
-                        <div className="flex items-center justify-between mb-4">
+                  <div className="relative">
+                    {/* PERUBAHAN: Tampilkan hanya Tahun, dan klik akan membuka pemilih tahun */}
+                    <button 
+                      onClick={handleOpenDetailYearPicker}
+                      className="text-lg sm:text-2xl font-bold text-gray-800 hover:text-indigo-600 transition px-3 sm:px-6 py-1 sm:py-2 rounded-lg hover:bg-indigo-50"
+                    >
+                      Tahun {detailYear}
+                    </button>
+                    
+                    {/* MODAL YEAR PICKER DETAIL */}
+                    {showDetailYearPicker && (
+                      <div className="absolute top-full left-1/2 transform -translate-x-1/2 mt-2 bg-white border border-gray-200 rounded-lg shadow-xl p-4 z-10 min-w-[300px] sm:min-w-[400px]">
+                          <div className="flex items-center justify-between mb-4">
+                              <button
+                                  onClick={() => setGridStartYear(prev => prev - 10)}
+                                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                              >
+                                  <ChevronLeft className="h-5 w-5" />
+                              </button>
+                              <span className="text-lg font-semibold text-gray-700">
+                                  {gridStartYear} - {gridStartYear + 9}
+                              </span>
+                              <button
+                                  onClick={() => setGridStartYear(prev => prev + 10)}
+                                  className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
+                              >
+                                  <ChevronRight className="h-5 w-5" />
+                              </button>
+                          </div>
+                        <div className="grid grid-cols-5 gap-3">
+                          {yearsForPicker.map(y => (
                             <button
-                                onClick={() => setGridStartYear(prev => prev - 10)}
-                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                            >
-                                <ChevronLeft className="h-5 w-5" />
-                            </button>
-                            <span className="text-lg font-semibold text-gray-700">
-                                {gridStartYear} - {gridStartYear + 9}
-                            </span>
-                            <button
-                                onClick={() => setGridStartYear(prev => prev + 10)}
-                                className="p-2 text-indigo-600 hover:bg-indigo-100 rounded-full transition"
-                            >
-                                <ChevronRight className="h-5 w-5" />
-                            </button>
-                        </div>
-                      <div className="grid grid-cols-5 gap-3">
-                        {yearsForPicker.map(y => (
-                          <button
-                            key={y}
-                            onClick={() => handleDetailYearChange(y)}
-                            className={`px-5 py-3 rounded-lg font-semibold text-base transition ${
-                              y === detailYear
-                                ? 'bg-indigo-600 text-white shadow-lg' 
-                                : 'hover:bg-indigo-100 text-gray-700 border border-gray-200'
-                            }`}
-                          >
-                            {y}
-                          </button>
-                        ))}
-                      </div>
-                      <div className="flex justify-center mt-6">
-                        <button
-                          onClick={() => setShowDetailYearPicker(false)}
-                          className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                        >
-                          Tutup
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-                
-                <button 
-                  onClick={handleDetailNextMonth} 
-                  className="rounded-full p-3 text-indigo-600 hover:bg-indigo-100 transition"
-                >
-                  <ChevronRight className="h-6 w-6" />
-                </button>
-              </div>
-
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
-                {monthsToDisplay.map(({ monthIndex, year }) => {
-                  const daysInMonth = getDaysInMonth(monthIndex, year);
-                  const firstDay = getFirstDayOfMonth(monthIndex, year);
-                  const startDayOffset = firstDay === 0 ? 6 : firstDay - 1;
-                  const daysArray = [
-                    ...Array(startDayOffset).fill(null),
-                    ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-                  ];
-                  const datesWithStats = getDatesWithStats(monthIndex, year);
-                  
-                  return (
-                    <div key={`${year}-${monthIndex}`} className="bg-white rounded-xl p-5 border-2 border-gray-200 shadow-md hover:shadow-lg transition">
-                      <h4 className="mb-4 text-center text-lg font-bold text-indigo-600">
-                        {monthNames[monthIndex]} {year}
-                      </h4>
-                      <div className="grid grid-cols-7 text-xs font-semibold text-gray-500 mb-3">
-                        {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((d) => (
-                          <div key={d} className="text-center">{d}</div>
-                        ))}
-                      </div>
-                      <div className="grid grid-cols-7 gap-1.5 text-center text-sm">
-                        {daysArray.map((day, i) => {
-                          if (day === null) return <div key={i} className="p-2"></div>;
-                          const thisDate = new Date(year, monthIndex, day);
-                          const dayKey = getDayKey(thisDate);
-                          const isSelected = selectedDatesKeys.includes(dayKey);
-                          const hasStats = datesWithStats.has(dayKey);
-                          
-                          const handleClick = () => {
-                            if (hasStats) {
-                              handleSelectDate(day, monthIndex);
-                            }
-                          };
-
-                          return (
-                            <div 
-                              key={i} 
-                              className={`relative p-2.5 rounded-lg transition-all duration-200 font-medium ${
-                                isSelected 
-                                  ? 'bg-red-500 text-white font-bold shadow-lg scale-110 ring-2 ring-red-300 cursor-pointer' 
-                                  : hasStats
-                                  ? 'text-gray-800 hover:bg-indigo-100 hover:scale-105 cursor-pointer'
-                                  : 'text-gray-300 cursor-not-allowed'
+                              key={y}
+                              onClick={() => handleDetailYearChange(y)}
+                              className={`px-3 py-2 rounded-lg font-semibold text-sm sm:text-base transition ${
+                                y === detailYear
+                                  ? 'bg-indigo-600 text-white shadow-lg' 
+                                  : 'hover:bg-indigo-100 text-gray-700 border border-gray-200'
                               }`}
-                              onClick={handleClick}
                             >
-                              {day}
-                              {hasStats && !isSelected && (
-                                <div className="absolute bottom-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>
-                              )}
-                            </div>
-                          );
-                        })}
+                              {y}
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex justify-center mt-6">
+                          <button
+                            onClick={() => setShowDetailYearPicker(false)}
+                            className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                          >
+                            Tutup
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </section>
-
-            {/* Grafik Detail Tanggal (Multi-Select) */}
-            {selectedDatesKeys.length > 0 && Object.keys(dateStatsMap).length > 0 ? (
-              <section className="mt-8">
-                <div className="flex justify-between items-center border-b-2 pb-2 mb-4">
-                  <h2 className="text-2xl font-bold text-red-600">
-                    Detail Kehadiran: {selectedDatesKeys.length} Tanggal Dipilih ({selectedDatesDisplay})
-                  </h2>
-                </div>
-                
-                {/* 1. Total Kehadiran Semua Ibadah (Satu Kartu Gabungan) */}
-                <div className="grid grid-cols-1 mb-6 max-w-lg mx-auto">
-                    <div className="bg-red-100 p-6 rounded-xl shadow-md border-2 border-red-300">
-                        <p className="text-sm text-red-700">Total Kehadiran Semua Kebaktian & Sesi Ibadah</p>
-                        <p className="text-5xl font-extrabold text-red-600 mt-1">{totalKehadiranSelectedDates}</p>
-                        <p className="text-xs text-red-500">Total akumulatif yang hadir di semua sesi dari {selectedDatesKeys.length} tanggal</p>
-                    </div>
+                    )}
+                  </div>
+                  
+                  <button 
+                    onClick={handleDetailNextMonth} 
+                    className="rounded-full p-2 sm:p-3 text-indigo-600 hover:bg-indigo-100 transition"
+                  >
+                    <ChevronRight className="h-5 w-5 sm:h-6 sm:w-6" />
+                  </button>
                 </div>
 
-                {/* 2. Total Kehadiran di Masing-Masing Kebaktian (Dynamic Cards Gabungan) */}
-                <div className="mb-8">
-                    <h3 className="text-xl font-bold text-gray-700 mb-4 border-b pb-2">Total Kehadiran per Sesi Kebaktian (Akumulatif)</h3>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                        {Object.entries(combinedKehadiranBySesi).sort(([, a], [, b]) => b - a).map(([sessionName, count]) => {
-                          const isHovered = hoveredSession === sessionName;
-                          const cleanSessionName = getCleanSessionName(sessionName);
-                          const highlight = isHovered; 
 
-                          return (
-                            <div 
-                              key={sessionName} 
-                              className={`p-4 rounded-xl shadow-md border transition-all duration-300 cursor-default
-                                ${highlight 
-                                  ? 'bg-indigo-200 border-indigo-500 scale-105 shadow-lg' 
-                                  : 'bg-white border-indigo-200'
-                                }
-                              `}
-                              onMouseEnter={() => setHoveredSession(sessionName)}
-                              onMouseLeave={() => setHoveredSession(null)}
-                            >
-                                <p className="text-sm text-indigo-700 font-semibold truncate" title={sessionName}>{cleanSessionName}</p>
-                                <p className="text-3xl font-extrabold text-gray-800 mt-1">{count}</p>
-                                <p className="text-xs text-gray-500">{sessionName.replace(cleanSessionName, '').trim() || 'orang hadir'}</p>
-                            </div>
-                          );
-                        })}
-                    </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-5">
+                  {monthsToDisplay.map(({ monthIndex, year }) => {
+                    const daysInMonth = getDaysInMonth(monthIndex, year);
+                    const firstDay = getFirstDayOfMonth(monthIndex, year);
+                    const startDayOffset = firstDay === 0 ? 6 : firstDay - 1;
+                    const daysArray = [
+                      ...Array(startDayOffset).fill(null),
+                      ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+                    ];
+                    // OLD: const datesWithStats = getDatesWithStats(monthIndex, year);
+                    const datesWithStats = getDatesWithStats(monthIndex, year, actualAttendanceSet); // Digunakan untuk DOT
+
+                    
+                    return (
+                      <div key={`${year}-${monthIndex}`} className="bg-white rounded-xl p-5 border-2 border-gray-200 shadow-md hover:shadow-lg transition">
+                        <h4 className="mb-4 text-center text-lg font-bold text-indigo-600">
+                          {monthNames[monthIndex]} {year}
+                        </h4>
+                        <div className="grid grid-cols-7 text-xs font-semibold text-gray-500 mb-3">
+                          {["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"].map((d) => (
+                            <div key={d} className="text-center">{d}</div>
+                          ))}
+                        </div>
+                        <div className="grid grid-cols-7 gap-1.5 text-center text-sm">
+                          {daysArray.map((day, i) => {
+                            if (day === null) return <div key={i} className="p-2"></div>;
+                            const thisDate = new Date(year, monthIndex, day);
+                            const dayKey = getDayKey(thisDate);
+                            const isSelected = selectedDatesKeys.includes(dayKey);
+                            const dateTimestamp = new Date(thisDate).setHours(0, 0, 0, 0);
+                            const isFuture = dateTimestamp > todayStart;
+                            
+                            const hasStats = datesWithStats.has(dayKey);
+                            
+                            const handleClick = () => {
+                              // MODIFIED: Izinkan klik untuk semua tanggal di masa lalu/sekarang
+                              if (!isFuture) {
+                                handleSelectDate(day, monthIndex);
+                              }
+                            };
+
+                            return (
+                              <div 
+                                key={i} 
+                                className={`relative p-2.5 rounded-lg transition-all duration-200 font-medium ${
+                                  isSelected 
+                                    ? 'bg-red-500 text-white font-bold shadow-lg scale-110 ring-2 ring-red-300 cursor-pointer' 
+                                    : !isFuture
+                                    ? 'text-gray-800 hover:bg-indigo-100 hover:scale-105 cursor-pointer' // Boleh diklik, warna normal
+                                    : 'text-gray-300 cursor-not-allowed' // Tanggal masa depan
+                                }`}
+                                onClick={handleClick}
+                              >
+                                {day}
+                                {/* Titik hanya muncul jika ada data (hasStats) DAN TIDAK terpilih */}
+                                {hasStats && !isSelected && (
+                                  <div className="absolute bottom-0.5 left-1/2 transform -translate-x-1/2 w-1.5 h-1.5 bg-indigo-500 rounded-full"></div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-                
-                {/* 3. Menampilkan chart di bawah */}
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {/* CHART 1: LINE CHART - Status Trend Per Session (AKUMULATIF & FILTERED) */}
-                  <SessionLineChart
-                    // MENGGUNAKAN LOGIKA AKUMULASI YANG BARU
-                    data={combinedStatusBySession} 
-                    hoveredSession={hoveredSession}
-                    setHoveredSession={setHoveredSession}
-                    selectedDatesKeys={selectedDatesKeys} 
-                  />
-                  {/* CHART 2: Distribusi Kehadiran Sesi (Pie Chart) - Menggunakan komponen PieChartCard yang sudah diperbaiki logic legend-nya */}
-                  <PieChartCard 
-                    title="Distribusi Kehadiran Berdasarkan Sesi (Akumulatif)" 
-                    data={combinedKehadiranBySesi}
-                    description={`Jumlah kehadiran per sesi ibadah dari ${selectedDatesKeys.length} tanggal yang dipilih.`}
-                    hoveredSession={hoveredSession}
-                    setHoveredSession={setHoveredSession}
-                  />
-                </div>
-                
-                {/* NEW: Rincian Per Tanggal (Sudah diperbaiki dengan chart dan total hadir di judul) */}
-                {selectedDatesKeys.length > 0 && (
-                    <div className="mt-8 pt-6 border-t border-gray-300">
-                        <h3 className="text-xl font-bold text-indigo-700 mb-4">Rincian Per Tanggal</h3>
-                        <div className="space-y-6">
-                            {Object.entries(dateStatsMap).map(([dateKey, stats]) => {
-                                
-                                // Data untuk Pie Chart Kehadiran Sesi per Tanggal
-                                const singleDatePieData = Object.entries(stats.kehadiranBySesi).map(([name, value]) => ({ 
-                                  name, 
-                                  value, 
-                                  fullSessionName: name 
-                                }));
-                                
-                                // Data untuk Line Chart Status Per Tanggal (Data Baru dari statusKehadiranBySesi)
-                                const singleDateStatusData = Object.entries(stats.statusKehadiranBySesi)
-                                  .map(([session, statuses]) => ({
-                                      session: getShortSessionName(session),
-                                      fullSessionName: session,
-                                      Aktif: statuses.Aktif || 0,
-                                      'Jarang Hadir': statuses['Jarang Hadir'] || 0,
-                                      'Tidak Aktif': statuses['Tidak Aktif'] || 0,
-                                  }))
-                                  .filter(item => item.Aktif > 0 || item['Jarang Hadir'] > 0 || item['Tidak Aktif'] > 0);
+              </section>
+
+              {/* Grafik Detail Tanggal (Multi-Select) */}
+              {selectedDatesKeys.length > 0 && totalKehadiranSelectedDates > 0 ? (
+                <section className="mt-8">
+                  <div className="flex justify-between items-center border-b-2 pb-2 mb-4">
+                    <h2 className="text-xl md:text-2xl font-bold text-red-600">
+                      Detail Kehadiran: {selectedDatesKeys.length} Tanggal Dipilih ({selectedDatesDisplay})
+                    </h2>
+                  </div>
+                  
+                  {/* 1. Total Kehadiran Semua Ibadah (Satu Kartu Gabungan) */}
+                  <div className="grid grid-cols-1 mb-6 max-w-lg mx-auto">
+                      <div className="bg-red-100 p-6 rounded-xl shadow-md border-2 border-red-300">
+                          <p className="text-sm text-red-700">Total Kehadiran Semua Kebaktian & Sesi Ibadah</p>
+                          <p className="text-5xl font-extrabold text-red-600 mt-1">{totalKehadiranSelectedDates}</p>
+                          <p className="text-xs text-red-500">Total akumulatif yang hadir di semua sesi dari {selectedDatesKeys.length} tanggal</p>
+                      </div>
+                  </div>
+
+                  {/* 2. Total Kehadiran di Masing-Masing Kebaktian (Dynamic Cards Gabungan) */}
+                  <div className="mb-8">
+                      <h3 className="text-xl font-bold text-gray-700 mb-4 border-b pb-2">Total Kehadiran per Sesi Kebaktian (Akumulatif)</h3>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                          {Object.entries(combinedKehadiranBySesi).sort(([, a], [, b]) => b - a).map(([sessionName, count]) => {
+                            const isHovered = hoveredSession === sessionName;
+                            const cleanSessionName = getCleanSessionName(sessionName);
+                            const highlight = isHovered; 
+
+                            return (
+                              <div 
+                                key={sessionName} 
+                                className={`p-4 rounded-xl shadow-md border transition-all duration-300 cursor-default
+                                  ${highlight 
+                                    ? 'bg-indigo-200 border-indigo-500 scale-105 shadow-lg' 
+                                    : 'bg-white border-indigo-200'
+                                  }
+                                `}
+                                onMouseEnter={() => setHoveredSession(sessionName)}
+                                onMouseLeave={() => setHoveredSession(null)}
+                              >
+                                  <p className="text-sm text-indigo-700 font-semibold truncate" title={sessionName}>{cleanSessionName}</p>
+                                  <p className="text-3xl font-extrabold text-gray-800 mt-1">{count}</p>
+                                  <p className="text-xs text-gray-500">{sessionName.replace(cleanSessionName, '').trim() || 'orang hadir'}</p>
+                              </div>
+                            );
+                          })}
+                      </div>
+                  </div>
+                  
+                  {/* 3. Menampilkan chart di bawah */}
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* CHART 1: LINE CHART - Status Trend Per Session (AKUMULATIF & FILTERED) */}
+                    <SessionLineChart
+                      // MENGGUNAKAN LOGIKA AKUMULASI YANG BARU
+                      data={combinedStatusBySession} 
+                      hoveredSession={hoveredSession}
+                      setHoveredSession={setHoveredSession}
+                      selectedDatesKeys={selectedDatesKeys} 
+                    />
+                    {/* CHART 2: Distribusi Kehadiran Sesi (Pie Chart) - Menggunakan komponen PieChartCard yang sudah diperbaiki logic legend-nya */}
+                    <PieChartCard 
+                      title="Distribusi Kehadiran Berdasarkan Sesi (Akumulatif)" 
+                      data={combinedKehadiranBySesi}
+                      description={`Jumlah kehadiran per sesi ibadah dari ${selectedDatesKeys.length} tanggal yang dipilih.`}
+                      hoveredSession={hoveredSession}
+                      setHoveredSession={setHoveredSession}
+                    />
+                  </div>
+                  
+                  {/* NEW: Rincian Per Tanggal (Sudah diperbaiki dengan chart dan total hadir di judul) */}
+                  {selectedDatesKeys.length > 0 && (
+                      <div className="mt-8 pt-6 border-t border-gray-300">
+                          <h3 className="text-xl font-bold text-indigo-700 mb-4">Rincian Per Tanggal</h3>
+                          <div className="space-y-6">
+                              {/* Filter hanya tanggal yang memiliki data di dateStatsMap */}
+                              {selectedDatesKeys
+                                  .filter(dateKey => dateStatsMap[dateKey])
+                                  .map(dateKey => {
+                                  
+                                  const stats = dateStatsMap[dateKey];
+
+                                  // Data untuk Pie Chart Kehadiran Sesi per Tanggal
+                                  const singleDatePieData = Object.entries(stats.kehadiranBySesi).map(([name, value]) => ({ 
+                                    name, 
+                                    value, 
+                                    fullSessionName: name 
+                                  }));
+                                  
+                                  // Data untuk Line Chart Status Per Tanggal (Data Baru dari statusKehadiranBySesi)
+                                  const singleDateStatusData = Object.entries(stats.statusKehadiranBySesi)
+                                    .map(([session, statuses]) => ({
+                                        session: getShortSessionName(session),
+                                        fullSessionName: session,
+                                        Aktif: statuses.Aktif || 0,
+                                        'Jarang Hadir': statuses['Jarang Hadir'] || 0,
+                                        'Tidak Aktif': statuses['Tidak Aktif'] || 0,
+                                    }))
+                                    .filter(item => item.Aktif > 0 || item['Jarang Hadir'] > 0 || item['Tidak Aktif'] > 0);
 
 
                                 return (
@@ -1625,7 +1697,7 @@ if (datesArray.length > 0) {
                                     </h4>
                                     
                                     {/* Ringkasan Kartu Per Tanggal */}
-                                    <div className="grid grid-cols-3 gap-4 mb-6">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6"> 
                                         <div className="p-3 bg-red-50 rounded-lg">
                                             <p className="text-sm text-red-700">Total Hadir</p>
                                             <p className="text-2xl font-bold text-red-600">{stats.totalKehadiranSemuaSesi}</p>
@@ -1701,7 +1773,7 @@ if (datesArray.length > 0) {
                 <div className="flex flex-col justify-center items-center h-64 bg-white rounded-xl shadow-lg border-2 border-dashed border-gray-300">
                     <BarChart3 size={64} className="text-gray-300 mb-4" />
                     <p className="text-xl text-gray-500 mb-2">Pilih minimal satu tanggal di kalender</p>
-                    <p className="text-sm text-gray-400">Pilih hari Sabtu atau Minggu untuk melihat detail statistik.</p>
+                    <p className="text-sm text-gray-400">Pilih hari untuk melihat detail statistik.</p>
                 </div>
             )}
           </>
