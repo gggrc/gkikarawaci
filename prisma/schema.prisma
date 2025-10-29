@@ -9,10 +9,12 @@ datasource db {
 
 model Ibadah {
   id_ibadah       String      @id
-  jenis_kebaktian String
+  jenis_kebaktian String     
   sesi_ibadah     Int
   tanggal_ibadah  DateTime
   Kehadiran       Kehadiran[]
+  weeklyEventId   String?   
+  weeklyEvent     WeeklyEvent? @relation(fields: [weeklyEventId], references: [id])
 }
 
 model Kehadiran {
@@ -53,4 +55,16 @@ model User {
   email         String
   isVerified    String    @default("pending")
   role          String
+}
+
+model WeeklyEvent {
+  id             String   @id @default(cuid())
+  sesi_ibadah    Int     
+  day_of_week    Int
+  start_date     DateTime
+  repeat_forever Boolean  @default(true)
+  repeat_weeks   Int?
+  created_at     DateTime @default(now())
+  ibadahList     Ibadah[] 
+  @@unique([sesi_ibadah, day_of_week])
 }
