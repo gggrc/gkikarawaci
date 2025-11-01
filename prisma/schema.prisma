@@ -59,12 +59,12 @@ model User {
 
 model WeeklyEvent {
   id             String   @id @default(cuid())
-  sesi_ibadah    Int     
-  day_of_week    Int
+  title          String
+  description    String?
+  jenis_kebaktian String 
+  sesi_ibadah    Int 
   start_date     DateTime
-  repeat_forever Boolean  @default(true)
-  repeat_weeks   Int?
-  created_at     DateTime @default(now())
-  ibadahList     Ibadah[] 
-  @@unique([sesi_ibadah, day_of_week])
+  end_date       DateTime? 
+  repetition_type String @default("Once") 
+  Ibadah         Ibadah[]
 }

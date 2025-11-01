@@ -1,6 +1,6 @@
 // src/components/EventManagementModal.tsx
 
-import React from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, Pencil } from 'lucide-react';
 
 // --- Tipe Data ---
@@ -47,7 +47,15 @@ export default function EventManagementModal({
     onAction
 }: EventManagementModalProps) {
     
-    const { type, dateKey, oldName, newName, periodicalDayOfWeek, periodicalPeriod } = data;
+    // Defaulting state to avoid undefined issues
+    const { 
+        type = 'flow-select', 
+        dateKey = null, 
+        oldName = null, 
+        newName = '', 
+        periodicalDayOfWeek = new Date(dateKey ?? '').getDay(), 
+        periodicalPeriod = '2m' 
+    } = data;
     
     let title = '';
     let actionButtonText = '';
@@ -57,6 +65,7 @@ export default function EventManagementModal({
     const isAdd = type === 'add-single' || type === 'add-periodical' || type === 'flow-select';
     const isPeriodicalAdd = type === 'add-periodical';
     const isPeriodicalConfirm = type === 'edit-periodical-confirm';
+    const isDeletion = isPeriodicalConfirm && newName === ''; // Logic untuk menghapus event berkala
 
     const dateDisplay = dateKey ? new Date(dateKey).toLocaleDateString("id-ID") : 'N/A';
     const dayOptions = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
@@ -70,12 +79,14 @@ export default function EventManagementModal({
                 <p className="text-lg text-gray-700">Event akan ditambahkan untuk tanggal: <span className="font-bold text-indigo-600">{dateDisplay}</span></p>
                 <div className="flex flex-col gap-3">
                     <button 
+                        type="button"
                         onClick={() => onUpdateData({ type: 'add-single', periodicalDayOfWeek: null, periodicalPeriod: '2m' })}
                         className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition shadow-md"
                     >
                         <span className="font-bold">Mode Satuan:</span> Hanya untuk tanggal ini
                     </button>
                     <button 
+                        type="button"
                         onClick={() => onUpdateData({ type: 'add-periodical', periodicalDayOfWeek: new Date(dateKey ?? '').getDay(), newName: newName ?? '' })}
                         className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition shadow-md"
                     >
@@ -95,8 +106,8 @@ export default function EventManagementModal({
                     PERINGATAN! Aksi ini akan berlaku untuk **SEMUA** event bernama **"{oldName}"** pada tanggal **{dateDisplay}** dan **semua tanggal setelahnya**.
                 </p>
                 <p className="text-gray-700">Anda akan {actionText} mulai dari {dateDisplay} dan ke depannya (hingga 10 tahun simulasi).</p>
-                {/* Input hanya muncul saat mode EDIT (newName ada isinya) */}
-                {newName !== undefined && newName.length > 0 ? (
+                {/* Input hanya muncul saat mode EDIT (newName ada isinya dan bukan mode deletion) */}
+                {!isDeletion && (
                     <input
                         type="text"
                         value={newName}
@@ -105,7 +116,7 @@ export default function EventManagementModal({
                         placeholder="Nama Event Baru"
                         autoFocus
                     />
-                ) : null}
+                )}
             </div>
         );
     } else if (isEdit) {
@@ -133,12 +144,14 @@ export default function EventManagementModal({
             <div className="space-y-4">
                 <div className="flex justify-between">
                     <button 
+                        type="button"
                         onClick={() => onUpdateData({ type: 'add-single', periodicalDayOfWeek: null, periodicalPeriod: '2m' })}
                         className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${!isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
                     >
                         Mode Satuan
                     </button>
                     <button 
+                        type="button"
                         onClick={() => onUpdateData({ type: 'add-periodical', periodicalDayOfWeek: new Date(dateKey ?? '').getDay() })}
                         className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
                     >
@@ -199,30 +212,12 @@ export default function EventManagementModal({
         ? (!newName && !isDeletion)
         : (isAdd && !newName?.trim());
 
-    if (type === 'flow-select') {
-         return (
-            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
-                    <div className="flex justify-between items-center p-4 border-b">
-                        <h3 className="text-xl font-bold text-indigo-600">{title}</h3>
-                        <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
-                            <X size={24} />
-                        </button>
-                    </div>
-                    <div className="p-6">
-                        {content}
-                    </div>
-                </div>
-            </div>
-        );
-    }
-
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white rounded-xl shadow-2xl w-full max-w-md">
                 <div className="flex justify-between items-center p-4 border-b">
                     <h3 className="text-xl font-bold text-indigo-600">{title}</h3>
-                    <button onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
+                    <button type="button" onClick={onClose} className="text-gray-500 hover:text-red-500 transition p-1 rounded-full hover:bg-red-50">
                         <X size={24} />
                     </button>
                 </div>
@@ -231,15 +226,17 @@ export default function EventManagementModal({
                 </div>
                 <div className="p-4 border-t flex justify-end gap-2">
                     <button
+                        type="button"
                         onClick={onClose}
                         className="px-6 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
                     >
                         Batal
                     </button>
                     <button
+                        type="button"
                         onClick={onAction}
                         disabled={isActionDisabled}
-                        className={`px-6 py-2 ${isActionDisabled ? 'bg-gray-400 cursor-not-allowed' : (isPeriodicalConfirm && !newName ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700')} text-white rounded-lg transition`} 
+                        className={`px-6 py-2 ${isActionDisabled ? 'bg-gray-400 cursor-not-allowed' : (isPeriodicalConfirm && isDeletion ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700')} text-white rounded-lg transition`} 
                     >
                         {actionButtonText}
                     </button>

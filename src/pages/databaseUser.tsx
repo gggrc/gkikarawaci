@@ -821,436 +821,442 @@ export default function DatabasePage() {
     return false;
   }, [viewMode, selectedTables]);
 
+  const closeSidebar = () => setIsSidebarOpen(false);
 
   return (
-    // FIX 1: Set outer container to h-screen to establish viewport height
+    // FIX: Set outer container to h-screen
     <div className="flex h-screen bg-gray-50"> 
       
       {/* Sidebar Overlay for Mobile */}
       {isSidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/50 z-30 lg:hidden" 
-          onClick={() => setIsSidebarOpen(false)}
+          onClick={closeSidebar}
         />
       )}
 
-      {/* Sidebar - FIX 2 & 3: Container fixed, h-screen, bg-white, and Sidebar component forced to fill height */}
-      <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        <Sidebar activeView='database' style={{ height: '100%' }} /> 
+      {/* Sidebar - FIX: Container fixed, removed lg:relative */}
+      <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+        {/* Pass props to Sidebar */}
+        <Sidebar activeView='database' isOpen={isSidebarOpen} onClose={closeSidebar} style={{ height: '100%' }} /> 
       </div>
       
-      {/* Main Content - FIX 4: Enable independent vertical scrolling and adjust margin for fixed sidebar */}
-      <main className={`flex-grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
+      {/* Main Content Wrapper (Handles the offset and scroll) */}
+      <div className="w-full lg:ml-64 overflow-y-auto">
+        <main className={`p-4 md:p-8 w-full transition-all duration-300`}> 
       
-        {/* Hamburger Menu for Mobile */}
-        <div className="lg:hidden flex justify-start mb-4">
-            <button 
-                onClick={() => setIsSidebarOpen(true)}
-                className="p-2 rounded-full bg-indigo-600 text-white shadow-md"
-            >
-                <Menu size={24} />
-            </button>
-        </div>
-
-        <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
-            Data Kehadiran Jemaat (Read-Only)
-          </h1>
-          <div className="flex space-x-3 flex-wrap justify-end gap-2">
-            <button 
-              onClick={() => setOpenDownloadDialog(true)}
-              disabled={filteredCount === 0} 
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg text-sm md:text-base"
-            >
-              <Download size={18} />
-              <span className="hidden sm:inline">Download ({filteredCount})</span> 
-              <span className="sm:hidden">Download</span>
-            </button>
-            <button 
-              onClick={handleGoToStats}
-              className="flex items-center gap-2 px-4 py-2 border-2 border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50 transition shadow-md hover:shadow-lg text-sm md:text-base"
-            >
-              <BarChart3 size={18} />
-              <span className="hidden sm:inline">Statistik</span>
-              <span className="sm:hidden">Stats</span>
-            </button>
-          </div>
-        </div>
-      
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-          <CalendarSection
-            year={year}
-            setYear={setYear}
-            startMonth={startMonth}
-            setStartMonth={setStartMonth}
-            viewMode={viewMode}
-            handleSelectMonth={handleSelectMonth}
-            handleSelectDate={handleSelectDate}
-            selectedDates={selectedDates}
-            setShowYearDialog={setShowYearDialog}
-            actualAttendanceDates={actualAttendanceDates}
-          />
-          
-          <SelectedEventsSection
-            selectedDates={selectedDates}
-            selectedEventsByDate={selectedEventsByDate}
-            events={events}
-            viewMode={viewMode}
-            handleSelectEvent={handleSelectEvent}
-          />
-        </div>
-
-        {tablesToRender.length > 0 ? (
-          <div className="mt-8">
-            <div className="flex items-center gap-3 bg-white p-4 rounded-xl border border-gray-100 flex-wrap mb-6"> 
-              <span className="font-semibold text-gray-700 text-sm">Filter:</span>
-              
-              <select 
-                value={filterStatusKehadiran} 
-                onChange={e => setFilterStatusKehadiran(e.target.value)}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+          {/* Hamburger Menu for Mobile */}
+          <div className="lg:hidden flex justify-start mb-4">
+              <button 
+                  onClick={() => setIsSidebarOpen(true)}
+                  className="p-2 rounded-full bg-indigo-600 text-white shadow-md"
               >
-                <option value="">Semua Status Kehadiran</option>
-                <option value="Aktif">Aktif</option>
-                <option value="Jarang Hadir">Jarang Hadir</option>
-                <option value="Tidak Aktif">Tidak Aktif</option>
-              </select>
-              
-              <select 
-                value={filterJabatan} 
-                onChange={e => setFilterJabatan(e.target.value)}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                  <Menu size={24} />
+              </button>
+          </div>
+
+          <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
+            <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
+              Data Kehadiran Jemaat (Read-Only)
+            </h1>
+            <div className="flex space-x-3 flex-wrap justify-end gap-2">
+              <button 
+                onClick={() => setOpenDownloadDialog(true)}
+                disabled={filteredCount === 0} 
+                className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition shadow-md hover:shadow-lg text-sm md:text-base"
               >
-                <option value="">Semua Jabatan</option>
-                {uniqueJabatan.map((jab) => (
-                  <option key={jab} value={jab}>{jab}</option>
-                ))}
-              </select>
-              
-              {showSesiFilter && (
-                  <select 
-                    value={filterKehadiranSesi} 
-                    onChange={e => setFilterKehadiranSesi(e.target.value)}
-                    className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
-                  >
-                    <option value="">Semua Jenis Ibadah</option>
-                    {uniqueKehadiranSesiByDate.map((sesi) => (
-                      <option key={sesi} value={sesi}>{sesi}</option>
-                    ))}
-                  </select>
-              )}
-              
-            </div>
-            
-            <div className="space-y-8" id="table-container"> 
-              
-              {tablesToRender.map(({ date, event }, idx) => {
-                
-                const dataToRender = getFilteredJemaat(jemaat);
-                    
-                const filteredData = dataToRender;
-                
-                const pagedData = idx === 0 ? getPagedData(filteredData) : filteredData; 
-                
-                const tableFilteredCount = filteredData.length;
-                
-                const showPagination = idx === 0 && totalPages > 1;
-
-                const headerText = viewMode === 'monthly_summary'
-                    ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
-                    : `${new Date(date).toLocaleDateString("id-ID", { 
-                        day: "2-digit", 
-                        month: "long", 
-                        year: "numeric" 
-                      })} - ${event}`;
-
-                return (
-                  <div key={`${date}-${event}`} className="bg-white rounded-xl border border-gray-200 overflow-hidden"> 
-                    <div className="bg-indigo-600 p-4 text-white font-semibold flex justify-between items-center">
-                      <h2 className="text-base md:text-lg">{headerText}</h2>
-                      <span className="text-sm bg-white/20 px-3 py-1 rounded-full">{tableFilteredCount} data</span>
-                    </div>
-                    
-                    <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-indigo-50"> 
-                          <tr>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">No</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Foto</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
-                            <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
-                            <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {pagedData.map((j, i) => {
-                            const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
-
-                            return (
-                              <tr 
-                                key={j.id} 
-                                className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
-                                onClick={() => handleRowClick(j)}
-                              >
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
-                                  {rowIndex + 1}
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
-                                  {j.id}
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap">
-                                  <Image
-                                    src={j.foto}
-                                    alt={j.nama}
-                                    width={40}
-                                    height={40}
-                                    className="rounded-full h-10 w-10 object-cover shadow-sm"
-                                    unoptimized
-                                  />
-                                </td>
-                                
-                                <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                                  {j.nama}
-                                </td>
-                                
-                                <td className="px-4 py-3 whitespace-nowrap text-sm">
-                                  <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
-                                    j.statusKehadiran === "Aktif" 
-                                      ? 'bg-green-100 text-green-800 border border-green-200' 
-                                      : j.statusKehadiran === "Jarang Hadir"
-                                      ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                                      : 'bg-red-100 text-red-800 border border-red-200'
-                                  }`}>
-                                    {j.statusKehadiran}
-                                  </span>
-                                </td>
-                                
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                                  {j.jabatan}
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                                    {j.kehadiranSesi}
-                                </td>
-                                <td className="px-4 py-3 whitespace-nowrap text-center">
-                                  <button 
-                                    onClick={(e) => { 
-                                      e.stopPropagation(); 
-                                      handleRowClick(j); 
-                                    }}
-                                    className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium flex items-center gap-1 mx-auto" 
-                                  >
-                                    <Eye size={14} />
-                                    Lihat
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                    
-                    {showPagination && (
-                      <div className="flex justify-center items-center gap-4 p-4 border-t bg-gray-50 flex-wrap">
-                        <button 
-                          disabled={tablePage === 1}
-                          onClick={() => setTablePage(p => p - 1)}
-                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition text-sm" 
-                        >
-                          Sebelumnya
-                        </button>
-                        <span className="text-gray-700 font-medium text-sm">
-                          Halaman <span className="text-indigo-600 font-bold">{tablePage}</span> dari {totalPages}
-                        </span>
-                        <button 
-                          disabled={tablePage === totalPages}
-                          onClick={() => setTablePage(p => p + 1)}
-                          className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition text-sm" 
-                        >
-                          Berikutnya
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-col justify-center items-center h-64 bg-white rounded-xl border-2 border-dashed border-gray-300"> 
-            <Calendar size={64} className="text-gray-300 mb-4" />
-            <p className="text-xl text-gray-500 mb-2">Belum ada data yang ditampilkan</p>
-            <p className="text-sm text-gray-400">Pilih tanggal di kalender dan minimal 1 event</p>
-          </div>
-        )}
-
-        {/* Detail Drawer (Read Only) */}
-        {openDetailDrawer && formData && (
-          <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
-            <div className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"> 
-              <div className="p-6">
-                <div className="flex items-center justify-between border-b pb-4 mb-6">
-                  <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat (Read-Only)</h2>
-                  <button
-                    onClick={() => setOpenDetailDrawer(false)}
-                    className="text-gray-500 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full"
-                  >
-                    <X size={24} />
-                  </button>
-                </div>
-                
-                <div className="space-y-5">
-                  <div className="flex justify-center mb-6">
-                    <div className="relative">
-                      <Image
-                        src={formData.foto ?? "/default-avatar.png"}
-                        alt={formData.nama}
-                        width={112}
-                        height={112}
-                        className="rounded-full h-28 w-28 object-cover shadow-lg"
-                        unoptimized
-                      />
-                      <div className="absolute bottom-0 right-0 bg-green-500 h-6 w-6 rounded-full border-4 border-white"></div>
-                    </div>
-                  </div>
-                  <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Tanggal Lahir
-                      </label>
-                      <input
-                        type="text" 
-                        value={formData.tanggalLahir ?? "-"}
-                        disabled 
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Umur (Tahun)
-                      </label>
-                      <input
-                        type="text"
-                        value={calculatedAge || "-"} 
-                        disabled 
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Keluarga
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.keluarga ?? "-"}
-                        disabled 
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Email
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.email ?? "-"}
-                        disabled 
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        No. Telp
-                      </label>
-                      <input
-                        type="text"
-                        value={formData.telepon ?? "-"}
-                        disabled 
-                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
-                      />
-                    </div>
-
-                    <div className="pt-2"> 
-                        <label className="block text-sm font-semibold text-gray-700 mb-2">
-                          Status Kehadiran
-                        </label>
-                        <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
-                          formData.statusKehadiran === "Aktif" 
-                            ? 'bg-green-100 text-green-800' 
-                            : formData.statusKehadiran === "Jarang Hadir"
-                            ? 'bg-yellow-100 text-yellow-800'
-                            : 'bg-red-100 text-red-800'
-                        }`}>
-                          {formData.statusKehadiran}
-                        </span>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-semibold text-gray-700 mb-2">
-                        Jabatan
-                      </label>
-                      <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
-                        {formData.jabatan}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                
-                <div className="pt-6 flex justify-end space-x-3 border-t mt-8">
-                  <button
-                    onClick={() => setOpenDetailDrawer(false)}
-                    className="px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-                  >
-                    Tutup
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {openDownloadDialog && (
-          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
-              <h3 className="text-xl font-semibold text-indigo-700 border-b pb-3 mb-4">
-                Download Data
-              </h3>
-              <p className="text-gray-700 mb-6">Pilih format file yang ingin diunduh:</p>
-              <div className="flex flex-col gap-3 mb-6">
-                <button
-                  onClick={() => handleDownload('csv')}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
-                >
-                  <Download size={20} />
-                  Download CSV
-                </button>
-                <button
-                  onClick={() => handleDownload('pdf')}
-                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition" 
-                >
-                  <Download size={20} />
-                  Download PDF
-                </button>
-              </div>
-              <button
-                onClick={() => setOpenDownloadDialog(false)}
-                className="w-full px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                <Download size={18} />
+                <span className="hidden sm:inline">Download ({filteredCount})</span> 
+                <span className="sm:hidden">Download</span>
+              </button>
+              <button 
+                onClick={handleGoToStats}
+                className="flex items-center gap-2 px-4 py-2 border-2 border-purple-600 text-purple-600 rounded-lg hover:bg-purple-50 transition shadow-md hover:shadow-lg text-sm md:text-base"
               >
-                Batal
+                <BarChart3 size={18} />
+                <span className="hidden sm:inline">Statistik</span>
+                <span className="sm:hidden">Stats</span>
               </button>
             </div>
           </div>
-        )}
-      </main>
+        
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+            <CalendarSection
+              year={year}
+              setYear={setYear}
+              startMonth={startMonth}
+              setStartMonth={setStartMonth}
+              viewMode={viewMode}
+              handleSelectMonth={handleSelectMonth}
+              handleSelectDate={handleSelectDate}
+              selectedDates={selectedDates}
+              setShowYearDialog={setShowYearDialog}
+              actualAttendanceDates={actualAttendanceDates}
+            />
+            
+            <SelectedEventsSection
+              selectedDates={selectedDates}
+              selectedEventsByDate={selectedEventsByDate}
+              events={events}
+              viewMode={viewMode}
+              handleSelectEvent={handleSelectEvent}
+            />
+          </div>
+
+          {tablesToRender.length > 0 ? (
+            <div className="mt-8">
+              <div className="flex items-center gap-3 bg-white p-4 rounded-xl border border-gray-100 flex-wrap mb-6"> 
+                <span className="font-semibold text-gray-700 text-sm">Filter:</span>
+                
+                <select 
+                  value={filterStatusKehadiran} 
+                  onChange={e => setFilterStatusKehadiran(e.target.value)}
+                  className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                >
+                  <option value="">Semua Status Kehadiran</option>
+                  <option value="Aktif">Aktif</option>
+                  <option value="Jarang Hadir">Jarang Hadir</option>
+                  <option value="Tidak Aktif">Tidak Aktif</option>
+                </select>
+                
+                <select 
+                  value={filterJabatan} 
+                  onChange={e => setFilterJabatan(e.target.value)}
+                  className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                >
+                  <option value="">Semua Jabatan</option>
+                  {uniqueJabatan.map((jab) => (
+                    <option key={jab} value={jab}>{jab}</option>
+                  ))}
+                </select>
+                
+                {showSesiFilter && (
+                    <select 
+                      value={filterKehadiranSesi} 
+                      onChange={e => setFilterKehadiranSesi(e.target.value)}
+                      className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                    >
+                      <option value="">Semua Jenis Ibadah</option>
+                      {uniqueKehadiranSesiByDate.map((sesi) => (
+                        <option key={sesi} value={sesi}>{sesi}</option>
+                      ))}
+                    </select>
+                )}
+                
+              </div>
+              
+              <div className="space-y-8" id="table-container"> 
+                
+                {tablesToRender.map(({ date, event }, idx) => {
+                  
+                  const dataToRender = dataForPagination;
+                      
+                  const filteredData = dataToRender;
+                  
+                  const pagedData = idx === 0 ? getPagedData(filteredData) : filteredData; 
+                  
+                  const tableFilteredCount = filteredData.length;
+                  
+                  const showPagination = idx === 0 && totalPages > 1;
+
+                  const headerText = viewMode === 'monthly_summary'
+                      ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
+                      : `${new Date(date).toLocaleDateString("id-ID", { 
+                          day: "2-digit", 
+                          month: "long", 
+                          year: "numeric" 
+                        })} - ${event}`;
+
+                  return (
+                    <div key={`${date}-${event}`} className="bg-white rounded-xl border border-gray-200 overflow-hidden"> 
+                      <div className="bg-indigo-600 p-4 text-white font-semibold flex justify-between items-center">
+                        <h2 className="text-base md:text-lg">{headerText}</h2>
+                        <span className="text-sm bg-white/20 px-3 py-1 rounded-full">{tableFilteredCount} data</span>
+                      </div>
+                      
+                      <div className="overflow-x-auto">
+                        <table className="min-w-full divide-y divide-gray-200">
+                          <thead className="bg-indigo-50"> 
+                            <tr>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">No</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Foto</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
+                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
+                              <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
+                            </tr>
+                          </thead>
+                          <tbody className="bg-white divide-y divide-gray-200">
+                            {pagedData.map((j, i) => {
+                              const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
+
+                              return (
+                                <tr 
+                                  key={j.id} 
+                                  className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
+                                  onClick={() => handleRowClick(j)}
+                                >
+                                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
+                                    {rowIndex + 1}
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
+                                    {j.id}
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap">
+                                    {/* FIX: Add relative to parent div for Image fill/object-fit */}
+                                    <div className="relative w-10 h-10">
+                                      <Image
+                                        src={j.foto}
+                                        alt={j.nama}
+                                        fill
+                                        className="rounded-full object-cover shadow-sm"
+                                        unoptimized
+                                      />
+                                    </div>
+                                  </td>
+                                  
+                                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                    {j.nama}
+                                  </td>
+                                  
+                                  <td className="px-4 py-3 whitespace-nowrap text-sm">
+                                    <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
+                                      j.statusKehadiran === "Aktif" 
+                                        ? 'bg-green-100 text-green-800 border border-green-200' 
+                                        : j.statusKehadiran === "Jarang Hadir"
+                                        ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                                        : 'bg-red-100 text-red-800 border border-red-200'
+                                    }`}>
+                                      {j.statusKehadiran}
+                                    </span>
+                                  </td>
+                                  
+                                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                    {j.jabatan}
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
+                                      {j.kehadiranSesi}
+                                  </td>
+                                  <td className="px-4 py-3 whitespace-nowrap text-center">
+                                    <button 
+                                      onClick={(e) => { 
+                                        e.stopPropagation(); 
+                                        handleRowClick(j); 
+                                      }}
+                                      className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium flex items-center gap-1 mx-auto" 
+                                    >
+                                      <Eye size={14} />
+                                      Lihat
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      
+                      {showPagination && (
+                        <div className="flex justify-center items-center gap-4 p-4 border-t bg-gray-50 flex-wrap">
+                          <button 
+                            disabled={tablePage === 1}
+                            onClick={() => setTablePage(p => p - 1)}
+                            className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition text-sm" 
+                          >
+                            Sebelumnya
+                          </button>
+                          <span className="text-gray-700 font-medium text-sm">
+                            Halaman <span className="text-indigo-600 font-bold">{tablePage}</span> dari {totalPages}
+                          </span>
+                          <button 
+                            disabled={tablePage === totalPages}
+                            onClick={() => setTablePage(p => p + 1)}
+                            className="px-4 py-2 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 disabled:border-gray-300 disabled:text-gray-300 disabled:cursor-not-allowed transition text-sm" 
+                          >
+                            Berikutnya
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
+            <div className="flex flex-col justify-center items-center h-64 bg-white rounded-xl border-2 border-dashed border-gray-300"> 
+              <Calendar size={64} className="text-gray-300 mb-4" />
+              <p className="text-xl text-gray-500 mb-2">Belum ada data yang ditampilkan</p>
+              <p className="text-sm text-gray-400">Pilih tanggal di kalender dan minimal 1 event</p>
+            </div>
+          )}
+
+          {/* Detail Drawer (Read Only) */}
+          {openDetailDrawer && formData && (
+            <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
+              <div className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"> 
+                <div className="p-6">
+                  <div className="flex items-center justify-between border-b pb-4 mb-6">
+                    <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat (Read-Only)</h2>
+                    <button
+                      onClick={() => setOpenDetailDrawer(false)}
+                      className="text-gray-500 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full"
+                    >
+                      <X size={24} />
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-5">
+                    <div className="flex justify-center mb-6">
+                      <div className="relative">
+                        <Image
+                          src={formData.foto ?? "/default-avatar.png"}
+                          alt={formData.nama}
+                          width={112}
+                          height={112}
+                          className="rounded-full h-28 w-28 object-cover shadow-lg"
+                          unoptimized
+                        />
+                        <div className="absolute bottom-0 right-0 bg-green-500 h-6 w-6 rounded-full border-4 border-white"></div>
+                      </div>
+                    </div>
+                    <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
+
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Tanggal Lahir
+                        </label>
+                        <input
+                          type="text" 
+                          value={formData.tanggalLahir ?? "-"}
+                          disabled 
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Umur (Tahun)
+                        </label>
+                        <input
+                          type="text"
+                          value={calculatedAge || "-"} 
+                          disabled 
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Keluarga
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.keluarga ?? "-"}
+                          disabled 
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Email
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.email ?? "-"}
+                          disabled 
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          No. Telp
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.telepon ?? "-"}
+                          disabled 
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        />
+                      </div>
+
+                      <div className="pt-2"> 
+                          <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            Status Kehadiran
+                          </label>
+                          <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
+                            formData.statusKehadiran === "Aktif" 
+                              ? 'bg-green-100 text-green-800' 
+                              : formData.statusKehadiran === "Jarang Hadir"
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-red-100 text-red-800'
+                          }`}>
+                            {formData.statusKehadiran}
+                          </span>
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Jabatan
+                        </label>
+                        <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
+                          {formData.jabatan}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="pt-6 flex justify-end space-x-3 border-t mt-8">
+                    <button
+                      onClick={() => setOpenDetailDrawer(false)}
+                      className="px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                    >
+                      Tutup
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {openDownloadDialog && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
+                <h3 className="text-xl font-semibold text-indigo-700 border-b pb-3 mb-4">
+                  Download Data
+                </h3>
+                <p className="text-gray-700 mb-6">Pilih format file yang ingin diunduh:</p>
+                <div className="flex flex-col gap-3 mb-6">
+                  <button
+                    onClick={() => handleDownload('csv')}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
+                  >
+                    <Download size={20} />
+                    Download CSV
+                  </button>
+                  <button
+                    onClick={() => handleDownload('pdf')}
+                    className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition" 
+                  >
+                    <Download size={20} />
+                    Download PDF
+                  </button>
+                </div>
+                <button
+                  onClick={() => setOpenDownloadDialog(false)}
+                  className="w-full px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Batal
+                </button>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
       
       <style jsx>{`
         @keyframes slide-in {

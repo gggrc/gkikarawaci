@@ -159,7 +159,7 @@ const getAvailableSessionNames = (date: Date): string[] => {
 
 /**
  * FIX: Memastikan event 'KESELURUHAN DATA HARI INI' selalu ada 
- * jika ada data kehadiran yang tercatat, meskipun tidak ada sesi default.
+ * dan event dihasilkan berdasarkan hari dalam seminggu, bukan data kehadiran.
  */
 const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: Set<string>): string[] => {
     const defaultEventsForDay = getAvailableSessionNames(date);
@@ -167,13 +167,14 @@ const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: S
     
     // Tambahkan sesi unik dari database (kecuali yang sudah di default)
     allUniqueSessions.forEach(session => {
+        // Hanya tambahkan sesi unik yang BUKAN sesi default hari ini
         if (!combinedEvents.includes(session)) {
             combinedEvents.push(session);
         }
     });
     
     // Sort dan filter duplikat
-    const uniqueEvents = [...new Set(combinedEvents)].filter(e => e.trim() !== "");
+    const uniqueEvents = [...new Set(combinedEvents)].filter(e => e.trim() !== "" && e !== "KESELURUHAN DATA HARI INI");
 
     // Memastikan "KESELURUHAN DATA HARI INI" selalu ada di awal
     const finalEvents = [
@@ -181,41 +182,37 @@ const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: S
         ...uniqueEvents.sort()
     ].filter((v, i, a) => a.indexOf(v) === i && v.trim() !== ""); 
     
-    // Jika hanya berisi event keseluruhan, pastikan ada event default jika mungkin
+    // Jika finalEvents masih hanya berisi event keseluruhan, dan ada event default, kembalikan keduanya.
     if (finalEvents.length === 1 && finalEvents[0] === "KESELURUHAN DATA HARI INI" && defaultEventsForDay.length > 0) {
         return ["KESELURUHAN DATA HARI INI", ...defaultEventsForDay];
     }
-
-    // Jika finalEvents masih kosong, hanya kembalikan event keseluruhan (seharusnya tidak terjadi jika ada data)
-    if (finalEvents.length === 0) {
-         return ["KESELURUHAN DATA HARI INI"];
-    }
-
-    return finalEvents;
+    
+    // Kembalikan event yang ada (minimal event keseluruhan)
+    return finalEvents.length > 0 ? finalEvents : ["KESELURUHAN DATA HARI INI"];
 };
 
-// MODIFIED: Fungsi ini kini menerima actualAttendanceDates untuk memfilter tanggal.
+// MODIFIED: Fungsi ini TIDAK lagi memfilter berdasarkan actualAttendanceDates.
+// Ia akan mengembalikan semua tanggal yang sudah lewat/sekarang di bulan itu.
 const getDatesWithEventsInMonth = (
   month: number, 
   currentYear: number, 
-  currentEvents: EventsCache, 
-  actualAttendanceDates: string[] 
+  currentEvents: EventsCache
 ): { date: Date, key: string, events: string[] }[] => {
   const daysInMonth = getDaysInMonth(month, currentYear);
   const dates: { date: Date, key: string, events: string[] }[] = [];
-  // 💡 Menggunakan attendanceSet untuk filter hari yang ada datanya
-  const attendanceSet = new Set(actualAttendanceDates);
   
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(currentYear, month, day);
     const dayKey = getDayKey(date);
     
-    // 💡 HANYA proses tanggal yang memiliki data kehadiran aktual
-    if (attendanceSet.has(dayKey)) {
-      const currentEventList = currentEvents[dayKey] ?? [];
+    // HANYA proses tanggal yang sudah lewat atau hari ini
+    if (new Date(date).setHours(0, 0, 0, 0) <= todayStart) { 
       
-      // HANYA masukkan jika eventlist memiliki isi (setelah inisialisasi)
-       dates.push({ date, key: dayKey, events: currentEventList });
+      // Event list untuk tanggal ini: ambil dari cache atau array kosong
+      const currentEventList = currentEvents[dayKey] ?? []; 
+      
+      // Selalu tambahkan tanggal yang sudah lewat/sekarang, meskipun event list kosong.
+      dates.push({ date, key: dayKey, events: currentEventList });
     }
   }
   return dates; 
@@ -798,7 +795,7 @@ export default function DatabasePage() {
         if (Array.isArray(apiResponse.jemaatData) && apiResponse.jemaatData.length > 0) {
           // FIX 3: Update state dengan data yang benar
           const fetchedUniqueJemaat = apiResponse.jemaatData as UniqueJemaat[];
-          setUniqueJemaatList(fetchedUniqueJemaat); // <-- Data Jemaat Unik (untuk Edit Mode)
+          setUniqueJemaatList(fetchedUniqueJemaat);
           setDraftUniqueJemaatList(fetchedUniqueJemaat.map(j => ({ ...j })));
           
           setAttendanceRecords(apiResponse.fullAttendanceRecords as JemaatRow[]);
@@ -816,6 +813,7 @@ export default function DatabasePage() {
           
           const newEvents: EventsCache = {};
           
+          // Menginisialisasi events cache untuk SEMUA tanggal kehadiran
           fetchedAttendanceDates.forEach(dateKey => {
               const date = new Date(dateKey);
               
@@ -869,8 +867,8 @@ export default function DatabasePage() {
     const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
 
     months.forEach(month => {
-        // 💡 MENGGUNAKAN actualAttendanceDates UNTUK FILTER
-        const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events, actualAttendanceDates); 
+        // 💡 MENGGUNAKAN getDatesWithEventsInMonth TANPA FILTER actualAttendanceDates
+        const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events); 
         datesInMonth.forEach(d => {
             const currentEventsInCache = memoryStorage.events[d.key];
             
@@ -884,7 +882,7 @@ export default function DatabasePage() {
     if (Object.keys(newEvents).length > 0) {
       setEvents(prev => ({ ...prev, ...newEvents }));
     }
-  }, [startMonth, year, actualAttendanceDates, attendanceRecords]); 
+  }, [startMonth, year, attendanceRecords]); 
 
   useEffect(() => {
     memoryStorage.events = events;
@@ -918,8 +916,8 @@ export default function DatabasePage() {
         return;
     }
 
-    // 💡 Menggunakan actualAttendanceDates untuk memfilter hari yang ada datanya
-    const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, memoryStorage.events, actualAttendanceDates);
+    // 💡 Menggunakan getDatesWithEventsInMonth TANPA filter attendance
+    const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, memoryStorage.events);
     
     const newDates = datesWithEventsInMonth.map(d => d.date);
     const newEventsByDate: SelectedEventsByDate = {};
@@ -945,7 +943,7 @@ export default function DatabasePage() {
     setStartMonth(monthIndex);
     setYear(currentYear);
     setViewMode('monthly_summary');
-  }, [viewMode, startMonth, year, setStartMonth, setYear, actualAttendanceDates, attendanceRecords]); 
+  }, [viewMode, startMonth, year, setStartMonth, setYear, attendanceRecords]); 
 
    useEffect(() => {
     // FIX: Gunakan attendanceRecords
@@ -954,7 +952,8 @@ export default function DatabasePage() {
     const { dates, date, mode, event: eventQuery } = router.query;
     
     const currentEventsCache = memoryStorage.events;
-    
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+
     if (typeof dates === 'string' && dates.includes(',')) {
         const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
         const datesArray = dates.split(',').filter(d => dateRegex.exec(d));
@@ -966,18 +965,15 @@ export default function DatabasePage() {
         const newSelectedEventsByDate: SelectedEventsByDate = {};
         const targetMonth = firstDate.getMonth();
         const targetYear = firstDate.getFullYear();
-        const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
         
         datesArray.forEach(dateKey => {
             const dateObj = new Date(dateKey);
             
             // Generate events if missing from cache
             let availableEvents = currentEventsCache[dateKey];
-            if (!availableEvents && actualAttendanceDates.includes(dateKey)) {
+            if (!availableEvents) { // No longer restricted by actualAttendanceDates
                 availableEvents = populateEventsForDate(dateKey, dateObj, allUniqueSessions);
                 currentEventsCache[dateKey] = availableEvents;
-            } else if (!availableEvents) {
-                return; // Skip if no attendance data for this date
             }
 
             let selectedEvents: string[] = [];
@@ -1018,14 +1014,12 @@ export default function DatabasePage() {
         
         if (isNaN(targetDate.getTime())) return;
         
-        const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+        
         let availableEvents = currentEventsCache[dateKey];
         
-        if (!availableEvents && actualAttendanceDates.includes(dateKey)) {
+        if (!availableEvents) { // No longer restricted by actualAttendanceDates
             availableEvents = populateEventsForDate(dateKey, targetDate, allUniqueSessions);
             currentEventsCache[dateKey] = availableEvents;
-        } else if (!availableEvents) {
-            return; // Skip if no attendance data for this date
         }
 
         const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
@@ -1068,20 +1062,18 @@ export default function DatabasePage() {
         return;
     }
 
-    const hasAttendance = actualAttendanceDates.includes(key);
+    // hasAttendance tetap digunakan untuk logic data (tabel/statistik), tapi tidak lagi untuk memblokir pemilihan
+    const hasAttendance = actualAttendanceDates.includes(key); 
     const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
     
-    // Handle Event Caching/Generation
+    // Handle Event Caching/Generation for ANY selected date (past/present)
     let currentEvents = events[key];
     const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
     
-    if (hasAttendance && (!currentEvents || currentEvents.length === 0)) {
+    // 💡 FIX: Populasikan event jika belum ada di cache (bisa tanggal dengan data atau tanpa data)
+    if (!currentEvents || currentEvents.length === 0) {
         currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
-        setEvents(prev => ({ ...prev, [key]: currentEvents }));
-        memoryStorage.events[key] = currentEvents;
-    } else if (!hasAttendance && !currentEvents) {
-        // Jika tidak ada data dan tidak di-cache, buat array kosong untuk mempermudah deselect
-        currentEvents = [];
+        // Jika tidak ada attendance, dan tidak ada default/user-added event, event list akan berisi hanya "KESELURUHAN DATA HARI INI"
         setEvents(prev => ({ ...prev, [key]: currentEvents }));
         memoryStorage.events[key] = currentEvents;
     }
@@ -1093,8 +1085,8 @@ export default function DatabasePage() {
       // DESELECT
       newDates = selectedDates.filter(d => getDayKey(d) !== key);
       delete newEventsByDate[key];
-      // 💡 Jika tidak ada data, hapus juga dari cache event agar tidak membebani
-      if (!hasAttendance) {
+      // 💡 Hapus dari cache event HANYA JIKA event list-nya kosong (berarti user tidak menambah event custom)
+      if (events[key]?.length === 0 || (events[key]?.length === 1 && events[key]?.[0] === "KESELURUHAN DATA HARI INI" && !hasAttendance)) {
           setEvents(prev => {
              const updated = { ...prev };
              delete updated[key];
@@ -1106,10 +1098,10 @@ export default function DatabasePage() {
       // SELECT
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
       
-      const eventsList = events[key] ?? [];
+      const eventsList = currentEvents; // Use the newly populated list
       const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
       
-      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' jika ada event (berarti ada data)
+      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' (ini defaultnya, walaupun tidak ada data kehadiran)
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
     
@@ -1150,9 +1142,10 @@ export default function DatabasePage() {
   }, [selectedDates]);
   
   const handleOpenAddEvent = useCallback((dateKey: string) => {
-    // Check if the date has attendance data
-    if (!actualAttendanceDates.includes(dateKey)) {
-        showAlert("Tambah Event Gagal", "Anda hanya bisa menambahkan event pada tanggal yang memiliki data kehadiran.");
+    // 💡 FIX: Hapus pengecekan actualAttendanceDates. Sekarang hanya periksa apakah tanggal sudah lewat/sekarang.
+    const dateTimestamp = new Date(dateKey).setHours(0, 0, 0, 0);
+    if (dateTimestamp > todayStart) {
+        showAlert("Tambah Event Gagal", "Anda tidak bisa menambahkan event pada tanggal di masa depan.");
         return; 
     }
 
@@ -1166,7 +1159,7 @@ export default function DatabasePage() {
       });
       
       setShowEventModal(true);
-  }, [actualAttendanceDates, showAlert]);
+  }, [showAlert]);
 
   const handleSingleAddEvent = useCallback(() => {
     const key = eventModalData.dateKey;
@@ -1257,10 +1250,8 @@ export default function DatabasePage() {
             totalUpdatedCount++;
         }
         
-        // Tambahkan event ke semua tanggal berulang masa depan (hanya jika ada data kehadiran)
+        // Tambahkan event ke semua tanggal berulang masa depan 
         futureDates.forEach(key => {
-            if (!actualAttendanceDates.includes(key)) return; // Hanya update tanggal dengan data kehadiran
-            
             const date = new Date(key);
             const initialEvents = populateEventsForDate(key, date, allUniqueSessions);
             const currentEvents = updatedEvents[key] ?? initialEvents;
@@ -1311,7 +1302,7 @@ export default function DatabasePage() {
 
     setShowEventModal(false);
     setEventModalData({});
-  }, [eventModalData, events, selectedDates, showAlert, actualAttendanceDates, attendanceRecords]);
+  }, [eventModalData, events, selectedDates, showAlert, attendanceRecords]);
 
   const handleEventAction = useCallback(() => {
     switch(eventModalData.type) {
@@ -1373,8 +1364,9 @@ export default function DatabasePage() {
                 
                 Object.keys(updatedEvents).forEach(key => {
                     const currentDate = new Date(key).setHours(0, 0, 0, 0);
-                    // Filter: hanya tanggal setelah/sama dengan tanggal awal YANG ADA data kehadirannya
-                    if (currentDate >= startDate && actualAttendanceDates.includes(key)) {
+
+                    // Filter: hanya tanggal setelah/sama dengan tanggal awal YANG TIDAK di masa depan
+                    if (currentDate >= startDate && currentDate <= todayStart) { 
                         let eventsList = updatedEvents[key] ?? [];
                         
                         const targetEventIndex = eventsList.findIndex(e => e.toLowerCase() === lowerNameChange);
@@ -1403,8 +1395,8 @@ export default function DatabasePage() {
                 Object.keys(updatedSelected).forEach(key => {
                     const currentDate = new Date(key).setHours(0, 0, 0, 0);
 
-                    // Filter: hanya tanggal setelah/sama dengan tanggal awal YANG ADA data kehadirannya
-                    if (currentDate >= startDate && actualAttendanceDates.includes(key)) {
+                    // Filter: hanya tanggal setelah/sama dengan tanggal awal YANG TIDAK di masa depan
+                    if (currentDate >= startDate && currentDate <= todayStart) {
                          let selectedList = updatedSelected[key] ?? [];
                          const targetSelectedEventIndex = selectedList.findIndex(e => e.toLowerCase() === lowerNameChange);
                          
@@ -1424,7 +1416,7 @@ export default function DatabasePage() {
             });
 
             const actionVerb = isDeletion ? 'dihapus' : 'diperbarui';
-            showAlert("Sukses Aksi Berkala", `${totalPeriodicAffected} kejadian Event "${nameToChange}" telah ${actionVerb} mulai dari ${new Date(startKey).toLocaleDateString("id-ID")} dan semua tanggal setelahnya.`);
+            showAlert("Sukses Aksi Berkala", `${totalPeriodicAffected} kejadian Event "${nameToChange}" telah ${actionVerb} mulai dari ${new Date(startKey).toLocaleDateString("id-ID")} dan semua tanggal setelahnya yang sudah lewat/sekarang.`);
             setShowEventModal(false);
             setEventModalData({});
             break;
@@ -1433,7 +1425,7 @@ export default function DatabasePage() {
         default:
             break;
     }
-  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates, showAlert, actualAttendanceDates, attendanceRecords]);
+  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates, showAlert, attendanceRecords]);
 
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
@@ -2206,142 +2198,149 @@ export default function DatabasePage() {
                     </div>
                     
                     <div className="overflow-x-auto">
-                      <table className="min-w-full divide-y divide-gray-200">
-                        <thead className="bg-indigo-50"> 
-                          <tr>
-                            <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[40px]">No</th>
-                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[80px]">ID</th>
-                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[60px]">Foto</th>
-                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
-                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
-                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
-                            <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
-                            <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Dokumen</th> 
-                            <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
-                          </tr>
-                        </thead>
-                        <tbody className="bg-white divide-y divide-gray-200">
-                          {pagedData.map((j, i) => {
-                            // FIX 6: Cari draft item dari draftUniqueJemaatList
-                            const jemaatId = j.id.split('-')[0] ?? j.id;
-                            const draftItem = draftUniqueJemaatList.find(d => d.id === jemaatId) ?? j;
-                            const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
+                        {tableFilteredCount > 0 ? (
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-indigo-50"> 
+                                <tr>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[40px]">No</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[80px]">ID</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[60px]">Foto</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Dokumen</th> 
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
+                                </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                {pagedData.map((j, i) => {
+                                    // FIX 6: Cari draft item dari draftUniqueJemaatList
+                                    const jemaatId = j.id.split('-')[0] ?? j.id;
+                                    const draftItem = draftUniqueJemaatList.find(d => d.id === jemaatId) ?? j;
+                                    const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
 
-                            return (
-                              <tr 
-                                key={j.id} 
-                                className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
-                                onClick={() => handleRowClick(j)}
-                              >
-                                <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
-                                  {rowIndex + 1}
-                                </td>
-                                <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
-                                  {j.id}
-                                </td>
-                                <td className="px-3 py-3 whitespace-nowrap">
-                                  <Image
-                                    src={j.foto}
-                                    alt={j.nama}
-                                    width={40}
-                                    height={40}
-                                    className="rounded-full h-10 w-10 object-cover shadow-sm"
-                                    unoptimized
-                                  />
-                                </td>
-                                
-                                <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                                  {editMode ? (
-                                    <input
-                                      type="text"
-                                      value={draftItem.nama}
-                                      onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, nama: e.target.value } : d))}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 w-full focus:border-indigo-500 focus:outline-none text-sm"
-                                      onClick={(e) => e.stopPropagation()} 
-                                    />
-                                  ) : (
-                                    j.nama
-                                  )}
-                                </td>
-                                
-                                <td className="px-3 py-3 whitespace-nowrap text-sm">
-                                  {editMode ? (
-                                    <select
-                                      value={draftItem.statusKehadiran}
-                                      onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, statusKehadiran: e.target.value as StatusKehadiran } : d))}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
-                                      onClick={(e) => e.stopPropagation()} 
+                                    return (
+                                    <tr 
+                                        key={j.id} 
+                                        className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
+                                        onClick={() => handleRowClick(j)}
                                     >
-                                      <option value="Aktif">Aktif</option>
-                                      <option value="Jarang Hadir">Jarang Hadir</option>
-                                      <option value="Tidak Aktif">Tidak Aktif</option>
-                                    </select>
-                                  ) : (
-                                    <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
-                                      j.statusKehadiran === "Aktif" 
-                                        ? 'bg-green-100 text-green-800 border border-green-200' 
-                                        : j.statusKehadiran === "Jarang Hadir"
-                                        ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                                        : 'bg-red-100 text-red-800 border border-red-200'
-                                    }`}>
-                                      {j.statusKehadiran}
-                                    </span>
-                                  )}
-                                </td>
-                                
-                                <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
-                                  {editMode ? (
-                                    <select
-                                      value={draftItem.jabatan}
-                                      onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, jabatan: e.target.value } : d))}
-                                      className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
-                                      onClick={(e) => e.stopPropagation()} 
-                                    >
-                                      <option value="Jemaat">Jemaat</option>
-                                      {uniqueJabatan.map((jab) => (
-                                        <option key={jab} value={jab}>{jab}</option>
-                                      ))}
-                                    </select>
-                                  ) : (
-                                    j.jabatan
-                                  )}
-                                </td>
-                                <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
-                                    {draftItem.kehadiranSesi}
-                                </td>
-                                <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
-                                  {j.dokumen ? (
-                                    <button
-                                      onClick={(e) => { 
-                                        e.stopPropagation(); 
-                                        openPreviewModal(j); 
-                                      }}
-                                      className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition text-xs font-medium"
-                                      title={typeof j.dokumen === 'string' && (j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf')) ? "Preview PDF" : "Preview Gambar"}
-                                    >
-                                      {typeof j.dokumen === 'string' && (j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf')) ? <FileText size={14} /> : <LucideImage size={14} />}
-                                      Preview
-                                    </button>
-                                  ) : (
-                                    <span className="text-gray-400">N/A</span>
-                                  )}
-                                </td>
-                                <td className="px-3 py-3 whitespace-nowrap text-center">
-                                  <button 
-                                    onClick={(e) => { 
-                                      e.stopPropagation(); 
-                                      handleRowClick(j); 
-                                    }}
-                                    className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium" 
-                                  >
-                                    Detail
-                                  </button>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
+                                        {rowIndex + 1}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
+                                        {j.id}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap">
+                                        <Image
+                                            src={j.foto}
+                                            alt={j.nama}
+                                            width={40}
+                                            height={40}
+                                            className="rounded-full h-10 w-10 object-cover shadow-sm"
+                                            unoptimized
+                                        />
+                                        </td>
+                                        
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                        {editMode ? (
+                                            <input
+                                            type="text"
+                                            value={draftItem.nama}
+                                            onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, nama: e.target.value } : d))}
+                                            className="border-2 border-indigo-300 rounded px-2 py-1 w-full focus:border-indigo-500 focus:outline-none text-sm"
+                                            onClick={(e) => e.stopPropagation()} 
+                                            />
+                                        ) : (
+                                            j.nama
+                                        )}
+                                        </td>
+                                        
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm">
+                                        {editMode ? (
+                                            <select
+                                            value={draftItem.statusKehadiran}
+                                            onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, statusKehadiran: e.target.value as StatusKehadiran } : d))}
+                                            className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
+                                            onClick={(e) => e.stopPropagation()} 
+                                            >
+                                            <option value="Aktif">Aktif</option>
+                                            <option value="Jarang Hadir">Jarang Hadir</option>
+                                            <option value="Tidak Aktif">Tidak Aktif</option>
+                                            </select>
+                                        ) : (
+                                            <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
+                                            j.statusKehadiran === "Aktif" 
+                                                ? 'bg-green-100 text-green-800 border border-green-200' 
+                                                : j.statusKehadiran === "Jarang Hadir"
+                                                ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                                                : 'bg-red-100 text-red-800 border border-red-200'
+                                            }`}>
+                                            {j.statusKehadiran}
+                                            </span>
+                                        )}
+                                        </td>
+                                        
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
+                                        {editMode ? (
+                                            <select
+                                            value={draftItem.jabatan}
+                                            onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, jabatan: e.target.value } : d))}
+                                            className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
+                                            onClick={(e) => e.stopPropagation()} 
+                                            >
+                                            <option value="Jemaat">Jemaat</option>
+                                            {uniqueJabatan.map((jab) => (
+                                                <option key={jab} value={jab}>{jab}</option>
+                                            ))}
+                                            </select>
+                                        ) : (
+                                            j.jabatan
+                                        )}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
+                                            {draftItem.kehadiranSesi}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
+                                        {j.dokumen ? (
+                                            <button
+                                            onClick={(e) => { 
+                                                e.stopPropagation(); 
+                                                openPreviewModal(j); 
+                                            }}
+                                            className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition text-xs font-medium"
+                                            title={typeof j.dokumen === 'string' && (j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf')) ? "Preview PDF" : "Preview Gambar"}
+                                            >
+                                            {typeof j.dokumen === 'string' && (j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf')) ? <FileText size={14} /> : <LucideImage size={14} />}
+                                            Preview
+                                            </button>
+                                        ) : (
+                                            <span className="text-gray-400">N/A</span>
+                                        )}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-center">
+                                        <button 
+                                            onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            handleRowClick(j); 
+                                            }}
+                                            className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium" 
+                                        >
+                                            Detail
+                                        </button>
+                                        </td>
+                                    </tr>
+                                    );
+                                })}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <div className="p-8 text-center text-gray-500">
+                                <p className="text-lg font-semibold">Tidak Ada Data Kehadiran</p>
+                                <p className="text-sm">Meskipun event ini telah dipilih, tidak ada data kehadiran jemaat yang tercatat untuk tanggal/sesi ini berdasarkan filter saat ini.</p>
+                            </div>
+                        )}
                     </div>
                     
                     {showPagination && (
