@@ -8,6 +8,8 @@ import { useRouter } from 'next/router';
 import * as htmlToImage from "html-to-image";
 import jsPDF from "jspdf";
 import 'jspdf-autotable'; // ⬅️ ini HARUS langsung setelah jsPDF
+// Import tipe data dari API untuk konsistensi
+import { type JemaatWithAttendanceInfo, type JemaatClient, type StatusKehadiran } from "~/app/api/jemaat/route";
 
 
 // 🩹 Patch global untuk menghindari error oklch di runtime
@@ -16,28 +18,47 @@ if (typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('color', 'oklch(
 }
 
 
-// --- Tipe Data ---
-interface Jemaat {
-  id: number | string;
+// --- Tipe Data (Disesuaikan dengan API Response) ---
+
+// Data Jemaat Granular (Per Record Kehadiran - JemaatRow)
+interface JemaatRow extends JemaatWithAttendanceInfo {
+  id: number | string; // id_jemaat-tanggal (di-mock)
   foto: string;
   nama: string;
   jabatan: string;
-  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif"; // Status kehadiran terhitung
+  statusKehadiran: StatusKehadiran; 
   tanggalLahir?: string;
   umur?: string;
   keluarga?: string;
   email?: string;
   telepon?: string;
   kehadiranSesi: string;
-  dokumen?: string; // NEW: Field untuk dokumen/gambar
-  tanggalKehadiran: string; // Format: YYYY-MM-DD (dari API)
+  dokumen?: string;
+  tanggalKehadiran: string; // Format: YYYY-MM-DD
+}
+
+// Data Jemaat Unik (Overall/Unique Jemaat - JemaatClient)
+interface UniqueJemaat extends JemaatClient {
+    id: number | string;
+    foto: string;
+    nama: string;
+    jabatan: string;
+    statusKehadiran: StatusKehadiran; 
+    tanggalLahir?: string;
+    umur?: string;
+    keluarga?: string;
+    email?: string;
+    telepon?: string;
+    kehadiranSesi: string; // Mocked session (dari API)
 }
 
 // Tipe response dari /api/jemaat
 interface JemaatAPIResponse {
-    jemaatData: Jemaat[];
-    attendanceDates: string[];
+    jemaatData: UniqueJemaat[]; // List Jemaat Unik
+    attendanceDates: string[]; // List Tanggal Hadir
+    fullAttendanceRecords: JemaatRow[]; // List Semua Record Kehadiran
 }
+
 
 // --- Konstanta Kalender ---
 const monthNames = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
@@ -63,23 +84,245 @@ const getFirstDayOfMonth = (month: number, year: number) => new Date(year, month
 const COLORS = ['#10B981', '#F59E0B', '#EF4444', '#4F46E5', '#8B5CF6', '#EC4899', '#3B82F6', '#A855F7'];
 
 // --- Logika Statistik ---
-const calculateOverallStats = (jemaat: Jemaat[]) => {
-  if (jemaat.length === 0) {
-    return { totalJemaat: 0, jabatanDistribution: {}, kehadiranDistribution: {} as Record<Jemaat['statusKehadiran'], number> };
+
+/**
+ * MENGHITUNG STATISTIK KESELURUHAN DARI DATA JEMAAT UNIK (overallJemaatList)
+ * @param overallJemaatList 
+ */
+const calculateOverallStats = (overallJemaatList: UniqueJemaat[]) => {
+  if (overallJemaatList.length === 0) {
+    return { totalJemaat: 0, jabatanDistribution: {}, kehadiranDistribution: {} as Record<UniqueJemaat['statusKehadiran'], number> };
   }
   
-  const jabatanDistribution = jemaat.reduce((acc, j) => {
+  const jabatanDistribution = overallJemaatList.reduce((acc, j) => {
     acc[j.jabatan] = (acc[j.jabatan] ?? 0) + 1;
     return acc;
   }, {} as Record<string, number>);
   
-  const kehadiranDistribution = jemaat.reduce((acc, j) => {
+  const kehadiranDistribution = overallJemaatList.reduce((acc, j) => {
     acc[j.statusKehadiran] = (acc[j.statusKehadiran] || 0) + 1;
     return acc;
-  }, {} as Record<Jemaat['statusKehadiran'], number>);
+  }, {} as Record<UniqueJemaat['statusKehadiran'], number>);
 
-  return { totalJemaat: jemaat.length, jabatanDistribution, kehadiranDistribution };
+  return { totalJemaat: overallJemaatList.length, jabatanDistribution, kehadiranDistribution };
 };
+
+
+/**
+ * MENGHITUNG STATISTIK KEHADIRAN HARIAN BERDASARKAN RECORD KEHADIRAN (fullAttendanceRecords)
+ * Potensi Hadir dihitung berdasarkan jumlah jemaat unik di seluruh database
+ * yang SESInya cocok dengan hari yang bersangkutan.
+ * @param fullAttendanceRecords 
+ * @param uniqueJemaatList // Diperlukan untuk menghitung POTENSI
+ * @param selectedDate 
+ * @returns 
+ */
+const calculateDateStats = (fullAttendanceRecords: JemaatRow[], uniqueJemaatList: UniqueJemaat[], selectedDate: string) => {
+  // Hanya filter records yang tercatat hadir pada tanggal yang dipilih
+  const recordsHadirDiTanggalIni = fullAttendanceRecords.filter(r => 
+    r.tanggalKehadiran === selectedDate
+  );
+
+  // 1. Tentukan sesi yang *seharusnya* ada di tanggal ini (untuk menghitung potensi)
+  const dateObj = new Date(selectedDate);
+  const dayOfWeek = dateObj.getDay(); // 0 = Minggu
+  
+  const availableSessions = new Set<string>();
+  if (dayOfWeek === 0) { // Minggu
+      ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"].forEach(s => availableSessions.add(s));
+  } else if (dayOfWeek === 6) { // Sabtu
+      ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"].forEach(s => availableSessions.add(s));
+  }
+  
+  // Potensi adalah jumlah jemaat *unik* dari seluruh database
+  // yang SESINYA (kehadiranSesi) cocok dengan hari ini
+  let totalPotentialAttendees = new Set(
+      uniqueJemaatList
+          .filter(j => availableSessions.has(j.kehadiranSesi))
+          .map(j => j.id)
+  ).size;
+
+  let totalKehadiranSemuaSesi = recordsHadirDiTanggalIni.length;
+  
+  // Total jemaat *unik* yang hadir di tanggal ini
+  const uniqueAttendees = new Set(recordsHadirDiTanggalIni.map(r => r.id.toString().split('-')[0]));
+  
+  // Catat record kehadiran berdasarkan sesi
+  const kehadiranBySesi: Record<string, number> = {};
+  const statusKehadiranBySesi: Record<string, Record<StatusKehadiran, number>> = {}; 
+
+  recordsHadirDiTanggalIni.forEach(record => {
+      const sesi = record.kehadiranSesi;
+      const status = record.statusKehadiran;
+      
+      kehadiranBySesi[sesi] = (kehadiranBySesi[sesi] ?? 0) + 1;
+
+      // Catat status jemaat yang hadir
+      statusKehadiranBySesi[sesi] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
+      statusKehadiranBySesi[sesi][status] = (statusKehadiranBySesi[sesi][status] || 0) + 1;
+  });
+
+  // Jika totalPotentialAttendees adalah 0 (misalnya, semua jemaat unik memiliki sesi yang tidak match hari ini), 
+  // gunakan jumlah jemaat unik yang hadir sebagai minimal potensi
+  if (totalPotentialAttendees < uniqueAttendees.size) {
+      totalPotentialAttendees = uniqueAttendees.size;
+  }
+      
+  // Presentase dihitung terhadap POTENSI
+  const totalHadirUnik = uniqueAttendees.size;
+  const presentaseKehadiran = totalPotentialAttendees > 0 
+      ? `${((totalHadirUnik / totalPotentialAttendees) * 100).toFixed(1)}%`
+      : "0%";
+
+  return { 
+    totalHadir: totalHadirUnik, 
+    totalTidakHadir: totalPotentialAttendees - totalHadirUnik, 
+    presentaseKehadiran, 
+    kehadiranBySesi, 
+    statusKehadiranBySesi, 
+    totalKehadiranSemuaSesi,
+    totalPotentialAttendees
+  };
+};
+
+/**
+ * FUNGSI REAL: Menghitung tren kehadiran bulanan/tahunan (MENGGANTIKAN MOCK)
+ * Menghitung status berdasarkan *status saat ini* dari jemaat yang hadir di bulan tersebut.
+ */
+const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear: number, overallJemaatList: UniqueJemaat[]) => {
+    const monthlyStats: Record<string, { aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }> = {};
+    const today = new Date();
+    const currentMonthIndex = today.getMonth();
+    const currentYear = today.getFullYear();
+    
+    // 1. Group records by month (YYYY-MM)
+    const recordsByMonth = fullAttendanceRecords.reduce((acc, record) => {
+        const monthKey = record.tanggalKehadiran.substring(0, 7); // YYYY-MM
+        acc[monthKey] ??= [];
+        acc[monthKey].push(record);
+        return acc;
+    }, {} as Record<string, JemaatRow[]>);
+    
+    // 2. Iterate through records for the selected year
+    Object.entries(recordsByMonth).forEach(([monthKey, records]) => {
+        const year = parseInt(monthKey.substring(0, 4));
+        const monthIndex = parseInt(monthKey.substring(5, 7)) - 1; // 0-11
+        
+        if (year !== selectedYear) return;
+        
+        // 3. For each month, find unique jemaat IDs
+        const uniqueJemaatInMonth = new Set<string>();
+        records.forEach(r => {
+            uniqueJemaatInMonth.add(r.id.toString().split('-')[0]); // Use base ID
+        });
+        
+        // 4. Map back to overallJemaatList to get their *current* status
+        // FIX: Menghapus spasi dari nama variabel
+        const uniqueJemaatListForMonth = overallJemaatList.filter(j => 
+            uniqueJemaatInMonth.has(j.id.toString())
+        );
+
+        // 5. Calculate distribution of current status for those who attended this month
+        // FIX: Menggunakan nama variabel yang sudah diperbaiki
+        const distribution = uniqueJemaatListForMonth.reduce((acc, j) => {
+             acc[j.statusKehadiran] = (acc[j.statusKehadiran] ?? 0) + 1;
+             return acc;
+        }, { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 } as Record<StatusKehadiran, number>);
+        
+        const total = records.length; // Total records (not unique jemaat)
+        
+        // 6. Store the result
+        const monthName = monthNames[monthIndex].substring(0, 3);
+        monthlyStats[monthName] = {
+            bulan: monthName,
+            aktif: distribution.Aktif,
+            jarangHadirlah: distribution['Jarang Hadir'],
+            tidakAktif: distribution['Tidak Aktif'],
+            total: total,
+        };
+    });
+    
+    // 7. Ensure all months (up to current month for current year) are included
+    const result = monthNames.map((name, index) => {
+        const shortName = name.substring(0, 3);
+        const stat = monthlyStats[shortName] || { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
+        
+        // Filter out future months in the current year
+        if (selectedYear === currentYear && index > currentMonthIndex) {
+            return null;
+        }
+
+        return { ...stat, bulan: shortName };
+    }).filter(s => s !== null);
+    
+    return result as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
+}
+
+/**
+ * FUNGSI REAL: Menghitung tren harian untuk Line Chart Bulanan (MENGGANTIKAN MOCK)
+ * Menghitung status berdasarkan *status saat ini* dari jemaat unik yang hadir di hari tersebut.
+ */
+const calculateDailyTrends = (fullAttendanceRecords: JemaatRow[], selectedMonth: number, selectedYear: number) => {
+    const daysInMonth = getDaysInMonth(selectedMonth, selectedYear);
+    const today = new Date();
+    const currentDay = today.getDate();
+    const currentMonthIndex = today.getMonth();
+    const currentYear = today.getFullYear();
+    
+    let maxDay = daysInMonth;
+    if (selectedYear === currentYear && selectedMonth === currentMonthIndex) {
+      maxDay = currentDay;
+    }
+
+    const data: Array<{ hari: number; aktif: number | null; jarangHadirlah: number | null; tidakAktif: number | null }> = [];
+    
+    // 1. Group records by date (YYYY-MM-DD)
+    const recordsByDay = fullAttendanceRecords.reduce((acc, record) => {
+        acc[record.tanggalKehadiran] ??= [];
+        acc[record.tanggalKehadiran].push(record);
+        return acc;
+    }, {} as Record<string, JemaatRow[]>);
+
+
+    for (let day = 1; day <= daysInMonth; day++) {
+        const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+        
+        if (day > maxDay) {
+            data.push({ hari: day, aktif: null, jarangHadirlah: null, tidakAktif: null });
+            continue;
+        }
+
+        const recordsForDay = recordsByDay[dateKey];
+        
+        if (recordsForDay && recordsForDay.length > 0) {
+            // Find unique jemaat IDs for this day
+            const uniqueJemaatIDs = new Set<string>();
+            
+            // Calculate status distribution based on the *current* status of the unique attendees
+            const distribution = recordsForDay.reduce((acc, record) => {
+                 // Only count the first instance for a unique jemaat to avoid double counting status
+                 const jemaatId = record.id.toString().split('-')[0];
+                 if (!acc.seen.has(jemaatId)) {
+                     acc.seen.add(jemaatId);
+                     acc[record.statusKehadiran] = (acc[record.statusKehadiran] ?? 0) + 1;
+                 }
+                 return acc;
+            }, { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0, seen: new Set<string>() } as Record<StatusKehadiran | 'seen', number | Set<string>>);
+
+            data.push({
+                hari: day,
+                aktif: distribution.Aktif as number,
+                jarangHadirlah: distribution['Jarang Hadir'] as number,
+                tidakAktif: distribution['Tidak Aktif'] as number,
+            });
+        } else {
+            // Jika tidak ada data kehadiran tercatat di tanggal ini, tampilkan 0, bukan null
+            data.push({ hari: day, aktif: 0, jarangHadirlah: 0, tidakAktif: 0 }); 
+        }
+    }
+    return data;
+}
+
 
 // Fungsi untuk mendapatkan nama sesi pendek dari nama sesi lengkap
 const getShortSessionName = (session: string) => {
@@ -99,74 +342,6 @@ const getCleanSessionName = (session: string) => {
         .replace(/ (Minggu|Sabtu)/, '') // Hapus hari (jika tidak ada koma)
         .trim();
 }
-
-/**
- * MODIFIKASI: Menghitung statistik berdasarkan status Kehadiran dan Sesi Kehadiran
- * tanpa menggunakan simulasi kehadiran acak. ASUMSI: Jemaat HADIR jika sesi kehadiran mereka
- * (kehadiranSesi) cocok dengan sesi yang tersedia di tanggal yang dipilih DAN JEMAAT MEMILIKI DATA KEHADIRAN DI TANGGAL TERSEBUT.
- * @param jemaatList 
- * @param selectedDate 
- * @returns 
- */
-const calculateDateStats = (jemaatList: Jemaat[], selectedDate: string) => {
-  // Hanya filter jemaat yang tercatat hadir pada tanggal yang dipilih
-  const jemaatHadirDiTanggalIni = jemaatList.filter(j => 
-    getDayKey(new Date(j.tanggalKehadiran)) === selectedDate
-  );
-
-  const totalJemaat = jemaatHadirDiTanggalIni.length; // Total jemaat yang *hadir* di tanggal ini
-
-  // 1. Tentukan sesi yang *seharusnya* ada di tanggal ini (untuk menghitung potensi)
-  const dateObj = new Date(selectedDate);
-  const dayOfWeek = dateObj.getDay(); // 0 = Minggu
-  
-  const availableSessions = new Set<string>();
-  if (dayOfWeek === 0) { // Minggu
-      ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"].forEach(s => availableSessions.add(s));
-  } else if (dayOfWeek === 6) { // Sabtu
-      ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"].forEach(s => availableSessions.add(s));
-  }
-  
-  let totalKehadiranSemuaSesi = 0;
-  // Potensi adalah jumlah jemaat yang SESINYA cocok dengan hari ini
-  let totalPotentialAttendees = jemaatList.filter(j => 
-      availableSessions.has(j.kehadiranSesi)
-  ).length; 
-
-  const kehadiranBySesi: Record<string, number> = {};
-  const statusKehadiranBySesi: Record<string, Record<Jemaat['statusKehadiran'], number>> = {}; 
-
-  // 2. Hitung distribusi berdasarkan jemaat yang HADIR di tanggal ini.
-  jemaatHadirDiTanggalIni.forEach(jemaat => {
-      // ASUMSI: Karena sudah difilter jemaat yang hadir, kita bisa langsung hitung
-      const sesi = jemaat.kehadiranSesi;
-      const status = jemaat.statusKehadiran;
-      
-      totalKehadiranSemuaSesi++;
-      kehadiranBySesi[sesi] = (kehadiranBySesi[sesi] ?? 0) + 1;
-
-      // Catat status jemaat yang hadir
-      statusKehadiranBySesi[sesi] ??= { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 };
-      statusKehadiranBySesi[sesi][status] = (statusKehadiranBySesi[sesi][status] || 0) + 1;
-  });
-
-  // Karena data jemaat yang masuk adalah data kehadiran, maka total kehadiran = total jemaat yang di filter.
-  // Presentase dihitung terhadap POTENSI
-  const presentaseKehadiran = totalPotentialAttendees > 0 
-      ? `${((totalKehadiranSemuaSesi / totalPotentialAttendees) * 100).toFixed(1)}%`
-      : "0%";
-
-  return { 
-    totalHadir: totalKehadiranSemuaSesi, 
-    // Total tidak hadir sulit dihitung akurat tanpa mengetahui seluruh potensi database
-    totalTidakHadir: totalPotentialAttendees - totalKehadiranSemuaSesi, 
-    presentaseKehadiran, 
-    kehadiranBySesi, 
-    statusKehadiranBySesi, 
-    totalKehadiranSemuaSesi,
-    totalPotentialAttendees
-  };
-};
 
 // Sesuaikan LegendPayload supaya kompatibel dengan Recharts (value bisa string|number, color optional)
 interface LegendPayload {
@@ -214,9 +389,8 @@ const renderLegend = (props: any): React.ReactElement | null => {
   );
 };
 
-// --- Komponen Chart ---
+// --- Komponen Chart (Dibiarkan sama) ---
 
-// Komponen Line Chart untuk Tren Kehadiran per Sesi (Detail Tanggal)
 interface SessionLineChartProps {
   data: Array<{
     session: string;
@@ -366,6 +540,9 @@ const MonthLineChart = ({ data, month, year }: any) => {
         maxDay = todayKey;
     }
 
+    // Filter data yang null (future dates)
+    const validData = data.filter((d: any) => d.hari <= maxDay);
+
     return (
         <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
             <h3 className="text-xl font-bold text-gray-800 border-b pb-2 mb-4">
@@ -376,7 +553,7 @@ const MonthLineChart = ({ data, month, year }: any) => {
             </p>
             <ResponsiveContainer width="100%" height={280}>
                 <LineChart 
-                    data={data} 
+                    data={validData} // Gunakan data yang sudah difilter
                     margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
                     onMouseDown={handleDailyChartClick}
                     style={{ cursor: 'pointer' }}
@@ -482,7 +659,7 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
           <Tooltip
             formatter={(value: unknown, name: string) => {
               if (value === null || value === undefined) return ['Tidak Ada Data', name];
-              if (Array.isArray(value)) return [`${value.join(', ')} orang`, name];
+              if (Array.isArray(value)) return [value.join(', '), name];
               return [`${String(value)} orang`, name];
             }}
           />
@@ -503,33 +680,33 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
 // --- Komponen Utama ---
 export default function StatisticPage() {
   const router = useRouter();
-  const [jemaat, setJemaat] = useState<Jemaat[]>([]);
+  
+  // FIX 1: Ganti state jemaat menjadi data kehadiran granular
+  const [fullAttendanceRecords, setFullAttendanceRecords] = useState<JemaatRow[]>([]);
+  // FIX 2: Tambahkan state untuk data jemaat unik (diperlukan untuk overall stats)
+  const [uniqueJemaatList, setUniqueJemaatList] = useState<UniqueJemaat[]>([]);
+
   const [isLoading, setIsLoading] = useState(true); 
   const contentRef = useRef<HTMLDivElement>(null);
   
-
-  // --- State Sidebar Toggle ---
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // DEKLARASI TUNGGAL
-
-  // --- Start Month/Year untuk Tampilan Detail Statistik ---
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); 
+  
   const [detailYear, setDetailYear] = useState(currentYear);
   const [detailStartMonth, setDetailStartMonth] = useState(currentMonth);
-  // NEW STATE: Mendukung multiple tanggal dari URL atau klik
   const [selectedDatesKeys, setSelectedDatesKeys] = useState<string[]>([]); 
 
-  const [year, setYear] = useState(currentYear); // Year untuk Navigasi Bulanan Global/Tahunan
+  const [year, setYear] = useState(currentYear); 
   const [startMonth, setStartMonth] = useState(currentMonth);
   
-  // Perubahan state untuk Year Picker
-  const [showYearPicker, setShowYearPicker] = useState(false); // Untuk mode Bulanan/Tahunan
-  const [showDetailYearPicker, setShowDetailYearPicker] = useState(false); // Untuk Kalender Detail
-  const [gridStartYear, setGridStartYear] = useState(Math.floor(currentYear / 10) * 10); // Untuk Year Picker
+  const [showYearPicker, setShowYearPicker] = useState(false); 
+  const [showDetailYearPicker, setShowDetailYearPicker] = useState(false); 
+  const [gridStartYear, setGridStartYear] = useState(Math.floor(currentYear / 10) * 10); 
   
   const [viewMode, setViewMode] = useState<'monthly' | 'yearly'>('monthly');
   const [hoveredSession, setHoveredSession] = useState<string | null>(null);
 
-  const [isDownloading, setIsDownloading] = useState(false); // State untuk loading download
-  const [actualAttendanceDates, setActualAttendanceDates] = useState<string[]>([]); // NEW STATE: Simpan tanggal kehadiran aktual dari API
+  const [isDownloading, setIsDownloading] = useState(false); 
+  const [actualAttendanceDates, setActualAttendanceDates] = useState<string[]>([]); 
   
   // Mengambil data dari /api/jemaat
   useEffect(() => {
@@ -537,22 +714,28 @@ export default function StatisticPage() {
       setIsLoading(true);
       try {
         const res = await fetch("/api/jemaat");
-        if (!res.ok) throw new Error("Gagal fetch data jemaat");
+        
+        if (!res.ok) {
+          const errorBody = await res.json().catch(() => ({}));
+          const errorMessage = errorBody.error || `Gagal fetch data jemaat. Status: ${res.status}`;
+          throw new Error(errorMessage);
+        }
 
         const data: unknown = await res.json();
         
-        // --- START FIX: Mengakomodasi format response API baru ---
         const apiResponse = data as JemaatAPIResponse;
         
         if (Array.isArray(apiResponse.jemaatData) && apiResponse.jemaatData.length > 0) {
-          setJemaat(apiResponse.jemaatData);
-          setActualAttendanceDates(apiResponse.attendanceDates); // Simpan tanggal kehadiran aktual
+          // FIX 3: Simpan kedua tipe data dari API response
+          setUniqueJemaatList(apiResponse.jemaatData);
+          setFullAttendanceRecords(apiResponse.fullAttendanceRecords);
+          setActualAttendanceDates(apiResponse.attendanceDates); 
         } else {
           throw new Error("Data jemaat tidak valid atau kosong");
         }
-        // --- END FIX ---
       } catch (err) {
-        console.error("Error fetch jemaat:", err);
+        const errorMessage = err instanceof Error ? err.message : "Terjadi kesalahan saat mengambil data jemaat.";
+        console.error("Error fetch jemaat:", errorMessage);
       } finally {
         setIsLoading(false);
       }
@@ -561,7 +744,7 @@ export default function StatisticPage() {
     void fetchData();
   }, []);
 
-  // NEW: Handle query parameter untuk multiple selected dates dari URL
+  // Handle query parameter untuk multiple selected dates dari URL
   useEffect(() => {
     if (!router.isReady) return; 
 
@@ -571,27 +754,26 @@ export default function StatisticPage() {
       const datesArray = dates.split(',').filter(d => /^\d{4}-\d{2}-\d{2}$/.exec(d));
       setSelectedDatesKeys(datesArray);
       
-if (datesArray.length > 0) {
-  // Ambil nilai pertama dengan guard yang jelas
-  const firstIso = datesArray[0];
-    if (firstIso) {
-      const firstDate = new Date(firstIso);
-      if (!isNaN(firstDate.getTime())) {
-        setDetailYear(firstDate.getFullYear());
-        setDetailStartMonth(firstDate.getMonth());
-        
-        // Atur juga startMonth/year untuk tampilan keseluruhan
-        setYear(firstDate.getFullYear());
-        setStartMonth(firstDate.getMonth());
-      }
-    }
-  }
+      if (datesArray.length > 0) {
+        const firstIso = datesArray[0];
+          if (firstIso) {
+            const firstDate = new Date(firstIso);
+            if (!isNaN(firstDate.getTime())) {
+              setDetailYear(firstDate.getFullYear());
+              setDetailStartMonth(firstDate.getMonth());
+              
+              setYear(firstDate.getFullYear());
+              setStartMonth(firstDate.getMonth());
+            }
+          }
+        }
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [router.isReady]);
 
 
-  const overallStats = useMemo(() => calculateOverallStats(jemaat), [jemaat]);
+  // FIX 4: Gunakan uniqueJemaatList untuk statistik keseluruhan
+  const overallStats = useMemo(() => calculateOverallStats(uniqueJemaatList), [uniqueJemaatList]);
   
   // --- LOGIKA MULTI-DATE STATS ---
   const dateStatsMap = useMemo(() => {
@@ -602,16 +784,25 @@ if (datesArray.length > 0) {
     selectedDatesKeys.forEach(dateKey => {
       // Hanya hitung statistik jika ada data kehadiran yang tercatat untuk tanggal ini
       if (actualAttendanceDates.includes(dateKey)) {
-        stats[dateKey] = calculateDateStats(jemaat, dateKey);
+        // FIX 5: Kirim kedua list data untuk perhitungan potensi kehadiran
+        stats[dateKey] = calculateDateStats(fullAttendanceRecords, uniqueJemaatList, dateKey);
       }
     });
     
     return stats;
-  }, [jemaat, selectedDatesKeys, actualAttendanceDates]);
+  }, [fullAttendanceRecords, selectedDatesKeys, actualAttendanceDates, uniqueJemaatList]);
 
-  const totalKehadiranSelectedDates = useMemo(() => {
+  // Total records kehadiran di tanggal yang dipilih (bukan jemaat unik)
+  const totalKehadiranRecordsSelectedDates = useMemo(() => {
       return Object.values(dateStatsMap).reduce((sum, stats) => 
           sum + stats.totalKehadiranSemuaSesi, 0
+      );
+  }, [dateStatsMap]);
+  
+  // Total jemaat unik yang hadir di tanggal yang dipilih
+  const totalHadirUnikSelectedDates = useMemo(() => {
+    return Object.values(dateStatsMap).reduce((sum, stats) => 
+          sum + stats.totalHadir, 0
       );
   }, [dateStatsMap]);
   
@@ -636,7 +827,8 @@ if (datesArray.length > 0) {
   }, [dateStatsMap]);
   
   const combinedPresentaseKehadiran = totalPotentialAttendeesCombined > 0 
-    ? `${((totalKehadiranSelectedDates / totalPotentialAttendeesCombined) * 100).toFixed(1)}%`
+    // Presentase dihitung dari total jemaat unik yang hadir dibagi total potensi
+    ? `${((totalHadirUnikSelectedDates / totalPotentialAttendeesCombined) * 100).toFixed(1)}%`
     : "0%";
   
     /**
@@ -644,7 +836,7 @@ if (datesArray.length > 0) {
      * DARI SEMUA JEMAAT YANG HADIR di sesi-sesi pada tanggal yang dipilih.
      */
     const combinedStatusBySession = useMemo(() => {
-        const combined: Record<string, Record<Jemaat['statusKehadiran'], number>> = {};
+        const combined: Record<string, Record<StatusKehadiran, number>> = {};
         
         // Akumulasi data statusKehadiranBySesi dari semua tanggal yang dipilih
         Object.values(dateStatsMap).forEach(stats => {
@@ -673,110 +865,28 @@ if (datesArray.length > 0) {
   
   // --- END LOGIKA MULTI-DATE STATS ---
   
-  // --- MOCK LOGIC FOR OVERALL VIEW (Monthly/Yearly) ---
-  // Simulasi data statistik bulanan & tahunan (Dibuat lebih sederhana dan konsisten dengan overallStats)
-  const generateMockOverallTrends = (jemaatCount: number) => {
-    const months = monthNames.map(name => name.substring(0, 3));
-    const currentYearStats = months.map((bulan, index) => {
-        // Menggunakan persentase yang mendekati 140/200, 40/200, 20/200 
-        const baseActive = Math.round(jemaatCount * (0.6 + Math.random() * 0.1));
-        const baseRare = Math.round(jemaatCount * (0.2 + Math.random() * 0.05));
-        const baseInactive = jemaatCount - baseActive - baseRare;
-        return { 
-          bulan, 
-          aktif: baseActive, 
-          jarangHadirlah: baseRare, 
-          tidakAktif: baseInactive,
-          total: baseActive + baseRare + baseInactive // Total Kehadiran untuk Bulan ini
-        };
-    });
-    return {
-        "2025": currentYearStats,
-        "2024": currentYearStats.map(s => ({ ...s, aktif: s.aktif - 5, tidakAktif: s.tidakAktif + 5 })),
-    };
-  }
-
-  /**
-   * MODIFIKASI: Simulasi data harian untuk Line Chart Bulanan.
-   * Menggunakan distribusi status dari jemaat yang sesinya cocok dengan hari yang bersangkutan.
-   * @param month 
-   * @param year 
-   * @param overallStats 
-   * @returns 
-   */
-  const generateMockDailyTrends = (month: number, year: number, overallStats: { aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }) => {
-    const daysInMonth = getDaysInMonth(month, year);
-    const data = [];
-    
-    let maxDay = daysInMonth;
-    if (year === currentYear && month === currentMonth) {
-      maxDay = today.getDate();
-    }
-
-    for (let day = 1; day <= daysInMonth; day++) {
-      if (day > maxDay) {
-        data.push({ hari: day, aktif: null, jarangHadirlah: null, tidakAktif: null });
-        continue;
-      }
-      
-      const date = new Date(year, month, day);
-      const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
-      const dateKey = getDayKey(date);
-
-      let aktif = null;
-      let jarangHadirlah = null;
-      let tidakAktif = null;
-
-      // HANYA hitung data jika ada kehadiran aktual di hari itu
-      if (actualAttendanceDates.includes(dateKey)) {
-          // Filter jemaat yang HADIR di tanggal ini (diasumsikan data jemaat sudah mencakup filter tanggal)
-          const filteredJemaat = jemaat.filter(j => j.tanggalKehadiran === dateKey);
-          
-          const stats = calculateOverallStats(filteredJemaat).kehadiranDistribution;
-          
-          aktif = stats.Aktif ?? 0;
-          jarangHadirlah = stats['Jarang Hadir'] ?? 0;
-          tidakAktif = stats['Tidak Aktif'] ?? 0;
-      }
-      
-      data.push({
-        hari: day,
-        aktif: aktif,
-        jarangHadirlah: jarangHadirlah,
-        tidakAktif: tidakAktif,
-      });
-    }
-    return data;
-  }
-
-  const yearlyStats = useMemo(() => generateMockOverallTrends(overallStats.totalJemaat || 200), [overallStats.totalJemaat]);
+  // FIX 6: Gunakan fungsi kalkulasi nyata untuk data Tahunan
+  const yearlyStats = useMemo(() => calculateMonthlyTrends(fullAttendanceRecords, year, uniqueJemaatList), [fullAttendanceRecords, year, uniqueJemaatList]);
 
   const currentMonthStats = useMemo(() => {
     const monthLabel = monthNames[startMonth] ?? '';
     const monthName = monthLabel.substring(0, 3);
-    const arr = (yearlyStats[year.toString() as keyof typeof yearlyStats] ?? []) as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
+    const arr = yearlyStats as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
     const found = arr.find(m => m.bulan === monthName);
     return found ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
   }, [year, startMonth, yearlyStats]);
   
   const currentYearStats = useMemo(() => {
-    let stats = yearlyStats[year.toString() as keyof typeof yearlyStats] || [];
-    
-    // LOGIKA PERBAIKAN: Batasi data Line Chart Tahunan
-    if (year === currentYear) {
-      // Potong data hingga bulan saat ini
-      stats = stats.slice(0, currentMonth + 1); 
-    }
+    let stats = yearlyStats;
     
     return stats; 
-  }, [year, yearlyStats, currentMonth]);
+  }, [yearlyStats]);
   
   // NEW LOGIC: Hitung total dan rata-rata dari data Line Chart Tahunan yang sudah difilter/dipotong
   const totalAktifTahunan = useMemo(() => {
     return currentYearStats.reduce((sum, month) => sum + month.aktif, 0);
   }, [currentYearStats]);
   
-  // PERBAIKAN: Hitung Total Jarang Hadir Tahunan
   const totalJarangHadirlahTahunan = useMemo(() => {
     return currentYearStats.reduce((sum, month) => sum + month.jarangHadirlah, 0);
   }, [currentYearStats]);
@@ -786,24 +896,30 @@ if (datesArray.length > 0) {
   }, [currentYearStats]);
 
   const totalKehadiranTahunan = useMemo(() => {
-    // Menggunakan properti 'total' dari data mock
     return currentYearStats.reduce((sum, month) => sum + month.total, 0); 
   }, [currentYearStats]);
 
   const rataRataKehadiranPerBulan = useMemo(() => {
       const activeMonths = currentYearStats.length; 
-      if (activeMonths === 0) return 0;
-      // Hitung rata-rata berdasarkan total kehadiran
-      return Math.round(totalKehadiranTahunan / activeMonths);
-  }, [currentYearStats, totalKehadiranTahunan]);
-  
-  // Data harian untuk Line Chart Bulanan (Ditambahkan jemaat ke dependency array)
-  const dailyTrendsData = useMemo(() => {
-      if (jemaat.length === 0) return []; 
-      return generateMockDailyTrends(startMonth, year, currentMonthStats);
-  }, [startMonth, year, currentMonthStats, jemaat, actualAttendanceDates]); // Tambahkan actualAttendanceDates
+      if (activeMonths === 0 || totalKehadiranTahunan === 0) return 0;
+      
+      // Hitung total jemaat unik yang hadir di tahun ini
+      const uniqueAttendeesInYear = new Set<string>();
+      fullAttendanceRecords
+        .filter(r => r.tanggalKehadiran.startsWith(year.toString()))
+        .forEach(r => uniqueAttendeesInYear.add(r.id.toString().split('-')[0]));
+        
+      if (uniqueAttendeesInYear.size === 0) return 0;
 
-  // --- END MOCK LOGIC ---
+      // Hitung rata-rata berdasarkan jumlah jemaat unik per bulan
+      return Math.round(uniqueAttendeesInYear.size / activeMonths);
+  }, [currentYearStats, totalKehadiranTahunan, fullAttendanceRecords, year]);
+  
+  // FIX 7: Gunakan fungsi kalkulasi nyata untuk data Harian Bulanan
+  const dailyTrendsData = useMemo(() => {
+      if (fullAttendanceRecords.length === 0) return []; 
+      return calculateDailyTrends(fullAttendanceRecords, startMonth, year);
+  }, [startMonth, year, fullAttendanceRecords]);
 
 
   // Handler untuk Kalender Detail (Sekarang multi-select)
@@ -1073,7 +1189,6 @@ if (datesArray.length > 0) {
   };
 
   return (
-    // FIX 1: Set outer container to h-screen to establish viewport height
     <div className="flex h-screen bg-gray-50"> 
       
       {/* Sidebar Overlay for Mobile */}
@@ -1084,13 +1199,12 @@ if (datesArray.length > 0) {
         />
       )}
 
-      {/* Sidebar - FIX 2 & 3: Container fixed, h-screen, bg-white, and Sidebar component forced to fill height */}
+      {/* Sidebar */}
       <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
-        {/* FIX 4: Pass style to force component content to fill container */}
         <Sidebar activeView='statistic' style={{ height: '100%' }} />
       </div>
 
-      {/* Main Content - FIX 5: Use overflow-y-auto for scrolling content and ml-64 for desktop alignment */}
+      {/* Main Content */}
       <main className={`flex-grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
         
         {/* Hamburger Menu for Mobile */}
@@ -1108,7 +1222,7 @@ if (datesArray.length > 0) {
           <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
               <h1 className="text-2xl md:text-3xl font-bold text-gray-800">Laporan dan Statistik Jemaat</h1>
               <button 
-                  onClick={handleDownload} // Langsung panggil handleDownload
+                  onClick={handleDownload} 
                   disabled={
                     isLoading || 
                     (viewMode === 'yearly' && selectedDatesKeys.length === 0 && currentYearStats.length === 0) ||
@@ -1272,11 +1386,11 @@ if (datesArray.length > 0) {
                     <div className="mb-8">
                       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                         
-                        {/* NEW: 0. Total Kehadiran */}
+                        {/* NEW: 0. Total Kehadiran Records */}
                          <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-4 sm:p-6 rounded-xl shadow-xl text-white">
-                            <p className="text-xs sm:text-sm opacity-90 mb-1">Total Kehadiran</p>
+                            <p className="text-xs sm:text-sm opacity-90 mb-1">Total Records Kehadiran</p>
                             <p className="text-3xl sm:text-4xl font-extrabold mt-1">{currentMonthStats.total}</p>
-                            <p className="text-xs opacity-80 mt-1">akumulasi kehadiran per bulan</p>
+                            <p className="text-xs opacity-80 mt-1">akumulasi presensi per bulan</p>
                         </div>
 
                         {/* 1. Status Aktif */}
@@ -1371,7 +1485,7 @@ if (datesArray.length > 0) {
                             dataKey="total" 
                             stroke="#4F46E5" 
                             strokeWidth={4} 
-                            name="Total Kehadiran" 
+                            name="Total Records Kehadiran" 
                             dot={false} // PERBAIKAN: Menghilangkan titik
                             activeDot={false} // PERBAIKAN: Menghilangkan titik aktif
                         />
@@ -1382,11 +1496,11 @@ if (datesArray.length > 0) {
                     <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5 mt-8">
                       {/* Kartu 1: Total Kehadiran Tahunan */}
                       <div className="bg-indigo-50 border-2 border-indigo-300 rounded-xl p-4 sm:p-6 text-center">
-                        <p className="text-xs sm:text-sm text-indigo-700 mb-2 font-semibold">Total Kehadiran Tahunan</p>
+                        <p className="text-xs sm:text-sm text-indigo-700 mb-2 font-semibold">Total Records Kehadiran Tahunan</p>
                         <p className="text-4xl sm:text-5xl font-extrabold text-indigo-600">
                           {totalKehadiranTahunan}
                         </p>
-                        <p className="text-xs text-indigo-600 mt-2">akumulasi total kehadiran</p>
+                        <p className="text-xs text-indigo-600 mt-2">akumulasi total presensi</p>
                       </div>
 
                       {/* Kartu 2: Total Status Aktif */}
@@ -1418,11 +1532,11 @@ if (datesArray.length > 0) {
 
                       {/* Kartu 5: Rata-Rata Kehadiran Per Bulan */}
                       <div className="bg-gray-100 border-2 border-gray-300 rounded-xl p-4 sm:p-6 text-center">
-                        <p className="text-xs sm:text-sm text-gray-700 mb-2 font-semibold">Rata-rata Kehadiran/Bulan</p>
+                        <p className="text-xs sm:text-sm text-gray-700 mb-2 font-semibold">Rata-rata Jemaat Hadir/Bulan</p>
                         <p className="text-4xl sm:text-5xl font-extrabold text-gray-600">
                           {rataRataKehadiranPerBulan}
                         </p>
-                        <p className="text-xs text-gray-600 mt-2">orang per bulan</p>
+                        <p className="text-xs text-gray-600 mt-2">jemaat unik per bulan</p>
                       </div>
                     </div>
                   </div>
@@ -1528,7 +1642,6 @@ if (datesArray.length > 0) {
                       ...Array(startDayOffset).fill(null),
                       ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
                     ];
-                    // OLD: const datesWithStats = getDatesWithStats(monthIndex, year);
                     const datesWithStats = getDatesWithStats(monthIndex, year, actualAttendanceSet); // Digunakan untuk DOT
 
                     
@@ -1588,7 +1701,7 @@ if (datesArray.length > 0) {
               </section>
 
               {/* Grafik Detail Tanggal (Multi-Select) */}
-              {selectedDatesKeys.length > 0 && totalKehadiranSelectedDates > 0 ? (
+              {selectedDatesKeys.length > 0 && totalHadirUnikSelectedDates > 0 ? (
                 <section className="mt-8">
                   <div className="flex justify-between items-center border-b-2 pb-2 mb-4">
                     <h2 className="text-xl md:text-2xl font-bold text-red-600">
@@ -1599,9 +1712,9 @@ if (datesArray.length > 0) {
                   {/* 1. Total Kehadiran Semua Ibadah (Satu Kartu Gabungan) */}
                   <div className="grid grid-cols-1 mb-6 max-w-lg mx-auto">
                       <div className="bg-red-100 p-6 rounded-xl shadow-md border-2 border-red-300">
-                          <p className="text-sm text-red-700">Total Kehadiran Semua Kebaktian & Sesi Ibadah</p>
-                          <p className="text-5xl font-extrabold text-red-600 mt-1">{totalKehadiranSelectedDates}</p>
-                          <p className="text-xs text-red-500">Total akumulatif yang hadir di semua sesi dari {selectedDatesKeys.length} tanggal</p>
+                          <p className="text-sm text-red-700">Total Jemaat Unik Hadir</p>
+                          <p className="text-5xl font-extrabold text-red-600 mt-1">{totalHadirUnikSelectedDates}</p>
+                          <p className="text-xs text-red-500">Total akumulatif jemaat unik yang hadir di {selectedDatesKeys.length} tanggal</p>
                       </div>
                   </div>
 
@@ -1692,15 +1805,15 @@ if (datesArray.length > 0) {
                                         {new Date(dateKey).toLocaleDateString("id-ID", { weekday: 'long', day: "2-digit", month: "long", year: "numeric" })}
                                         {/* Tampilkan Total Hadir di Judul */}
                                         <span className="text-sm font-normal text-gray-500 ml-3">
-                                            (Total Hadir: {stats.totalKehadiranSemuaSesi})
+                                            (Jemaat Unik Hadir: {stats.totalHadir})
                                         </span>
                                     </h4>
                                     
                                     {/* Ringkasan Kartu Per Tanggal */}
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6"> 
                                         <div className="p-3 bg-red-50 rounded-lg">
-                                            <p className="text-sm text-red-700">Total Hadir</p>
-                                            <p className="text-2xl font-bold text-red-600">{stats.totalKehadiranSemuaSesi}</p>
+                                            <p className="text-sm text-red-700">Jemaat Unik Hadir</p>
+                                            <p className="text-2xl font-bold text-red-600">{stats.totalHadir}</p>
                                         </div>
                                         <div className="p-3 bg-green-50 rounded-lg">
                                             <p className="text-sm text-green-700">Sesi Terbanyak</p>

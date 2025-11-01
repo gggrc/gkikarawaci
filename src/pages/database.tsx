@@ -11,29 +11,38 @@
  */
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil, Menu } from "lucide-react"; 
+import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil, Menu, Eye } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
 import { jsPDF } from 'jspdf';
 import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
 import dynamic from 'next/dynamic'; 
+// FIX 1: Import tipe data yang lebih lengkap dari API route
+import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo, type JemaatAPIResponse as FullJemaatAPIResponse } from "~/app/api/jemaat/route"; 
 
 // --- Tipe Data ---
-interface Jemaat {
-  id: number | string;
-  foto: string;
-  nama: string;
-  jabatan: string;
-  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif";
-  tanggalLahir?: string;
-  umur?: string;
-  keluarga?: string;
-  email?: string;
-  telepon?: string;
-  kehadiranSesi: string; 
-  dokumen?: string;
+
+// List Jemaat Unik (untuk status overall, edit form, dan draft)
+interface UniqueJemaat extends JemaatClient {
+  id: string; // id_jemaat
 }
+
+// Baris Data Kehadiran (untuk tabel dan detail drawer - Attendance Instance)
+interface JemaatRow extends JemaatWithAttendanceInfo {
+  id: string; // id_jemaat-tanggal (ID unik per record kehadiran)
+  // Semua properti dari JemaatClient juga ada di sini
+}
+
+// Tipe Jemaat yang digunakan untuk state formData (hanya untuk mempermudah)
+interface Jemaat extends JemaatRow {}
+
+// Tipe Response dari API (Gunakan alias)
+interface JemaatAPIResponse extends FullJemaatAPIResponse {
+    // Tambahkan properti error yang mungkin dikirim oleh API
+    error?: string; 
+}
+
 
 export interface PreviewModalData {
     url: string; 
@@ -148,20 +157,39 @@ const getAvailableSessionNames = (date: Date): string[] => {
     return []; 
 };
 
+/**
+ * FIX: Memastikan event 'KESELURUHAN DATA HARI INI' selalu ada 
+ * jika ada data kehadiran yang tercatat, meskipun tidak ada sesi default.
+ */
 const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: Set<string>): string[] => {
     const defaultEventsForDay = getAvailableSessionNames(date);
-    const combinedEvents = [...defaultEventsForDay];
+    let combinedEvents = [...defaultEventsForDay];
     
+    // Tambahkan sesi unik dari database (kecuali yang sudah di default)
     allUniqueSessions.forEach(session => {
         if (!combinedEvents.includes(session)) {
             combinedEvents.push(session);
         }
     });
     
+    // Sort dan filter duplikat
+    const uniqueEvents = [...new Set(combinedEvents)].filter(e => e.trim() !== "");
+
+    // Memastikan "KESELURUHAN DATA HARI INI" selalu ada di awal
     const finalEvents = [
-        "KESELURUHAN DATA HARI INI",
-        ...combinedEvents.sort()
-    ].filter((v, i, a) => a.indexOf(v) === i); 
+        "KESELURUHAN DATA HARI INI", 
+        ...uniqueEvents.sort()
+    ].filter((v, i, a) => a.indexOf(v) === i && v.trim() !== ""); 
+    
+    // Jika hanya berisi event keseluruhan, pastikan ada event default jika mungkin
+    if (finalEvents.length === 1 && finalEvents[0] === "KESELURUHAN DATA HARI INI" && defaultEventsForDay.length > 0) {
+        return ["KESELURUHAN DATA HARI INI", ...defaultEventsForDay];
+    }
+
+    // Jika finalEvents masih kosong, hanya kembalikan event keseluruhan (seharusnya tidak terjadi jika ada data)
+    if (finalEvents.length === 0) {
+         return ["KESELURUHAN DATA HARI INI"];
+    }
 
     return finalEvents;
 };
@@ -175,20 +203,19 @@ const getDatesWithEventsInMonth = (
 ): { date: Date, key: string, events: string[] }[] => {
   const daysInMonth = getDaysInMonth(month, currentYear);
   const dates: { date: Date, key: string, events: string[] }[] = [];
+  // 💡 Menggunakan attendanceSet untuk filter hari yang ada datanya
   const attendanceSet = new Set(actualAttendanceDates);
   
   for (let day = 1; day <= daysInMonth; day++) {
     const date = new Date(currentYear, month, day);
     const dayKey = getDayKey(date);
     
-    // HANYA proses tanggal yang memiliki data kehadiran aktual
+    // 💡 HANYA proses tanggal yang memiliki data kehadiran aktual
     if (attendanceSet.has(dayKey)) {
       const currentEventList = currentEvents[dayKey] ?? [];
       
       // HANYA masukkan jika eventlist memiliki isi (setelah inisialisasi)
-      if (currentEventList.length > 0) {
-           dates.push({ date, key: dayKey, events: currentEventList });
-      }
+       dates.push({ date, key: dayKey, events: currentEventList });
     }
   }
   return dates; 
@@ -328,19 +355,12 @@ const CalendarSection = ({
     
     useEffect(() => {
         const checkScreenSize = () => {
-            // Tailwind's 'md' breakpoint is typically 768px
             if (typeof window !== 'undefined') {
                  setIsMobileView(window.innerWidth < 768);
             }
         };
-        
-        // Initial check
         checkScreenSize();
-        
-        // Add event listener
         window.addEventListener('resize', checkScreenSize);
-        
-        // Cleanup
         return () => window.removeEventListener('resize', checkScreenSize);
     }, []);
     // --- END NEW RESPONSIVE LOGIC ---
@@ -361,7 +381,6 @@ const CalendarSection = ({
 
     const monthsToDisplay = useMemo(() => {
         const months = [];
-        // Menampilkan 1 bulan di HP (isMobileView), 3 bulan di Desktop
         const count = isMobileView ? 1 : 3; 
         for (let i = 0; i < count; i++) {
           const monthIndex = (startMonth + i) % 12;
@@ -445,6 +464,7 @@ const CalendarSection = ({
                         const dateTimestamp = new Date(thisDate).setHours(0, 0, 0, 0);
                         const isFutureDay = dateTimestamp > todayStart;
                         
+                        // 💡 LOGIC DOT: Cek apakah ada data kehadiran di tanggal ini
                         const hasAttendanceData = attendanceSet.has(dayKey); 
                         
                         let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm";
@@ -469,9 +489,9 @@ const CalendarSection = ({
                             role="button"
                           >
                             {day}
-                            {/* Titik hanya muncul jika ADA data kehadiran */}
+                            {/* 💡 Titik hanya muncul jika ADA data kehadiran DAN TIDAK terpilih */}
                             {hasAttendanceData && !isSelected && ( 
-                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600`}></div>
+                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-red-600`}></div>
                             )}
                           </div>
                         );
@@ -666,7 +686,11 @@ export default function DatabasePage() {
   // NEW STATE: Sidebar Toggle
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
 
-  const [jemaat, setJemaat] = useState<Jemaat[]>([]);
+  // FIX 2: Ganti tipe state jemaat
+  const [uniqueJemaatList, setUniqueJemaatList] = useState<UniqueJemaat[]>([]); // Data unik Jemaat
+  const [attendanceRecords, setAttendanceRecords] = useState<JemaatRow[]>([]); // Data granular kehadiran
+  const [draftUniqueJemaatList, setDraftUniqueJemaatList] = useState<UniqueJemaat[]>([]); // Draft untuk edit mode
+  
   const [isLoading, setIsLoading] = useState(true); 
   
   const [year, setYear] = useState<number>(currentYear);
@@ -687,8 +711,8 @@ export default function DatabasePage() {
   }, []);
 
   const showAlert = useCallback((title: string, message: string) => {
-      // PERUBAHAN: Menghilangkan pop-up notifikasi
-      console.log(`Alert suppressed: ${title} - ${message}`);
+      // PERBAIKAN: Menampilkan alert menggunakan ConfirmationModal (bukan window.alert)
+      setConfirmationModal({ isOpen: true, title, message, onConfirm: () => setConfirmationModal(null), onCancel: () => setConfirmationModal(null), showCancelButton: false });
   }, []);
 
   
@@ -708,12 +732,13 @@ export default function DatabasePage() {
 
   const [tablePage, setTablePage] = useState(1);
   const [editMode, setEditMode] = useState(false);
-  const [draftJemaat, setDraftJemaat] = useState<Jemaat[]>([]);
-  const [openDetailDrawer, setOpenDetailDrawer] = useState(false);
-  const [formData, setFormData] = useState<Jemaat | null>(null);
+  // FIX: Tambahkan kembali deklarasi state yang hilang
+  const [openDetailDrawer, setOpenDetailDrawer] = useState(false); // <-- FIX DITAMBAHKAN
+  // FIX: Ganti tipe formData ke JemaatRow (Attendance Instance)
+  const [formData, setFormData] = useState<JemaatRow | null>(null);
   const itemsPerPage = 10;
   
-  const [filterStatusKehadiran, setFilterStatusKehadiran] = useState(""); 
+  const [filterStatusKehadiran, setFilterStatusKehadiran] = useState<StatusKehadiran | "">(""); 
   const [filterJabatan, setFilterJabatan] = useState("");
   const [filterKehadiranSesi, setFilterKehadiranSesi] = useState(""); 
   
@@ -745,29 +770,45 @@ export default function DatabasePage() {
   }, []);
 
   useEffect(() => {
+    // 💡 FUNGSI INI MENGAMBIL DATA UTAMA DARI TABEL KEHADIRAN & JEMAAT
     const fetchData = async () => {
       setIsLoading(true);
       try {
         const res = await fetch("/api/jemaat"); 
         
+        // TANGKAP RESPONS JSON TERLEBIH DAHULU
+        const data: unknown = await res.json();
+        
+        // Memastikan tipe data yang diterima sesuai JemaatAPIResponse
+        const apiResponse = data as JemaatAPIResponse;
+        
+        // FIX PENTING: Periksa properti error di dalam body JSON
+        if (apiResponse.error) {
+             console.error("API Error Body:", apiResponse.error);
+             // Tampilkan error ke user melalui alert
+             showAlert("Gagal Mengambil Data", `Terjadi kesalahan pada server/database: ${apiResponse.error}`);
+             throw new Error(apiResponse.error as string);
+        }
+
+        // Lanjutkan dengan pemeriksaan status HTTP (untuk kasus non-API error)
         if (!res.ok) {
           throw new Error(`Gagal fetch data jemaat. Status: ${res.status}`);
         }
 
-        const data: unknown = await res.json();
-        
-        const apiResponse = data as { jemaatData: Jemaat[], attendanceDates: string[] };
-
         if (Array.isArray(apiResponse.jemaatData) && apiResponse.jemaatData.length > 0) {
-          const fetchedJemaat = apiResponse.jemaatData;
-          setJemaat(fetchedJemaat);
-          setDraftJemaat(fetchedJemaat.map(j => ({ ...j })));
+          // FIX 3: Update state dengan data yang benar
+          const fetchedUniqueJemaat = apiResponse.jemaatData as UniqueJemaat[];
+          setUniqueJemaatList(fetchedUniqueJemaat); // <-- Data Jemaat Unik (untuk Edit Mode)
+          setDraftUniqueJemaatList(fetchedUniqueJemaat.map(j => ({ ...j })));
+          
+          setAttendanceRecords(apiResponse.fullAttendanceRecords as JemaatRow[]);
           
           const fetchedAttendanceDates = apiResponse.attendanceDates;
           setActualAttendanceDates(fetchedAttendanceDates); 
           
           const allUniqueSessions = new Set<string>();
-          fetchedJemaat.forEach(j => {
+          // Mengambil sesi dari record kehadiran
+          apiResponse.fullAttendanceRecords.forEach(j => {
               if (j.kehadiranSesi) {
                   allUniqueSessions.add(j.kehadiranSesi);
               }
@@ -778,7 +819,10 @@ export default function DatabasePage() {
           fetchedAttendanceDates.forEach(dateKey => {
               const date = new Date(dateKey);
               
-              if (!memoryStorage.events[dateKey]) {
+              const currentEventsInCache = memoryStorage.events[dateKey];
+              
+              // FIX: Jika event di cache belum ada ATAU kosong, isi dengan event default
+              if (!currentEventsInCache || currentEventsInCache.length === 0) {
                   const finalEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
                   if (finalEvents.length > 0) {
                       newEvents[dateKey] = finalEvents;
@@ -791,14 +835,18 @@ export default function DatabasePage() {
           memoryStorage.events = mergedEvents;
           
         } else {
-          setJemaat([]);
-          setDraftJemaat([]);
+          setUniqueJemaatList([]);
+          setDraftUniqueJemaatList([]);
+          setAttendanceRecords([]);
           setActualAttendanceDates([]); 
         }
       } catch (err) {
-        console.error("Error fetch jemaat:", err);
-        setJemaat([]); 
-        setDraftJemaat([]);
+        const errorMessage = err instanceof Error ? err.message : "Terjadi kesalahan saat mengambil data jemaat (unknown error).";
+        console.error("Error fetch jemaat:", errorMessage);
+        // Reset state jika ada error
+        setUniqueJemaatList([]);
+        setDraftUniqueJemaatList([]);
+        setAttendanceRecords([]);
         setActualAttendanceDates([]); 
       } finally {
         setIsLoading(false);
@@ -806,7 +854,7 @@ export default function DatabasePage() {
     };
 
     void fetchData();
-  }, []); 
+  }, [showAlert]); // Tambahkan showAlert sebagai dependency
 
   useEffect(() => {
     const newEvents: EventsCache = {};
@@ -818,11 +866,16 @@ export default function DatabasePage() {
       months.push(monthIndex);
     }
     
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+
     months.forEach(month => {
+        // 💡 MENGGUNAKAN actualAttendanceDates UNTUK FILTER
         const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events, actualAttendanceDates); 
         datesInMonth.forEach(d => {
-            if (!memoryStorage.events[d.key]) { 
-                const allUniqueSessions = new Set(jemaat.map(j => j.kehadiranSesi));
+            const currentEventsInCache = memoryStorage.events[d.key];
+            
+            // FIX: Jika event di cache belum ada ATAU kosong, isi dengan event default
+            if (!currentEventsInCache || currentEventsInCache.length === 0) {
                 newEvents[d.key] = populateEventsForDate(d.key, d.date, allUniqueSessions);
             }
         });
@@ -831,7 +884,7 @@ export default function DatabasePage() {
     if (Object.keys(newEvents).length > 0) {
       setEvents(prev => ({ ...prev, ...newEvents }));
     }
-  }, [startMonth, year, actualAttendanceDates, jemaat]); 
+  }, [startMonth, year, actualAttendanceDates, attendanceRecords]); 
 
   useEffect(() => {
     memoryStorage.events = events;
@@ -865,15 +918,23 @@ export default function DatabasePage() {
         return;
     }
 
+    // 💡 Menggunakan actualAttendanceDates untuk memfilter hari yang ada datanya
     const datesWithEventsInMonth = getDatesWithEventsInMonth(monthIndex, currentYear, memoryStorage.events, actualAttendanceDates);
     
     const newDates = datesWithEventsInMonth.map(d => d.date);
     const newEventsByDate: SelectedEventsByDate = {};
     
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+    
     datesWithEventsInMonth.forEach(d => {
-        const overallEvent = d.events.find(e => e === "KESELURUHAN DATA HARI INI");
+        const eventsList = memoryStorage.events[d.key] || populateEventsForDate(d.key, d.date, allUniqueSessions);
+        const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
-        memoryStorage.events[d.key] ??= d.events; 
+        
+        // Ensure initial population happens if it hasn't or was empty
+        if (!memoryStorage.events[d.key] || memoryStorage.events[d.key].length === 0) {
+            memoryStorage.events[d.key] = eventsList;
+        }
     });
     
     setEvents(prev => ({ ...prev, ...memoryStorage.events }));
@@ -884,10 +945,11 @@ export default function DatabasePage() {
     setStartMonth(monthIndex);
     setYear(currentYear);
     setViewMode('monthly_summary');
-  }, [viewMode, startMonth, year, setStartMonth, setYear, actualAttendanceDates]); 
+  }, [viewMode, startMonth, year, setStartMonth, setYear, actualAttendanceDates, attendanceRecords]); 
 
    useEffect(() => {
-    if (!router.isReady || isLoading || jemaat.length === 0 || actualAttendanceDates.length === 0) return; 
+    // FIX: Gunakan attendanceRecords
+    if (!router.isReady || isLoading || uniqueJemaatList.length === 0 || attendanceRecords.length === 0 || actualAttendanceDates.length === 0) return; 
 
     const { dates, date, mode, event: eventQuery } = router.query;
     
@@ -904,12 +966,19 @@ export default function DatabasePage() {
         const newSelectedEventsByDate: SelectedEventsByDate = {};
         const targetMonth = firstDate.getMonth();
         const targetYear = firstDate.getFullYear();
+        const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
         
         datesArray.forEach(dateKey => {
             const dateObj = new Date(dateKey);
             
-            const availableEvents = currentEventsCache[dateKey];
-            if (!availableEvents) return;
+            // Generate events if missing from cache
+            let availableEvents = currentEventsCache[dateKey];
+            if (!availableEvents && actualAttendanceDates.includes(dateKey)) {
+                availableEvents = populateEventsForDate(dateKey, dateObj, allUniqueSessions);
+                currentEventsCache[dateKey] = availableEvents;
+            } else if (!availableEvents) {
+                return; // Skip if no attendance data for this date
+            }
 
             let selectedEvents: string[] = [];
             
@@ -949,8 +1018,15 @@ export default function DatabasePage() {
         
         if (isNaN(targetDate.getTime())) return;
         
-        const availableEvents = currentEventsCache[dateKey];
-        if (!availableEvents) return;
+        const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+        let availableEvents = currentEventsCache[dateKey];
+        
+        if (!availableEvents && actualAttendanceDates.includes(dateKey)) {
+            availableEvents = populateEventsForDate(dateKey, targetDate, allUniqueSessions);
+            currentEventsCache[dateKey] = availableEvents;
+        } else if (!availableEvents) {
+            return; // Skip if no attendance data for this date
+        }
 
         const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
         const selectedEvents = overallEvent ? [overallEvent] : []; 
@@ -977,9 +1053,9 @@ export default function DatabasePage() {
         return;
     }
     
-  }, [router, isLoading, jemaat.length, handleSelectMonth, actualAttendanceDates]); 
+  }, [router, isLoading, uniqueJemaatList.length, handleSelectMonth, actualAttendanceDates, attendanceRecords]); 
 
-  // MODIFIED: Fungsi handleSelectDate yang sudah diperbarui (menghilangkan showAlert)
+  // 💡 LOGIC UTAMA: Menghandle klik di kalender
   const handleSelectDate = useCallback((day: number, month: number) => {
     setViewMode('event_per_table'); 
     
@@ -995,29 +1071,19 @@ export default function DatabasePage() {
     const hasAttendance = actualAttendanceDates.includes(key);
     const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
     
-    // --- START LOGIKA BARU: Handle Select/Deselect tanpa data ---
-    // 1. Jika tidak ada data dan tanggal sedang TIDAK terpilih, tetap izinkan selection state berubah (select)
-    if (!hasAttendance && !isCurrentlySelected) {
-        // Jika tidak ada data, kita perlu memastikan event list kosong di cache jika belum ada
-        if (!events[key]) {
-             setEvents(prev => ({ ...prev, [key]: [] }));
-             memoryStorage.events[key] = [];
-        }
-    }
-    
-    // 2. Jika tidak ada data dan tanggal sedang TERPILIH, izinkan deselect normal
-    // 3. Jika ada data, buat event list normal
-
-    // Handle Event Caching/Generation (Hanya untuk tanggal dengan data, atau tanggal yang dipilih tanpa data)
+    // Handle Event Caching/Generation
     let currentEvents = events[key];
-    if (hasAttendance && !currentEvents) {
-        // Generate defaults if data exists but cache is empty
-        const allUniqueSessions = new Set(jemaat.map(j => j.kehadiranSesi));
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+    
+    if (hasAttendance && (!currentEvents || currentEvents.length === 0)) {
         currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
         setEvents(prev => ({ ...prev, [key]: currentEvents }));
         memoryStorage.events[key] = currentEvents;
-    } else if (!hasAttendance && isCurrentlySelected) {
-        // Jika sedang deselect tanggal tanpa data, currentEvents mungkin undefined, biarkan saja.
+    } else if (!hasAttendance && !currentEvents) {
+        // Jika tidak ada data dan tidak di-cache, buat array kosong untuk mempermudah deselect
+        currentEvents = [];
+        setEvents(prev => ({ ...prev, [key]: currentEvents }));
+        memoryStorage.events[key] = currentEvents;
     }
 
     let newDates: Date[];
@@ -1027,22 +1093,30 @@ export default function DatabasePage() {
       // DESELECT
       newDates = selectedDates.filter(d => getDayKey(d) !== key);
       delete newEventsByDate[key];
+      // 💡 Jika tidak ada data, hapus juga dari cache event agar tidak membebani
+      if (!hasAttendance) {
+          setEvents(prev => {
+             const updated = { ...prev };
+             delete updated[key];
+             memoryStorage.events = updated;
+             return updated;
+          });
+      }
     } else {
       // SELECT
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
       
-      const eventsList = events[key] ?? []; // Use final list, which might be []
+      const eventsList = events[key] ?? [];
       const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
       
-      // Select the overall event ONLY IF it exists (which implies hasAttendance)
-      // Jika hasAttendance false, selected events akan [] sehingga tabel utama kosong.
+      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' jika ada event (berarti ada data)
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
     
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
-  }, [events, selectedDates, selectedEventsByDate, year, jemaat, actualAttendanceDates]); // Removed showAlert
+  }, [events, selectedDates, selectedEventsByDate, year, attendanceRecords, actualAttendanceDates]);
 
   const handleSelectEvent = useCallback((dateKey: string, event: string) => {
     setViewMode('event_per_table'); 
@@ -1063,6 +1137,7 @@ export default function DatabasePage() {
           if (isEventSelected) {
               updated = current.filter((e: string) => e !== event);
           } else {
+              // Jika memilih event spesifik, hapus pilihan keseluruhan data
               updated = [...current.filter(e => e !== "KESELURUHAN DATA HARI INI"), event];
           }
       }
@@ -1077,7 +1152,7 @@ export default function DatabasePage() {
   const handleOpenAddEvent = useCallback((dateKey: string) => {
     // Check if the date has attendance data
     if (!actualAttendanceDates.includes(dateKey)) {
-        // PERUBAHAN: Menghilangkan pop-up notifikasi
+        showAlert("Tambah Event Gagal", "Anda hanya bisa menambahkan event pada tanggal yang memiliki data kehadiran.");
         return; 
     }
 
@@ -1111,9 +1186,9 @@ export default function DatabasePage() {
 
     const newEvents = [
         "KESELURUHAN DATA HARI INI", 
-        ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e !== newName), 
+        ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI" && e.toLowerCase() !== lowerNewName), 
         newName
-    ];
+    ].filter((v, i, a) => a.indexOf(v) === i);
     
     setEvents(prevEvents => {
       const updatedEvents = { ...prevEvents, [key]: newEvents };
@@ -1150,7 +1225,7 @@ export default function DatabasePage() {
     
     setViewMode('event_per_table');
     
-    const allUniqueSessions = new Set(jemaat.map(j => j.kehadiranSesi));
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
     const lowerNewName = eventName.toLowerCase();
     let totalUpdatedCount = 0;
 
@@ -1182,8 +1257,10 @@ export default function DatabasePage() {
             totalUpdatedCount++;
         }
         
-        // Tambahkan event ke semua tanggal berulang masa depan
+        // Tambahkan event ke semua tanggal berulang masa depan (hanya jika ada data kehadiran)
         futureDates.forEach(key => {
+            if (!actualAttendanceDates.includes(key)) return; // Hanya update tanggal dengan data kehadiran
+            
             const date = new Date(key);
             const initialEvents = populateEventsForDate(key, date, allUniqueSessions);
             const currentEvents = updatedEvents[key] ?? initialEvents;
@@ -1207,7 +1284,7 @@ export default function DatabasePage() {
 
     if (totalUpdatedCount > 0) {
         const periodLabel = PERIOD_OPTIONS.find(p => p.value === periodicalPeriod)?.label ?? 'periode yang dipilih';
-        const numPeriodicAdded = totalUpdatedCount - 1; // Kurangi 1 untuk tanggal awal
+        const numPeriodicAdded = totalUpdatedCount - 1; 
 
         showAlert(
             "Sukses Penambahan Berkala", 
@@ -1229,12 +1306,12 @@ export default function DatabasePage() {
         });
 
     } else {
-         showAlert("Informasi", `Event "${eventName}" sudah ada di semua tanggal yang dipilih.`);
+         showAlert("Informasi", `Event "${eventName}" sudah ada di semua tanggal yang relevan.`);
     }
 
     setShowEventModal(false);
     setEventModalData({});
-  }, [eventModalData, events, selectedDates, jemaat, showAlert]);
+  }, [eventModalData, events, selectedDates, showAlert, actualAttendanceDates, attendanceRecords]);
 
   const handleEventAction = useCallback(() => {
     switch(eventModalData.type) {
@@ -1296,7 +1373,8 @@ export default function DatabasePage() {
                 
                 Object.keys(updatedEvents).forEach(key => {
                     const currentDate = new Date(key).setHours(0, 0, 0, 0);
-                    if (currentDate >= startDate) {
+                    // Filter: hanya tanggal setelah/sama dengan tanggal awal YANG ADA data kehadirannya
+                    if (currentDate >= startDate && actualAttendanceDates.includes(key)) {
                         let eventsList = updatedEvents[key] ?? [];
                         
                         const targetEventIndex = eventsList.findIndex(e => e.toLowerCase() === lowerNameChange);
@@ -1325,7 +1403,8 @@ export default function DatabasePage() {
                 Object.keys(updatedSelected).forEach(key => {
                     const currentDate = new Date(key).setHours(0, 0, 0, 0);
 
-                    if (currentDate >= startDate) {
+                    // Filter: hanya tanggal setelah/sama dengan tanggal awal YANG ADA data kehadirannya
+                    if (currentDate >= startDate && actualAttendanceDates.includes(key)) {
                          let selectedList = updatedSelected[key] ?? [];
                          const targetSelectedEventIndex = selectedList.findIndex(e => e.toLowerCase() === lowerNameChange);
                          
@@ -1354,7 +1433,7 @@ export default function DatabasePage() {
         default:
             break;
     }
-  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates, jemaat, showAlert]);
+  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates, showAlert, actualAttendanceDates, attendanceRecords]);
 
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
@@ -1378,6 +1457,7 @@ export default function DatabasePage() {
               return newSelected;
           });
           setConfirmationModal(null);
+          showAlert("Sukses Hapus Satuan", `Event "${eventName}" berhasil dihapus HANYA di tanggal ini.`);
       };
       
       const onCancel = () => {
@@ -1395,13 +1475,13 @@ export default function DatabasePage() {
 
       showConfirmation(
           "Konfirmasi Penghapusan",
-          `Event "${eventName}" mungkin berulang. Apakah Anda ingin menghapus HANYA untuk tanggal ini? (Pilih 'Batal' untuk menghapus semua event masa depan yang namanya sama).`,
+          `Event "${eventName}" mungkin berulang. Apakah Anda ingin menghapus HANYA untuk tanggal ini? (Pilih 'Batal' untuk menghapus SEMUA event masa depan yang namanya sama).`,
           onConfirm,
           true,
           onCancel
       );
       
-  }, [selectedDates, showConfirmation]);
+  }, [selectedDates, showConfirmation, showAlert]);
 
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return;
@@ -1444,13 +1524,17 @@ export default function DatabasePage() {
 
   const handleSaveEdit = useCallback(() => {
     setEditMode(false);
-    setJemaat(draftJemaat.map(d => ({ ...d })));
-  }, [draftJemaat]);
+    // FIX 6: Simpan dari draft ke list unik utama
+    setUniqueJemaatList(draftUniqueJemaatList.map(d => ({ ...d })));
+    showAlert("Sukses", "Perubahan data jemaat berhasil disimpan (dalam memori lokal).");
+  }, [draftUniqueJemaatList, showAlert]);
   
   const handleCancelEdit = useCallback(() => {
     setEditMode(false);
-    setDraftJemaat(jemaat.map(j => ({ ...j })));
-  }, [jemaat]);
+    // FIX 6: Muat ulang draft dari list unik utama
+    setDraftUniqueJemaatList(uniqueJemaatList.map(j => ({ ...j })));
+    showAlert("Batal", "Perubahan dibatalkan.");
+  }, [uniqueJemaatList, showAlert]);
   
   const handleSelectYearFromGrid = useCallback((selectedYear: number) => {
     setYear(selectedYear);
@@ -1461,21 +1545,12 @@ export default function DatabasePage() {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
-  const getFilteredJemaatPerEvent = useCallback((jemaatList: Jemaat[], dateKey: string, event: string): Jemaat[] => {
+  // FIX 4: LOGIKA FILTER UTAMA: Filter data JemaatRow (Attendance Records)
+  const getFilteredJemaatPerEvent = useCallback((attendanceRecords: JemaatRow[], dateKey: string, event: string): JemaatRow[] => {
       
-    // STEP 1: Filter KETAT - hanya jemaat yang tanggalKehadirannya PERSIS SAMA dengan dateKey
-    let filteredByDate = jemaatList.filter(j => {
-      // Pastikan tanggalKehadiran ada dan sama persis dengan dateKey
-      if (!j.tanggalKehadiran) return false;
-      
-      // Normalisasi format tanggal untuk perbandingan
-      const jemaatDate = j.tanggalKehadiran.split('T')[0]; // Ambil bagian YYYY-MM-DD saja
-      const targetDate = dateKey.split('T')[0];
-      
-      return jemaatDate === targetDate;
-    });
-    
-    // Jika tidak ada data untuk tanggal ini, return empty array
+    // STEP 1: Filter KETAT - hanya record kehadiran yang tanggalKehadirannya PERSIS SAMA dengan dateKey
+    let filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
+
     if (filteredByDate.length === 0) {
       return [];
     }
@@ -1494,7 +1569,7 @@ export default function DatabasePage() {
     }
     
     if (event === "KESELURUHAN DATA HARI INI") {
-        // Untuk keseluruhan data hari ini, tampilkan semua jemaat yang hadir di tanggal ini
+        // Untuk keseluruhan data hari ini, tampilkan semua record kehadiran di tanggal ini
         if (filterKehadiranSesi !== "") {
             return filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
         }
@@ -1505,54 +1580,122 @@ export default function DatabasePage() {
     return filteredData.filter(j => j.kehadiranSesi === event);
   }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
 
-  const getFilteredJemaatMonthlySummary = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
-    if (selectedDatesOnly.length === 0) return [];
 
-    let filteredData = jemaatList.filter(j =>
-      (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
-      (filterJabatan === "" || j.jabatan === filterJabatan)
+  const getFilteredJemaatMonthlySummary = useCallback((uniqueJemaatList: UniqueJemaat[], attendanceRecords: JemaatRow[]): JemaatRow[] => {
+    if (selectedDatesOnly.length === 0) return [];
+    
+    // 1. Tentukan ID jemaat unik yang hadir di SELURUH selectedDatesOnly
+    const uniqueJemaatIdsInSelectedDates = new Set<string>();
+    
+    attendanceRecords.forEach(j => {
+      if (selectedDatesOnly.includes(j.tanggalKehadiran)) {
+        const jemaatId = j.id.split('-')[0] ?? j.id; // Ambil ID jemaat saja (id_jemaat)
+        uniqueJemaatIdsInSelectedDates.add(jemaatId); 
+      }
+    });
+
+    // 2. Filter list Jemaat Attendance Records berdasarkan ID unik yang hadir
+    let filteredRecords = attendanceRecords.filter(j => 
+        uniqueJemaatIdsInSelectedDates.has(j.id.split('-')[0] ?? j.id)
     );
     
+    // 3. Filter berdasarkan status dan jabatan
+    filteredRecords = filteredRecords.filter(j =>
+        (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
+        (filterJabatan === "" || j.jabatan === filterJabatan)
+    );
+    
+    // 4. Filter sesi kehadiran (jika ada)
     if (filterKehadiranSesi !== "") {
-        filteredData = filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+        filteredRecords = filteredRecords.filter(j => j.kehadiranSesi === filterKehadiranSesi);
     }
 
-    return filteredData;
-  }, [selectedDatesOnly.length, filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
+    // 5. Hapus duplikat jemaat (hanya ambil satu representasi per jemaat)
+    const seenJemaatIds = new Set<string>();
+    const deDuplicatedRecords: JemaatRow[] = []; 
+    filteredRecords.forEach(j => {
+        const jemaatId = j.id.split('-')[0] ?? j.id;
+        if (!seenJemaatIds.has(jemaatId)) {
+            seenJemaatIds.add(jemaatId);
+            
+            // Cari data jemaat unik terbaru
+            const uniqueJemaatData = uniqueJemaatList.find(uj => uj.id === jemaatId);
+            
+            // Gabungkan data kehadiran yang sudah difilter dengan data jemaat unik terbaru
+            if (uniqueJemaatData) {
+                deDuplicatedRecords.push({
+                    ...j, // Ambil id_kehadiran, waktuPresensiFull, tanggalKehadiran
+                    ...uniqueJemaatData, // Timpa data lama dengan data unik terbaru (nama, status, jabatan dll)
+                    id: j.id, // Pastikan ID record kehadiran tetap benar
+                });
+            } else {
+                deDuplicatedRecords.push(j);
+            }
+        }
+    });
+    
+    return deDuplicatedRecords; 
+  }, [selectedDatesOnly, filterStatusKehadiran, filterJabatan, filterKehadiranSesi, uniqueJemaatList, attendanceRecords]);
+
   
-  const getFilteredJemaat = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
+  const getFilteredJemaat = useCallback((
+    uniqueJemaatList: UniqueJemaat[], 
+    attendanceRecords: JemaatRow[]
+  ): JemaatRow[] => {
     if (viewMode === 'monthly_summary') {
-        return getFilteredJemaatMonthlySummary(jemaatList);
+        return getFilteredJemaatMonthlySummary(uniqueJemaatList, attendanceRecords);
     }
     
-    if (selectedTables.length > 0) {
-        return selectedTables[0]
-          ? getFilteredJemaatPerEvent(jemaatList, selectedTables[0].date, selectedTables[0].event)
-          : [];
+    if (selectedTables.length === 1 && selectedTables[0]) {
+        // Gabungkan data filter event dengan data jemaat unik terbaru
+        const filteredByEvent = getFilteredJemaatPerEvent(attendanceRecords, selectedTables[0].date, selectedTables[0].event);
+        
+        // Perluas data dengan data jemaat unik terbaru
+        return filteredByEvent.map(j => {
+            const jemaatId = j.id.split('-')[0] ?? j.id;
+            const uniqueJemaatData = uniqueJemaatList.find(uj => uj.id === jemaatId);
+
+            if (uniqueJemaatData) {
+                return {
+                    ...j, 
+                    ...uniqueJemaatData, 
+                    id: j.id, // Pertahankan ID record kehadiran
+                };
+            }
+            return j;
+        });
     }
 
+    // Jika multiple tables atau no selection, return empty list
+    if (selectedTables.length > 1) {
+        return [];
+    }
+    
     return [];
-  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent]);
+  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent, uniqueJemaatList, attendanceRecords]);
   
-  const dataForPagination = useMemo(() => getFilteredJemaat(jemaat), [jemaat, getFilteredJemaat]);
+  // FIX 5: Perbarui dataForPagination
+  const dataForPagination = useMemo(() => getFilteredJemaat(uniqueJemaatList, attendanceRecords), [uniqueJemaatList, attendanceRecords, getFilteredJemaat]);
   const filteredCount = dataForPagination.length;
   const totalPages = Math.ceil(filteredCount / itemsPerPage);
   
-  const getPagedData = useCallback((jemaatList: Jemaat[]) => {
+  const getPagedData = useCallback((jemaatList: JemaatRow[]) => {
     const filtered = jemaatList; 
     const indexOfLast = tablePage * itemsPerPage;
     const indexOfFirst = indexOfLast - itemsPerPage;
-    return filtered.slice(indexOfFirst, indexOfLast);
+    return filtered.slice(indexOfFirst, indexOfFirst + itemsPerPage); // Fix slice end index
   }, [tablePage]);
   
+  // FIX 7: Ambil dari list unik
   const uniqueJabatan = useMemo(() => 
-    [...new Set(jemaat.map((j) => j.jabatan))], [jemaat]);
+    [...new Set(uniqueJemaatList.map((j) => j.jabatan).filter(j => j) as string[])], [uniqueJemaatList]);
     
+  // FIX 8: Ambil dari list kehadiran granular
   const uniqueKehadiranSesiByDate = useMemo(() => {
-    const allUniqueSessions = Array.from(new Set(jemaat.map((j) => j.kehadiranSesi)));
+    const allUniqueSessions = Array.from(new Set(attendanceRecords.map((j) => j.kehadiranSesi).filter(s => s)));
 
     if (selectedTables.length === 0 || viewMode === 'monthly_summary') {
-        return allUniqueSessions;
+        return allUniqueSessions.sort();
     }
     
     if (selectedTables.length === 1 && selectedTables[0]?.event === 'KESELURUHAN DATA HARI INI') {
@@ -1564,9 +1707,10 @@ export default function DatabasePage() {
     }
     
     return allUniqueSessions.sort();
-  }, [jemaat, selectedTables, viewMode]);
+  }, [attendanceRecords, selectedTables, viewMode]);
 
-  const handleRowClick = useCallback((row: Jemaat) => {
+  // FIX 9: Perbarui handleRowClick (menggunakan JemaatRow)
+  const handleRowClick = useCallback((row: JemaatRow) => {
     if (!editMode) {
       setFormData({ ...row });
       setOpenDetailDrawer(true);
@@ -1574,6 +1718,7 @@ export default function DatabasePage() {
     }
   }, [editMode]);
   
+  // FIX 6: Perbarui handleSaveForm (harus menyimpan ke UniqueJemaatList)
   const handleSaveForm = useCallback(() => {
     if (formData) {
         const updatedFormData = { ...formData };
@@ -1583,9 +1728,42 @@ export default function DatabasePage() {
         } else {
             updatedFormData.umur = undefined;
         }
+        
+        // ID Jemaat unik (id_jemaat)
+        const jemaatId = updatedFormData.id.split('-')[0] ?? updatedFormData.id;
 
-        setJemaat(prev => prev.map(j => j.id === updatedFormData.id ? updatedFormData : j));
-        setDraftJemaat(prev => prev.map(j => j.id === updatedFormData.id ? updatedFormData : j));
+        // Buat objek UniqueJemaat yang terbarui
+        const updatedUniqueJemaat: UniqueJemaat = {
+            // ... copy semua properti dari JemaatClient
+            ...updatedFormData,
+            id: jemaatId, // Pastikan ID adalah ID Jemaat
+            // Hapus properti JemaatRow yang tidak ada di UniqueJemaat
+            tanggalKehadiran: undefined,
+            waktuPresensiFull: undefined,
+        } as UniqueJemaat;
+        
+        // 1. Update Unique Jemaat List
+        setUniqueJemaatList(prev => prev.map(j => 
+            j.id === jemaatId ? updatedUniqueJemaat : j
+        ));
+        
+        // 2. Update Draft Unique Jemaat List
+        setDraftUniqueJemaatList(prev => prev.map(j => 
+            j.id === jemaatId ? updatedUniqueJemaat : j
+        ));
+        
+        // 3. Update Attendance Records (memastikan semua record kehadiran jemaat ini terbarui)
+        setAttendanceRecords(prev => prev.map(j => 
+             j.id.split('-')[0] === jemaatId ? { 
+                ...j, 
+                // Copy semua field dari UniqueJemaat
+                ...updatedUniqueJemaat,
+                // Pertahankan properti JemaatRow
+                tanggalKehadiran: j.tanggalKehadiran,
+                waktuPresensiFull: j.waktuPresensiFull,
+             } : j
+        ));
+
         setOpenDetailDrawer(false);
         setSelectedFile(null); 
     }
@@ -1636,20 +1814,20 @@ export default function DatabasePage() {
       }
   }, [selectedFile, formData, showAlert]);
   
-  const openPreviewModal = useCallback((jemaatItem: Jemaat) => {
+  const openPreviewModal = useCallback((jemaatItem: JemaatRow) => {
     if (!jemaatItem.dokumen) return;
 
     let type: PreviewModalData['type'];
-    if (isImageUrlOrBase64(jemaatItem.dokumen)) {
+    if (isImageUrlOrBase64(jemaatItem.dokumen as string)) {
         type = 'image';
-    } else if (jemaatItem.dokumen.includes('.pdf') || jemaatItem.dokumen.startsWith('data:application/pdf')) {
+    } else if (typeof jemaatItem.dokumen === 'string' && (jemaatItem.dokumen.includes('.pdf') || jemaatItem.dokumen.startsWith('data:application/pdf'))) {
         type = 'pdf';
     } else {
         type = 'other';
     }
     
     setPreviewModalData({
-        url: jemaatItem.dokumen,
+        url: jemaatItem.dokumen as string,
         name: `${jemaatItem.nama}'s Document`,
         type: type
     });
@@ -1664,7 +1842,8 @@ export default function DatabasePage() {
       if (selectedDatesOnly.length === 0) return [];
       return [{ date: getDayKey(new Date(year, startMonth, 1)), event: 'KESELURUHAN BULAN INI' }];
     } else {
-      return selectedTables;
+      // 💡 Hanya tampilkan 1 tabel (jika ada event terpilih)
+      return selectedTables.length === 1 && selectedTables[0] ? [selectedTables[0]] : [];
     }
   }, [viewMode, selectedTables, selectedDatesOnly.length, startMonth, year]);
 
@@ -1704,10 +1883,11 @@ export default function DatabasePage() {
           let csv = "";
           csv += `"${summaryHeader}"\n\n`;
           
-          const keys: (keyof Jemaat)[] = ['id', 'nama', 'statusKehadiran', 'jabatan', 'kehadiranSesi', 'email', 'telepon'];
+          const keys: (keyof JemaatRow)[] = ['id', 'nama', 'statusKehadiran', 'jabatan', 'kehadiranSesi', 'email', 'telepon'];
           
           tablesToRender.forEach(({ date, event }, tableIndex) => {
-            const dataForTable = getFilteredJemaatMonthlySummary(jemaat);
+            // FIX: Gunakan getFilteredJemaat dengan kedua list data
+            const dataForTable = getFilteredJemaat(uniqueJemaatList, attendanceRecords);
             
             if (dataForTable.length === 0) return;
             
@@ -1718,12 +1898,15 @@ export default function DatabasePage() {
             csv += `\n"${tableHeader}"\n`;
             csv += `"Total Data: ${dataForTable.length}"\n`;
             
-            const headers = ['ID', 'Nama', 'Status Kehadiran', 'Jabatan', 'Jenis Ibadah', 'Email', 'Telp'];
+            const headers = ['ID (Attendance)', 'Nama', 'Status Kehadiran', 'Jabatan', 'Jenis Ibadah', 'Email', 'Telp'];
             csv += headers.map(h => `"${h}"`).join(",") + "\n";
             
             csv += dataForTable.map(row => 
               keys.map(key => {
                 const val = row[key] ?? '';
+                // Handle dokumen field for csv (just output existence or a placeholder)
+                if (key === 'dokumen') return `"Dokumen tersedia"`;
+                
                 return `"${String(val).replace(/"/g, '""')}"`; 
               }).join(",")
             ).join("\n") + "\n";
@@ -1747,7 +1930,8 @@ export default function DatabasePage() {
             let isFirstTable = true;
             
             tablesToRender.forEach(({ date, event }) => {
-              const dataForTable = getFilteredJemaatMonthlySummary(jemaat);
+              // FIX: Gunakan getFilteredJemaat dengan kedua list data
+              const dataForTable = getFilteredJemaat(uniqueJemaatList, attendanceRecords);
               
               if (dataForTable.length === 0) return;
               
@@ -1759,7 +1943,7 @@ export default function DatabasePage() {
               let yPosition = 20;
               
               const tableHeader = viewMode === 'monthly_summary'
-                ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
+                ? `Data Gabungan Bulanan: ${monthNames[startMonth]} ${year}`
                 : `${new Date(date).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })} - ${event}`;
               
               pdf.setFontSize(14);
@@ -1772,7 +1956,7 @@ export default function DatabasePage() {
               pdf.text(`Total Data: ${dataForTable.length}`, margin, yPosition);
               yPosition += 10;
               
-              const head = [['ID', 'Nama', 'Status', 'Jabatan', 'Jenis Ibadah', 'Telp']];
+              const head = [['ID (Attendance)', 'Nama', 'Status', 'Jabatan', 'Jenis Ibadah', 'Telp']];
               const body = dataForTable.map(row => [
                   String(row.id),
                   row.nama,
@@ -1811,7 +1995,7 @@ export default function DatabasePage() {
             document.body.removeChild(finalLoadingDiv);
         }
       }
-  }, [tablesToRender, selectedDates, viewMode, startMonth, year, jemaat]);
+  }, [tablesToRender, selectedDates, viewMode, startMonth, year, uniqueJemaatList, attendanceRecords, showAlert, getFilteredJemaat]);
 
   const showSesiFilter = useMemo(() => {
     if (viewMode === 'monthly_summary') return true;
@@ -1843,7 +2027,7 @@ export default function DatabasePage() {
   }
 
   return (
-    // FIX 1: Set container terluar ke h-screen dan overflow-hidden (untuk desktop)
+    // FIX 1: Set outer container to h-screen and overflow-hidden (for desktop)
     <div className="flex h-screen bg-gray-50"> 
       
       {/* Sidebar Overlay for Mobile */}
@@ -1856,13 +2040,12 @@ export default function DatabasePage() {
 
       {/* Sidebar - FIX 2: Container fixed di desktop dan mobile. */}
       {/* Di desktop, ini akan menjadi kolom kiri, dan konten utama akan memiliki margin. */}
-      <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none lg:relative lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         {/* FIX 3: Sidebar component fills container height */}
-        <Sidebar activeView='database' style={{ height: '100%' }} />
+        <Sidebar activeView='database' isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       </div>
       
       {/* Main Content - FIX 4: Gunakan ml-64 di desktop dan overflow-y-auto untuk scroll konten */}
-      {/* Di mobile, ml-0 karena sidebar fixed menimpa konten. */}
       <main className={`flex-grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
       
         {/* Hamburger Menu for Mobile */}
@@ -1933,7 +2116,7 @@ export default function DatabasePage() {
               
               <select 
                 value={filterStatusKehadiran} 
-                onChange={e => setFilterStatusKehadiran(e.target.value)}
+                onChange={e => setFilterStatusKehadiran(e.target.value as StatusKehadiran | "")}
                 className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
               >
                 <option value="">Semua Status Kehadiran</option>
@@ -1999,10 +2182,8 @@ export default function DatabasePage() {
               
               {tablesToRender.map(({ date, event }, idx) => {
                 
-                const dataToRender = getFilteredJemaat(jemaat);
-                    
-                const filteredData = dataToRender;
-                
+                // FIX 5: Gunakan getFilteredJemaat dengan kedua list data
+                const filteredData = getFilteredJemaat(uniqueJemaatList, attendanceRecords);
                 const pagedData = idx === 0 ? getPagedData(filteredData) : filteredData; 
                 
                 const tableFilteredCount = filteredData.length;
@@ -2041,7 +2222,9 @@ export default function DatabasePage() {
                         </thead>
                         <tbody className="bg-white divide-y divide-gray-200">
                           {pagedData.map((j, i) => {
-                            const draftItem = j;
+                            // FIX 6: Cari draft item dari draftUniqueJemaatList
+                            const jemaatId = j.id.split('-')[0] ?? j.id;
+                            const draftItem = draftUniqueJemaatList.find(d => d.id === jemaatId) ?? j;
                             const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
 
                             return (
@@ -2072,8 +2255,9 @@ export default function DatabasePage() {
                                     <input
                                       type="text"
                                       value={draftItem.nama}
+                                      onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, nama: e.target.value } : d))}
                                       className="border-2 border-indigo-300 rounded px-2 py-1 w-full focus:border-indigo-500 focus:outline-none text-sm"
-                                      readOnly // Set readOnly for non-edit mode display
+                                      onClick={(e) => e.stopPropagation()} 
                                     />
                                   ) : (
                                     j.nama
@@ -2084,8 +2268,9 @@ export default function DatabasePage() {
                                   {editMode ? (
                                     <select
                                       value={draftItem.statusKehadiran}
+                                      onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, statusKehadiran: e.target.value as StatusKehadiran } : d))}
                                       className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
-                                      disabled // Set disabled for non-edit mode display
+                                      onClick={(e) => e.stopPropagation()} 
                                     >
                                       <option value="Aktif">Aktif</option>
                                       <option value="Jarang Hadir">Jarang Hadir</option>
@@ -2108,8 +2293,9 @@ export default function DatabasePage() {
                                   {editMode ? (
                                     <select
                                       value={draftItem.jabatan}
+                                      onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, jabatan: e.target.value } : d))}
                                       className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
-                                      disabled // Set disabled for non-edit mode display
+                                      onClick={(e) => e.stopPropagation()} 
                                     >
                                       <option value="Jemaat">Jemaat</option>
                                       {uniqueJabatan.map((jab) => (
@@ -2131,9 +2317,9 @@ export default function DatabasePage() {
                                         openPreviewModal(j); 
                                       }}
                                       className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition text-xs font-medium"
-                                      title={j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf') ? "Preview PDF" : "Preview Gambar"}
+                                      title={typeof j.dokumen === 'string' && (j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf')) ? "Preview PDF" : "Preview Gambar"}
                                     >
-                                      {j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf') ? <FileText size={14} /> : <LucideImage size={14} />}
+                                      {typeof j.dokumen === 'string' && (j.dokumen.includes('.pdf') || j.dokumen.startsWith('data:application/pdf')) ? <FileText size={14} /> : <LucideImage size={14} />}
                                       Preview
                                     </button>
                                   ) : (
@@ -2192,10 +2378,344 @@ export default function DatabasePage() {
           </div>
         )}
 
-        {/* ... (Modals dan Drawers) */}
+        {/* Detail Drawer (Diaktifkan saat baris diklik) */}
+        {openDetailDrawer && formData && (
+          <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
+            <div className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"> 
+              <div className="p-6">
+                <div className="flex items-center justify-between border-b pb-4 mb-6">
+                  <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat</h2>
+                  <button
+                    onClick={() => setOpenDetailDrawer(false)}
+                    className="text-gray-500 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full"
+                  >
+                    <X size={24} />
+                  </button>
+                </div>
+                
+                <div className="space-y-5">
+                  <div className="flex justify-center mb-6">
+                    <div className="relative">
+                      <Image
+                        src={formData.foto ?? "/default-avatar.png"}
+                        alt={formData.nama}
+                        width={112}
+                        height={112}
+                        className="rounded-full h-28 w-28 object-cover shadow-lg"
+                        unoptimized
+                      />
+                      <div className="absolute bottom-0 right-0 bg-green-500 h-6 w-6 rounded-full border-4 border-white"></div>
+                    </div>
+                  </div>
+                  <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
+
+                  <div className="space-y-4">
+                    {/* TANGGAL LAHIR */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Tanggal Lahir
+                      </label>
+                      {editMode ? (
+                        <input
+                            type="date"
+                            value={formData.tanggalLahir ?? ""}
+                            onChange={(e) => setFormData(f => f ? { ...f, tanggalLahir: e.target.value } : null)}
+                            className="w-full border-2 border-indigo-300 rounded-lg px-4 py-2.5 text-gray-800 focus:border-indigo-500 focus:outline-none"
+                          />
+                      ) : (
+                          <input
+                            type="text" 
+                            value={formData.tanggalLahir ?? "-"}
+                            disabled 
+                            className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                          />
+                      )}
+                    </div>
+
+                    {/* UMUR */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Umur (Tahun)
+                      </label>
+                      <input
+                        type="text"
+                        value={calculatedAge || "-"} 
+                        disabled 
+                        className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                      />
+                    </div>
+
+                    {/* KELUARGA */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Keluarga
+                      </label>
+                      {editMode ? (
+                        <input
+                          type="text"
+                          value={formData.keluarga ?? ""}
+                          onChange={(e) => setFormData(f => f ? { ...f, keluarga: e.target.value } : null)}
+                          className="w-full border-2 border-indigo-300 rounded-lg px-4 py-2.5 text-gray-800 focus:border-indigo-500 focus:outline-none"
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={formData.keluarga ?? "-"}
+                          disabled 
+                          className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                        />
+                      )}
+                    </div>
+
+                    {/* EMAIL */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Email
+                      </label>
+                      {editMode ? (
+                          <input
+                            type="text"
+                            value={formData.email ?? ""}
+                            onChange={(e) => setFormData(f => f ? { ...f, email: e.target.value } : null)}
+                            className="w-full border-2 border-indigo-300 rounded-lg px-4 py-2.5 text-gray-800 focus:border-indigo-500 focus:outline-none"
+                          />
+                      ) : (
+                          <input
+                            type="text"
+                            value={formData.email ?? "-"}
+                            disabled 
+                            className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                          />
+                      )}
+                    </div>
+
+                    {/* NO. TELP */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        No. Telp
+                      </label>
+                      {editMode ? (
+                          <input
+                            type="text"
+                            value={formData.telepon ?? ""}
+                            onChange={(e) => setFormData(f => f ? { ...f, telepon: e.target.value } : null)}
+                            className="w-full border-2 border-indigo-300 rounded-lg px-4 py-2.5 text-gray-800 focus:border-indigo-500 focus:outline-none"
+                          />
+                      ) : (
+                          <input
+                            type="text"
+                            value={formData.telepon ?? "-"}
+                            disabled 
+                            className="w-full border-2 border-gray-300 rounded-lg px-4 py-2.5 bg-gray-100 cursor-not-allowed text-gray-700 focus:outline-none"
+                          />
+                      )}
+                    </div>
+
+                    {/* STATUS KEHADIRAN */}
+                    <div className="pt-2"> 
+                        <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Status Kehadiran
+                        </label>
+                        <span className={`inline-flex px-3 py-2 text-sm font-semibold rounded-lg w-full justify-center ${
+                          formData.statusKehadiran === "Aktif" 
+                            ? 'bg-green-100 text-green-800' 
+                            : formData.statusKehadiran === "Jarang Hadir"
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-red-100 text-red-800'
+                        }`}>
+                          {formData.statusKehadiran}
+                        </span>
+                    </div>
+
+                    {/* JABATAN */}
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                        Jabatan
+                      </label>
+                       {editMode ? (
+                        <select
+                          value={formData.jabatan}
+                          onChange={(e) => setFormData(f => f ? { ...f, jabatan: e.target.value } : null)}
+                          className="w-full border-2 border-indigo-300 rounded-lg px-4 py-2.5 text-gray-800 focus:border-indigo-500 focus:outline-none"
+                        >
+                            <option value="Jemaat">Jemaat</option>
+                          {uniqueJabatan.map((jab) => (
+                            <option key={jab} value={jab}>{jab}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="bg-indigo-50 border-2 border-indigo-200 rounded-lg px-4 py-2.5 text-gray-800 font-medium">
+                          {formData.jabatan}
+                        </div>
+                      )}
+                    </div>
+
+                    {/* DOKUMEN */}
+                    <div className="border-t pt-4">
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">
+                          Dokumen Pendukung
+                      </label>
+                      
+                      {/* FILE UPLOAD & PREVIEW */}
+                      {editMode ? (
+                        <div className="space-y-3">
+                          <div className="flex items-center gap-2">
+                              <input 
+                                type="file" 
+                                onChange={handleFileChange} 
+                                className="text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 flex-grow"
+                              />
+                              <button
+                                onClick={handleFileUpload}
+                                disabled={!selectedFile || isUploading}
+                                className={`px-4 py-2 rounded-lg text-sm transition ${
+                                  !selectedFile || isUploading 
+                                    ? 'bg-gray-400 text-white cursor-not-allowed' 
+                                    : 'bg-green-600 text-white hover:bg-green-700'
+                                }`}
+                              >
+                                {isUploading ? <Loader2 size={18} className="animate-spin" /> : <UploadCloud size={18} />}
+                              </button>
+                          </div>
+                          
+                          {getPreviewUrl && (
+                            <div className="flex justify-between items-center bg-gray-100 p-3 rounded-lg border border-gray-300">
+                                <span className="text-xs text-gray-600 truncate mr-2">{selectedFile?.name ?? formData.dokumen}</span>
+                                <button
+                                    onClick={() => openPreviewModal(formData)}
+                                    className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-500 text-white rounded-lg hover:bg-indigo-600 transition text-xs font-medium"
+                                >
+                                    <Eye size={14} /> Preview
+                                </button>
+                            </div>
+                          )}
+                          
+                        </div>
+                      ) : (
+                        // Read Only
+                        formData.dokumen ? (
+                          <button
+                            onClick={() => openPreviewModal(formData)}
+                            className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-100 text-indigo-700 rounded-lg hover:bg-indigo-200 transition font-medium w-full justify-center"
+                            title={typeof formData.dokumen === 'string' && formData.dokumen.includes('.pdf') ? "Preview PDF" : "Preview Gambar"}
+                          >
+                            {typeof formData.dokumen === 'string' && (formData.dokumen.includes('.pdf') || formData.dokumen.startsWith('data:application/pdf')) ? <FileText size={18} /> : <LucideImage size={18} />}
+                            Lihat Dokumen
+                          </button>
+                        ) : (
+                          <div className="text-center text-gray-500 p-2 border-2 border-dashed rounded-lg">Tidak Ada Dokumen</div>
+                        )
+                      )}
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="pt-6 flex justify-end space-x-3 border-t mt-8">
+                  {editMode ? (
+                    <>
+                        <button
+                          onClick={() => {
+                            handleSaveForm(); // Save form changes to current jemaat in state
+                            handleSaveEdit(); // Exit edit mode and commit draft to main jemaat list
+                          }}
+                          className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                        >
+                            Simpan Perubahan
+                        </button>
+                         <button
+                            onClick={() => {
+                                handleCancelEdit();
+                                setOpenDetailDrawer(false);
+                            }}
+                            className="px-6 py-2.5 border-2 border-red-600 text-red-600 rounded-lg hover:bg-red-50 transition"
+                        >
+                            Batal
+                        </button>
+                    </>
+                  ) : (
+                      <>
+                        <button
+                            onClick={() => setEditMode(true)}
+                            className="px-6 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition"
+                          >
+                            Edit
+                          </button>
+                        <button
+                          onClick={() => setOpenDetailDrawer(false)}
+                          className="px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                        >
+                          Tutup
+                        </button>
+                      </>
+                  )}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* MODAL DOWNLOAD */}
+        {openDownloadDialog && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-xl p-6 w-full max-w-md"> 
+              <h3 className="text-xl font-semibold text-indigo-700 border-b pb-3 mb-4">
+                Download Data
+              </h3>
+              <p className="text-gray-700 mb-6">Pilih format file yang ingin diunduh:</p>
+              <div className="flex flex-col gap-3 mb-6">
+                <button
+                  onClick={() => handleDownload('csv')}
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition" 
+                >
+                  <Download size={20} />
+                  Download CSV
+                </button>
+                <button
+                  onClick={() => handleDownload('pdf')}
+                  className="w-full flex items-center justify-center gap-2 px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition" 
+                >
+                  <Download size={20} />
+                  Download PDF
+                </button>
+              </div>
+              <button
+                onClick={() => setOpenDownloadDialog(false)}
+                className="w-full px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+              >
+                Batal
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {/* MODAL EVENT MANAGEMENT */}
+        {showEventModal && (
+            <DynamicEventManagementModal
+                data={eventModalData}
+                onUpdateData={updateEventModalData}
+                onClose={() => setShowEventModal(false)}
+                onAction={handleEventAction}
+                // Jika ingin menggunakan logika periodik bawaan dari modal:
+                // generateDatesForPeriod={generateDatesForPeriod}
+            />
+        )}
+        
+        {/* MODAL PREVIEW DOKUMEN */}
+        {previewModalData && (
+            <DynamicDocumentPreviewModal 
+                data={previewModalData}
+                onClose={closePreviewModal}
+            />
+        )}
+        
+        {/* MODAL KONFIRMASI / ALERT */}
+        <ConfirmationModal data={confirmationModal} />
+
+        {/* LOADING DOWNLOAD */}
+        {(document.getElementById('download-loading') && true) && null}
+
       </main>
       
-      {/* CSS Inline untuk animasi */}
       <style jsx>{`
         @keyframes slide-in {
           from {
@@ -2207,6 +2727,17 @@ export default function DatabasePage() {
         }
         .animate-slide-in {
           animation: slide-in 0.3s ease-out;
+        }
+        .animate-spin {
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
         }
       `}</style>
     </div>
