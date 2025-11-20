@@ -8,13 +8,13 @@ datasource db {
 }
 
 model Ibadah {
-  id_ibadah       String      @id
-  jenis_kebaktian String     
+  id_ibadah       String       @id
+  jenis_kebaktian String
   sesi_ibadah     Int
   tanggal_ibadah  DateTime
-  Kehadiran       Kehadiran[]
-  weeklyEventId   String?   
+  weeklyEventId   String?
   weeklyEvent     WeeklyEvent? @relation(fields: [weeklyEventId], references: [id])
+  Kehadiran       Kehadiran[]
 }
 
 model Kehadiran {
@@ -49,22 +49,22 @@ model Statistics {
 }
 
 model User {
-  user_id       Int       @id @default(autoincrement())
-  clerkId       String    @unique
-  nama          String
-  email         String
-  isVerified    String    @default("pending")
-  role          String
+  user_id    Int    @id @default(autoincrement())
+  clerkId    String @unique
+  nama       String
+  email      String
+  isVerified String @default("pending")
+  role       String
 }
 
 model WeeklyEvent {
-  id             String   @id @default(cuid())
-  title          String
-  description    String?
-  jenis_kebaktian String 
-  sesi_ibadah    Int 
-  start_date     DateTime
-  end_date       DateTime? 
-  repetition_type String @default("Once") 
-  Ibadah         Ibadah[]
+  id              String    @id @default(cuid())
+  sesi_ibadah     Int
+  start_date      DateTime
+  description     String?
+  end_date        DateTime?
+  jenis_kebaktian String
+  repetition_type String    @default("Once")
+  title           String
+  Ibadah          Ibadah[]
 }

@@ -68,7 +68,7 @@ export default function EventManagementModal({
     const isDeletion = isPeriodicalConfirm && newName === ''; // Logic untuk menghapus event berkala
 
     const dateDisplay = dateKey ? new Date(dateKey).toLocaleDateString("id-ID") : 'N/A';
-    const dayOptions = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+    const dayOptions = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Per Tanggal'];
 
     if (type === 'flow-select') {
         title = 'Pilih Mode Penambahan Event';
@@ -177,13 +177,17 @@ export default function EventManagementModal({
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Hari Perulangan</label>
                             <select
-                                value={periodicalDayOfWeek ?? 0}
-                                onChange={(e) => onUpdateData({ periodicalDayOfWeek: parseInt(e.target.value, 10) })}
-                                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+                            value={periodicalDayOfWeek ?? 0}
+                            onChange={(e) => {
+                                const value = e.target.value === 'Per Tanggal' ? 'Per Tanggal' : parseInt(e.target.value, 10);
+                                onUpdateData({ periodicalDayOfWeek: value as any });
+                            }}
                             >
-                                {dayOptions.map((day, index) => (
-                                    <option key={day} value={index}>{day}</option>
-                                ))}
+                            {dayOptions.map((day, index) => (
+                                <option key={day} value={day === 'Per Tanggal' ? 'Per Tanggal' : index}>
+                                {day}
+                                </option>
+                            ))}
                             </select>
                         </div>
                         <div>

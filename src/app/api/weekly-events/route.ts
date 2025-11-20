@@ -42,25 +42,24 @@ export async function POST(req: Request) {
             jenis_kebaktian: string;
             sesi_ibadah: number;
             start_date: string;
-            repetition_type: 'Once' | 'Weekly'; // New field
-            end_date?: string | null; // New field
+            repetition_type: 'Once' | 'Weekly' | 'Monthly'; // ✅ now includes Monthly
+            end_date?: string | null;
         };
 
         const { title, description, jenis_kebaktian, sesi_ibadah, start_date, repetition_type, end_date } = body;
 
-        // 1. Validasi Input
         if (!title || !start_date || !jenis_kebaktian || !sesi_ibadah) {
             return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
         }
-        
+
         const parsedStartDate = new Date(start_date);
         const parsedEndDate = end_date ? new Date(end_date) : null;
 
         if (parsedEndDate && parsedEndDate <= parsedStartDate) {
-            return NextResponse.json({ error: "End date must be after start date for recurring events." }, { status: 400 });
+            return NextResponse.json({ error: "End date must be after start date." }, { status: 400 });
         }
 
-        // 2. Buat entri di WeeklyEvent (Parent Event)
+        // Create parent record
         const newWeeklyEvent = await prisma.weeklyEvent.create({
             data: {
                 title,
@@ -73,70 +72,62 @@ export async function POST(req: Request) {
             },
         });
 
-        // 3. Buat entri di Ibadah (Event Instances)
-        const ibadahInstances: {
-            id_ibadah: string;
-            jenis_kebaktian: string;
-            sesi_ibadah: number;
-            tanggal_ibadah: Date;
-            weeklyEventId: string;
-        }[] = [];
-
-        let currentDate = parsedStartDate;
+        const ibadahInstances = [];
+        let loopDate = new Date(parsedStartDate);
         let counter = 0;
+        const maxDate = new Date();
+        maxDate.setDate(maxDate.getDate() + MAX_RECURRENCE_DAYS);
 
         if (repetition_type === 'Once') {
-            // Event Satu Kali: hanya buat 1 entri Ibadah
             ibadahInstances.push({
                 id_ibadah: uuidv4(),
                 jenis_kebaktian,
                 sesi_ibadah,
-                tanggal_ibadah: currentDate,
+                tanggal_ibadah: loopDate,
                 weeklyEventId: newWeeklyEvent.id,
             });
-
-        } else if (repetition_type === 'Weekly') {
-            // Event Periodik Mingguan
-            const maxDate = new Date();
-            maxDate.setDate(maxDate.getDate() + MAX_RECURRENCE_DAYS); // Batas 1 tahun
-
-            let loopDate = new Date(parsedStartDate.getTime());
-
-            while (
-                (!parsedEndDate || loopDate <= parsedEndDate) && 
-                loopDate <= maxDate &&
-                counter < 52 // Max 52 instances (1 year)
-            ) {
+        } 
+        else if (repetition_type === 'Weekly') {
+            while ((!parsedEndDate || loopDate <= parsedEndDate) && loopDate <= maxDate && counter < 52) {
                 ibadahInstances.push({
                     id_ibadah: uuidv4(),
                     jenis_kebaktian,
                     sesi_ibadah,
-                    tanggal_ibadah: new Date(loopDate.getTime()), // Salin tanggal
+                    tanggal_ibadah: new Date(loopDate),
                     weeklyEventId: newWeeklyEvent.id,
                 });
-
-                // Lanjut ke minggu berikutnya
                 loopDate.setDate(loopDate.getDate() + 7);
                 counter++;
             }
         }
-        
-        if (ibadahInstances.length > 0) {
-            await prisma.ibadah.createMany({
-                data: ibadahInstances,
-            });
+        else if (repetition_type === 'Monthly') { // ✅ NEW LOGIC
+            while ((!parsedEndDate || loopDate <= parsedEndDate) && loopDate <= maxDate && counter < 12) {
+                ibadahInstances.push({
+                    id_ibadah: uuidv4(),
+                    jenis_kebaktian,
+                    sesi_ibadah,
+                    tanggal_ibadah: new Date(loopDate),
+                    weeklyEventId: newWeeklyEvent.id,
+                });
+                // move to next month
+                loopDate.setMonth(loopDate.getMonth() + 1);
+                counter++;
+            }
         }
 
+        if (ibadahInstances.length > 0) {
+            await prisma.ibadah.createMany({ data: ibadahInstances });
+        }
 
-        console.log(`Successfully created WeeklyEvent and ${ibadahInstances.length} Ibadah instances.`);
+        console.log(`✅ Created ${ibadahInstances.length} instances for ${repetition_type} event`);
         return NextResponse.json(
-            { message: "Weekly Event and Ibadah instances created successfully", weeklyEvent: newWeeklyEvent }, 
+            { message: `${repetition_type} Event created successfully`, weeklyEvent: newWeeklyEvent },
             { status: 201 }
         );
 
-    } catch (e) {
-        console.error("Error in POST /api/weekly-events:", e);
-        return NextResponse.json({ error: "Internal Server Error" }, { status: 500 });
+    } catch (e: any) {
+        console.error("❌ Error in POST /api/weekly-events:", e);
+        return NextResponse.json({ error: e.message, details: e }, { status: 500 });
     }
 }
 

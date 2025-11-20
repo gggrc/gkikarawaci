@@ -209,6 +209,7 @@ const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: S
 };
 
 // **Logika Integrasi Event Berkala (Caching)**
+// **Logika Integrasi Event Berkala (Caching)**
 const integrateWeeklyEvents = (
   weeklyEvents: WeeklyEvent[], 
   existingEvents: EventsCache, 
@@ -217,51 +218,29 @@ const integrateWeeklyEvents = (
     const updatedEvents = { ...existingEvents };
 
     for (const event of weeklyEvents) {
-        const startDate = new Date(event.start_date);
-        const endDate = event.end_date ? new Date(event.end_date) : new Date(today.getFullYear() + 10, 0, 1);
-        
-        let currentDate = new Date(startDate); 
-        
-        while (currentDate.getTime() <= endDate.getTime()) { 
-            const currentDateTimestamp = currentDate.setHours(0, 0, 0, 0);
+        const eventName = event.title;
+        const lowerEventName = eventName.toLowerCase();
 
-            // 1. Batasi hanya pada tanggal yang sudah lewat atau hari ini
-            if (currentDateTimestamp <= todayStart) {
-                const dayKey = getDayKey(currentDate);
-                const dayOfWeek = currentDate.getDay(); 
+        // ✅ Loop lewat semua tanggal Ibadah yang dikembalikan dari API
+        for (const ibadah of event.Ibadah ?? []) {
+            const ibadahDate = new Date(ibadah.tanggal_ibadah);
+            const dayKey = getDayKey(ibadahDate);
 
-                // 2. Cek repetisi yang ketat: harus match day_of_week ATAU event sekali jalan
-                const isCorrectDay = event.repetition_type === 'Once' || dayOfWeek === event.day_of_week;
-                
-                if (isCorrectDay) {
-                    const initialEvents = updatedEvents[dayKey] ?? populateEventsForDate(dayKey, currentDate, allUniqueSessions);
-                    
-                    const eventName = event.title;
-                    const lowerEventName = eventName.toLowerCase();
-                    
-                    const eventExists = initialEvents.some(e => e.toLowerCase() === lowerEventName);
+            const initialEvents = updatedEvents[dayKey] ?? populateEventsForDate(dayKey, ibadahDate, allUniqueSessions);
+            const eventExists = initialEvents.some(e => e.toLowerCase() === lowerEventName);
 
-                    if (!eventExists) {
-                        // Tambahkan event ke daftar
-                        updatedEvents[dayKey] = [
-                            "KESELURUHAN DATA HARI INI", 
-                            ...initialEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
-                            eventName
-                        ].filter((v, i, a) => a.indexOf(v) === i);
-                    } else {
-                         // Perbaiki capitalization jika sudah ada
-                         updatedEvents[dayKey] = initialEvents.map(e => 
-                            e.toLowerCase() === lowerEventName ? eventName : e
-                         );
-                    }
-                }
+            if (!eventExists) {
+                updatedEvents[dayKey] = [
+                    "KESELURUHAN DATA HARI INI",
+                    ...initialEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"),
+                    eventName
+                ].filter((v, i, a) => a.indexOf(v) === i);
             } else {
-                // Jika sudah melewati hari ini, hentikan iterasi
-                break; 
+                // perbaiki capitalization
+                updatedEvents[dayKey] = initialEvents.map(e =>
+                    e.toLowerCase() === lowerEventName ? eventName : e
+                );
             }
-
-            // Lanjut ke hari berikutnya
-            currentDate.setDate(currentDate.getDate() + 1);
         }
     }
 
@@ -1390,14 +1369,14 @@ export default function DatabasePage() {
     const sesi_ibadah = 99; // Placeholder
     
     const payload = {
-        title: title,
-        description: `Event berkala dimulai ${new Date(dateKey).toLocaleDateString()} (${periodicalPeriod})`,
-        jenis_kebaktian: jenis_kebaktian,
-        sesi_ibadah: sesi_ibadah,
-        start_date: dateKey,
-        day_of_week: dayOfWeek, // DITAMBAHKAN
-        repetition_type: 'Weekly' as 'Weekly',
-        end_date: end_date,
+      title: title,
+      description: `Event berkala dimulai ${new Date(dateKey).toLocaleDateString()} (${periodicalPeriod})`,
+      jenis_kebaktian: jenis_kebaktian,
+      sesi_ibadah: sesi_ibadah,
+      start_date: dateKey,
+      day_of_week: periodicalDayOfWeek === 'Per Tanggal' ? null : dayOfWeek,
+      repetition_type: periodicalDayOfWeek === 'Per Tanggal' ? 'Monthly' : 'Weekly',
+      end_date: end_date,
     };
     
     // --- API CALL FOR PERSISTENCE ---
@@ -1437,18 +1416,17 @@ export default function DatabasePage() {
                 ? new Date(newPeriodicalEvent.end_date) 
                 : new Date(today.getFullYear() + 10, 0, 1);
             
-            while (currentDate.getTime() <= loopEndDate.getTime() && currentDate.getTime() <= todayStart) {
+            while (currentDate <= loopEndDate) {
                 const currentKey = getDayKey(currentDate);
-                const dayOfWeek = currentDate.getDay(); 
+                const availableEvents = newEventsCache[currentKey] ?? [];
 
-                if (dayOfWeek === newPeriodicalEvent.day_of_week || newPeriodicalEvent.repetition_type === 'Once') {
-                    // Cek di cache yang sudah diperbarui
-                    const availableEvents = newEventsCache[currentKey] ?? []; 
-                    if(availableEvents.includes(eventName)) {
-                        newDates.push(new Date(currentKey));
-                        newEventsByDate[currentKey] = [eventName]; 
-                    }
+                // Match event title regardless of day_of_week
+                if (availableEvents.includes(eventName)) {
+                    newDates.push(new Date(currentKey));
+                    newEventsByDate[currentKey] = [eventName];
                 }
+
+                // Move to next day to check
                 currentDate.setDate(currentDate.getDate() + 1);
             }
         }
