@@ -1,12 +1,9 @@
 // src/pages/databaseUser.tsx
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { Download, X,  ChevronLeft, ChevronRight, BarChart3, Calendar,  Loader2, Eye, Menu } from "lucide-react"; 
+import { Download, X,  ChevronLeft, ChevronRight, BarChart3, Calendar, Eye, Menu } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
-import { jsPDF } from 'jspdf';
-import autoTable from "jspdf-autotable";
-import type { UserOptions } from "jspdf-autotable";
 
 // --- Tipe Data ---
 interface Jemaat {
@@ -432,8 +429,6 @@ export default function DatabasePage() {
   const [year, setYear] = useState<number>(currentYear);
   const [startMonth, setStartMonth] = useState<number>((currentMonth - 1 + 12) % 12);
   const [showYearDialog, setShowYearDialog] = useState(false);
-  const [gridStartYear, setGridStartYear] = useState(Math.floor(currentYear / 10) * 10);
-  
   const [selectedDates, setSelectedDates] = useState<Date[]>([]);
   const [selectedEventsByDate, setSelectedEventsByDate] = useState<SelectedEventsByDate>({});
   const [events, setEvents] = useState<EventsCache>(() => memoryStorage.events || {});
@@ -589,7 +584,7 @@ export default function DatabasePage() {
   useEffect(() => {
     if (!router.isReady || isLoading || jemaat.length === 0) return; 
 
-    const { dates, date, mode, event: eventQuery } = router.query;
+    const { dates } = router.query;
     
     const currentEventsCache = memoryStorage.events;
     
@@ -606,7 +601,7 @@ export default function DatabasePage() {
         // Handle case jika URL merujuk ke tanggal tanpa attendance data
         if (!availableEvents && !actualAttendanceDates.includes(dateKey)) {
              // Jika tidak ada data, kita perlu buat entry kosong di cache supaya bisa dipilih
-             const emptyEvents = [];
+             const emptyEvents: string[] = [];
              currentEventsCache[dateKey] = emptyEvents;
         }
 
@@ -656,7 +651,7 @@ export default function DatabasePage() {
             saveSelection(selectedDates.filter(d => getDayKey(d) !== key), newState);
             return newState;
         });
-        if (events[key] && events[key].length === 0) {
+        if (events[key]?.length === 0) {
              setEvents(prev => {
                 const updated = { ...prev };
                 delete updated[key];
@@ -676,7 +671,7 @@ export default function DatabasePage() {
     }
     
     // Handle Event Caching/Generation (Hanya untuk tanggal dengan data)
-    let currentEvents = events[key];
+    const currentEvents = events[key];
     if (hasAttendance && !currentEvents) {
         const currentEvents = populateEventsForDate(key, clickedDate);
         setEvents(prev => ({ ...prev, [key]: currentEvents }));
@@ -707,7 +702,7 @@ export default function DatabasePage() {
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
-  }, [events, selectedDates, selectedEventsByDate, year, actualAttendanceDates, jemaat]);
+  }, [events, selectedDates, selectedEventsByDate, year, actualAttendanceDates]);
 
   const handleSelectEvent = useCallback((dateKey: string, event: string) => {
     setViewMode('event_per_table'); 
@@ -748,25 +743,12 @@ export default function DatabasePage() {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
-  const getFilteredJemaatPerEvent = useCallback((jemaatList: Jemaat[], dateKey: string, event: string): Jemaat[] => {
-    
-    let filteredByDate = jemaatList.filter(j => {
-      // Logic filter tanggalKehadiran
-      return true; // Simplified for brevity
-    });
-    
-    return filteredByDate; // Simplified for brevity
-  }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
 
-  const getFilteredJemaatMonthlySummary = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
-    // Logic filter bulanan
-    return jemaatList; // Simplified for brevity
-  }, [selectedDatesOnly.length, filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
   
   const getFilteredJemaat = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
     // Logic gabungan filter
     return jemaatList; // Simplified for brevity
-  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent]);
+  }, []);
   
   const dataForPagination = useMemo(() => getFilteredJemaat(jemaat), [jemaat, getFilteredJemaat]);
   const filteredCount = dataForPagination.length;
@@ -785,7 +767,7 @@ export default function DatabasePage() {
   const uniqueKehadiranSesiByDate = useMemo(() => {
     // Logic untuk sesi unik
     return [...new Set(jemaat.map((j) => j.kehadiranSesi))]; // Simplified for brevity
-  }, [jemaat, selectedTables, viewMode]);
+  }, [jemaat]);
 
   const handleRowClick = useCallback((row: Jemaat) => {
       setFormData({ ...row });
@@ -809,7 +791,7 @@ export default function DatabasePage() {
     }
     // Placeholder untuk logic download yang sesungguhnya
     console.log(`Downloading ${format} report...`);
-  }, [tablesToRender, selectedDates, viewMode, startMonth, year, jemaat]);
+  }, [tablesToRender]);
   
   const showSesiFilter = useMemo(() => {
     if (viewMode === 'monthly_summary') return true;
@@ -838,7 +820,7 @@ export default function DatabasePage() {
       {/* Sidebar - FIX: Container fixed, removed lg:relative */}
       <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         {/* Pass props to Sidebar */}
-        <Sidebar activeView='database' isOpen={isSidebarOpen} onClose={closeSidebar} style={{ height: '100%' }} /> 
+        <Sidebar activeView='database' isOpen={isSidebarOpen} onClose={closeSidebar} /> 
       </div>
       
       {/* Main Content Wrapper (Handles the offset and scroll) */}
@@ -1219,6 +1201,37 @@ export default function DatabasePage() {
                     </button>
                   </div>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {showYearDialog && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+              <div className="bg-white rounded-xl p-6 w-full max-w-md">
+                <h3 className="text-xl font-semibold text-indigo-700 border-b pb-3 mb-4">
+                  Pilih Tahun
+                </h3>
+                <div className="grid grid-cols-4 gap-2 mb-6">
+                  {Array.from({ length: 10 }, (_, i) => year - 5 + i).map((y) => (
+                    <button
+                      key={y}
+                      onClick={() => handleSelectYearFromGrid(y)}
+                      className={`px-3 py-2 rounded-lg font-semibold transition ${
+                        y === year
+                          ? 'bg-indigo-600 text-white'
+                          : 'border-2 border-gray-300 text-gray-700 hover:border-indigo-600'
+                      }`}
+                    >
+                      {y}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={() => setShowYearDialog(false)}
+                  className="w-full px-6 py-2.5 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                >
+                  Tutup
+                </button>
               </div>
             </div>
           )}

@@ -34,6 +34,7 @@ interface WeeklyEvent {
   repetition_type: 'Once' | 'Weekly';
   jenis_kebaktian: string;
   sesi_ibadah: number;
+  Ibadah?: { tanggal_ibadah: string }[]; // Tambahkan properti Ibadah sesuai penggunaan
 }
 
 
@@ -58,6 +59,7 @@ interface JemaatAPIResponse extends FullJemaatAPIResponse {
     // Tambahkan properti error yang mungkin dikirim oleh API
     error?: string; 
     weeklyEvents?: WeeklyEvent[];
+    jemaatData?: UniqueJemaat[]; // Tambahkan properti jemaatData agar sesuai dengan penggunaan
 }
 
 
@@ -92,12 +94,12 @@ interface CustomConfirmation {
 }
 
 // Komponen Modal yang dimuat secara dinamis
-const DynamicDocumentPreviewModal = dynamic<any>(() => import('../components/DocumentPreviewModal'), {
+const DynamicDocumentPreviewModal = dynamic(() => import('../components/DocumentPreviewModal'), {
     loading: () => null, 
     ssr: false, 
 });
 
-const DynamicEventManagementModal = dynamic<any>(() => import('../components/EventManagementModal'), {
+const DynamicEventManagementModal = dynamic(() => import('../components/EventManagementModal'), {
     loading: () => (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="bg-white p-6 rounded-xl shadow-2xl">Memuat form event...</div>
@@ -180,7 +182,7 @@ const getAvailableSessionNames = (date: Date): string[] => {
  */
 const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: Set<string>): string[] => {
     const defaultEventsForDay = getAvailableSessionNames(date);
-    let combinedEvents = [...defaultEventsForDay];
+    const combinedEvents = [...defaultEventsForDay];
     
     // Tambahkan sesi unik dari database (kecuali yang sudah di default)
     allUniqueSessions.forEach(session => {
@@ -314,7 +316,7 @@ const generateDatesForPeriod = (startDayKey: string, dayOfWeek: number, period: 
             return [];
         }
         
-        const duration = parseInt(match[1], 10);
+        const duration = parseInt(match[1]!, 10);
         const unit = match[2];
         
         if (unit === 'm') {
@@ -700,7 +702,7 @@ const SelectedEventsSection = ({
 
 // Komponen Modal Kustom untuk Konfirmasi/Alert
 const ConfirmationModal = ({ data }: { data: CustomConfirmation | null }) => {
-    if (!data || !data.isOpen) return null;
+    if (!data?.isOpen) return null;
 
     return (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
