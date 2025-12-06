@@ -1,26 +1,47 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+
+type MeResponse = {
+  isVerified: "pending" | "accepted" | "rejected" | null;
+};
 
 export default function WaitingPage() {
   const [status, setStatus] = useState<"pending" | "accepted" | "rejected" | null>(null);
-
+  
   // 🔁 Cek status user setiap 3 detik
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      const res = await fetch("/api/me");
-      const data = await res.json();
+ useEffect(() => {
+  const checkStatus = async () => {
+  try {
+    const res = await fetch("/api/me");
 
-      if (data.isVerified) {
-        setStatus(data.isVerified);
-        if (data.isVerified === "accepted") {
-          window.location.href = "/statistic"; // redirect kalau sudah diterima
-        }
+    const data = (await res.json()) as MeResponse; // ✅ FIX ESLint
+
+    if (data.isVerified) {
+      setStatus(data.isVerified);
+
+      if (data.isVerified === "accepted") {
+        window.location.href = "/statistic";
       }
-    }, 3000);
+    }
+  } catch (error) {
+    console.error("Gagal mengambil status user:", error);
+  }
+};
 
-    return () => clearInterval(interval);
-  }, []);
+
+  // Jalankan langsung saat pertama kali mount
+  void checkStatus();
+
+  // Lalu jalankan tiap 3 detik
+  const interval = setInterval(() => {
+    void checkStatus(); // ✅ tidak mengembalikan Promise ke setInterval
+  }, 3000);
+
+  return () => clearInterval(interval);
+}, []);
+
 
   return (
     <div className="min-h-screen relative flex items-center justify-center">
@@ -114,12 +135,13 @@ export default function WaitingPage() {
 
           {/* 🔘 Tombol */}
           <div className="flex justify-center gap-3">
-            <a
-              href="/"
-              className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
-            >
-              Kembali ke Beranda
-            </a>
+            <Link
+  href="/"
+  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
+>
+  Kembali ke Beranda
+</Link>
+
             <a
               href="mailto:admin@example.com"
               className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition"

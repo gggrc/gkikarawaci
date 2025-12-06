@@ -4,9 +4,9 @@ export const runtime = "nodejs";
 
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import type { Database } from "~/types/database.types";
 import { getAuth } from "@clerk/nextjs/server";
 import prisma from "@/lib/prisma";
+import type { Database } from "~/types/database.types";
 
 // ==============================
 // TYPES
@@ -38,9 +38,9 @@ export interface JemaatClient {
   nama: string;
   jabatan: string | null;
   statusKehadiran: StatusKehadiran;
-  tanggalLahir: string | undefined;
-  umur: string | undefined;
-  keluarga: string | undefined;
+  tanggalLahir?: string;
+  umur?: string;
+  keluarga?: string;
   email: string | null;
   telepon: string | null;
   kehadiranSesi: string;
@@ -64,11 +64,12 @@ export interface JemaatAPIResponse {
 // ==============================
 const calculateAge = (dobString?: string | null): string | undefined => {
   if (!dobString) return undefined;
-  const today = new Date();
   const birthDate = new Date(dobString);
   if (isNaN(birthDate.getTime())) return undefined;
 
+  const today = new Date();
   let age = today.getFullYear() - birthDate.getFullYear();
+
   const m = today.getMonth() - birthDate.getMonth();
   if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
 
@@ -81,49 +82,36 @@ const calculateStatusKehadiran = (attendanceCount: number): StatusKehadiran => {
   return "Tidak Aktif";
 };
 
-const normalizeDateToYYYYMMDD = (dateString: string): string => {
+const normalizeDate = (dateString?: string | null): string => {
   if (!dateString) return "";
-  const match = /^\d{4}-\d{2}-\d{2}/.exec(dateString);
-  if (match) return match[0];
-  return dateString.split(/[\sT]/)[0] ?? "";
+  const part = dateString.split("T")[0];
+  return part ?? "";
 };
 
-const toKey = (val: unknown): string => {
-  if (val === null || val === undefined) return "";
 
-  if (typeof val === "string") return val;
-  if (typeof val === "number") return String(val);
-
-  throw new Error(
-    `Invalid key type: expected string | number, got ${typeof val}`
-  );
+const toKey = (v: unknown): string => {
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  return "";
 };
 
+// ✅ FIX UTAMA: null → undefined (UNTUK PATCH)
+const toUndefined = <T>(v: T | null | undefined): T | undefined =>
+  v ?? undefined;
 
 // ==============================
 // GET HANDLER
 // ==============================
 export async function GET() {
   try {
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
 
-    if (!supabaseUrl || !supabaseServiceRoleKey) {
-      throw new Error("Missing Supabase environment variables");
-    }
+    const supabase = createClient<Database>(url, key, {
+      auth: { persistSession: false },
+    });
 
-    const supabase = createClient<Database>(
-      supabaseUrl,
-      supabaseServiceRoleKey,
-      { auth: { persistSession: false } }
-    );
-
-    const threeMonthsAgo = new Date();
-    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-    const threeMonthsAgoISO = threeMonthsAgo.toISOString();
-
-    // 1. Fetch Jemaat
-    const { data: jemaatData, error: jemaatError } = await supabase
+    const { data: jemaatRaw, error: jemaatError } = await supabase
       .from("Jemaat")
       .select("id_jemaat, name, jabatan, email, handphone, tanggal_lahir")
       .order("name", { ascending: true });
@@ -134,149 +122,115 @@ export async function GET() {
         jemaatData: [],
         attendanceDates: [],
         fullAttendanceRecords: [],
-      } as JemaatAPIResponse);
+      });
     }
 
-    const safeJemaatData = (jemaatData ?? []) as JemaatDB[];
+    const jemaatData = (jemaatRaw ?? []) as JemaatDB[];
 
-    // 2. Fetch Kehadiran + Join Ibadah
-    const { data: rawKehadiranData } = await supabase
+    const threeMonthsAgo = new Date();
+    threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+
+    const { data: kehRaw } = await supabase
       .from("Kehadiran")
       .select(
         `id_jemaat, waktu_presensi, id_ibadah,
          Ibadah ( id_ibadah, jenis_kebaktian )`
       )
-      .gte("waktu_presensi", threeMonthsAgoISO)
+      .gte("waktu_presensi", threeMonthsAgo.toISOString())
       .order("waktu_presensi", { ascending: true });
 
-    const attendanceCountMap = new Map<string, number>();
-    const jemaatSesiMap = new Map<string, Map<string, number>>();
-    const uniqueDatesWithAttendance = new Set<string>();
+    const attendanceCount = new Map<string, number>();
+    const jemaatSesi = new Map<string, Map<string, number>>();
+    const uniqueDates = new Set<string>();
 
-    (rawKehadiranData as KehadiranDB[] | null)?.forEach((k) => {
-      if (!k?.id_jemaat || !k.waktu_presensi) return;
+    (kehRaw as KehadiranDB[] | null)?.forEach((k) => {
+      if (!k.id_jemaat || !k.waktu_presensi) return;
 
-      const jemaatId = toKey(k.id_jemaat);
-      const datePart = normalizeDateToYYYYMMDD(k.waktu_presensi);
+      const id = toKey(k.id_jemaat);
+      const date = normalizeDate(k.waktu_presensi);
 
-      uniqueDatesWithAttendance.add(datePart);
+      uniqueDates.add(date);
+      attendanceCount.set(id, (attendanceCount.get(id) ?? 0) + 1);
 
-      attendanceCountMap.set(
-        jemaatId,
-        (attendanceCountMap.get(jemaatId) ?? 0) + 1
-      );
-
-      const jenis = k.Ibadah?.jenis_kebaktian ?? "Sesi Tidak Diketahui";
-
-      if (!jemaatSesiMap.has(jemaatId)) {
-        jemaatSesiMap.set(jemaatId, new Map());
-      }
-
-      const sesiCounter = jemaatSesiMap.get(jemaatId)!;
-      sesiCounter.set(jenis, (sesiCounter.get(jenis) ?? 0) + 1);
+      const sesi = k.Ibadah?.jenis_kebaktian ?? "Unknown";
+      if (!jemaatSesi.has(id)) jemaatSesi.set(id, new Map());
+      jemaatSesi.get(id)!.set(sesi, (jemaatSesi.get(id)!.get(sesi) ?? 0) + 1);
     });
 
-    // 3. Process Jemaat
-    const processedJemaatData: JemaatClient[] = safeJemaatData.map((j) => {
-      const jemaatId = toKey(j.id_jemaat);
-      const sesiMap = jemaatSesiMap.get(jemaatId);
+    const processed: JemaatClient[] = jemaatData.map((j) => {
+      const id = toKey(j.id_jemaat);
+      const sesi = jemaatSesi.get(id);
+      let dom = "Belum Ada Ibadah";
 
-      let dominantSesi = "Belum Ada Ibadah";
-      if (sesiMap && sesiMap.size > 0) {
-        const sorted = Array.from(sesiMap.entries()).sort(
-          (a, b) => b[1] - a[1]
-        );
-
-        dominantSesi = sorted[0]?.[0] ?? "Belum Ada Ibadah";
+      if (sesi) {
+        const sorted = [...sesi.entries()].sort((a, b) => b[1] - a[1]);
+        dom = sorted[0]?.[0] ?? dom;
       }
 
-
-      const birth = j.tanggal_lahir
-        ? normalizeDateToYYYYMMDD(j.tanggal_lahir)
-        : undefined;
+      const birth = normalizeDate(j.tanggal_lahir);
 
       return {
-        id: jemaatId,
-        foto: `https://ui-avatars.com/api/?name=${encodeURIComponent(
-          j.name
-        )}&background=4F46E5&color=fff`,
+        id,
+        foto: `https://ui-avatars.com/api/?name=${encodeURIComponent(j.name)}`,
         nama: j.name,
         jabatan: j.jabatan ?? "Jemaat",
-        statusKehadiran: calculateStatusKehadiran(
-          attendanceCountMap.get(jemaatId) ?? 0
-        ),
-        tanggalLahir: birth,
+        statusKehadiran: calculateStatusKehadiran(attendanceCount.get(id) ?? 0),
+        tanggalLahir: birth || undefined,
         umur: calculateAge(birth),
-        keluarga: `Keluarga ${j.name?.split(" ").pop()}`,
+        keluarga: `Keluarga ${j.name.split(" ").pop()}`,
         email: j.email,
         telepon: j.handphone,
-        kehadiranSesi: dominantSesi,
+        kehadiranSesi: dom,
         dokumen: null,
       };
     });
 
-    // 4. Full Attendance Records
-    const fullAttendanceRecords: JemaatWithAttendanceInfo[] = [];
+    const fullAttendance: JemaatWithAttendanceInfo[] = [];
 
-    (rawKehadiranData as KehadiranDB[] | null)?.forEach((k) => {
-      if (!k?.id_jemaat || !k.waktu_presensi) return;
+    (kehRaw as KehadiranDB[] | null)?.forEach((k) => {
+      if (!k.id_jemaat || !k.waktu_presensi) return;
 
-      const jemaat = processedJemaatData.find(
-        (x) => x.id === toKey(k.id_jemaat)
-      );
+      const j = processed.find((x) => x.id === toKey(k.id_jemaat));
+      if (!j) return;
 
-      if (!jemaat) return;
+      const datePart = normalizeDate(k.waktu_presensi);
 
-      const datePart = normalizeDateToYYYYMMDD(k.waktu_presensi);
-
-      fullAttendanceRecords.push({
-        ...jemaat,
-        id: `${jemaat.id}-${datePart}`,
+      fullAttendance.push({
+        ...j,
+        id: `${j.id}-${datePart}`,
         tanggalKehadiran: datePart,
         waktuPresensiFull: k.waktu_presensi,
-        kehadiranSesi:
-          k.Ibadah?.jenis_kebaktian ?? "Sesi Tidak Diketahui",
+        kehadiranSesi: k.Ibadah?.jenis_kebaktian ?? "Unknown",
       });
     });
 
     return NextResponse.json({
-      jemaatData: processedJemaatData,
-      attendanceDates: Array.from(uniqueDatesWithAttendance).sort(),
-      fullAttendanceRecords,
-    } as JemaatAPIResponse);
-  } catch (e) {
+      jemaatData: processed,
+      attendanceDates: [...uniqueDates].sort(),
+      fullAttendanceRecords: fullAttendance,
+    });
+  } catch {
     return NextResponse.json(
-      {
-        error: e instanceof Error ? e.message : "Unexpected server error",
-        jemaatData: [],
-        attendanceDates: [],
-        fullAttendanceRecords: [],
-      },
+      { error: "Unexpected server error", jemaatData: [], attendanceDates: [], fullAttendanceRecords: [] },
       { status: 500 }
     );
   }
 }
 
 // ==============================
-// PATCH HANDLER ✅ FINAL FIX
+// PATCH HANDLER — FINAL CLEAN
 // ==============================
 export async function PATCH(req: NextRequest) {
   try {
     const { userId } = getAuth(req);
+    if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    if (!userId) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
-
-    const admin = await prisma.user.findUnique({
-      where: { clerkId: userId },
-    });
-
+    const admin = await prisma.user.findUnique({ where: { clerkId: userId } });
     if (admin?.role !== "admin") {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    type JemaatPatchBody = {
+    const body = (await req.json()) as {
       id_jemaat: string;
       name?: string;
       jabatan?: string | null;
@@ -285,108 +239,36 @@ export async function PATCH(req: NextRequest) {
       tanggal_lahir?: string | null;
     };
 
-    const rawBody: unknown = await req.json();
+    if (!body.id_jemaat)
+      return NextResponse.json({ error: "Missing id_jemaat" }, { status: 400 });
 
-    if (!rawBody || typeof rawBody !== "object") {
-      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
-    }
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+    const key = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+    const supabase = createClient<Database>(url, key);
 
-    const {
-      id_jemaat,
-      name,
-      jabatan,
-      email,
-      handphone,
-      tanggal_lahir,
-    } = rawBody as JemaatPatchBody;
+    // ✅ FIX MUTLAK: null → undefined
+    const payload: Database["public"]["Tables"]["Jemaat"]["Update"] = {
+      name: toUndefined(body.name),
+      jabatan: toUndefined(body.jabatan),
+      email: toUndefined(body.email),
+      handphone: toUndefined(body.handphone),
+      tanggal_lahir: toUndefined(body.tanggal_lahir),
+    };
 
-
-    if (!id_jemaat || typeof id_jemaat !== "string") {
-      return NextResponse.json(
-        { error: "Invalid or missing id_jemaat" },
-        { status: 400 }
-      );
-    }
-
-    const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-    const supabaseServiceRoleKey =
-      process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-    if (!supabaseUrl || !supabaseServiceRoleKey) {
-      throw new Error("Missing Supabase environment variables");
-    }
-
-    const supabase = createClient<Database>(
-      supabaseUrl,
-      supabaseServiceRoleKey,
-      { auth: { persistSession: false } }
-    );
-
-    const supabaseUnsafe = createClient<any, any>(
-      supabaseUrl,
-      supabaseServiceRoleKey,
-      { auth: { persistSession: false } }
-    );
-
-    const { data, error } = await supabaseUnsafe
+    const { data, error } = await supabase
       .from("Jemaat")
-      .update({
-        name,
-        jabatan,
-        email,
-        handphone,
-        tanggal_lahir,
-      })
-      .eq("id_jemaat", id_jemaat)
+      .update(payload)
+      .eq("id_jemaat", body.id_jemaat)
       .select();
 
+    if (error)
+      return NextResponse.json({ error: error.message }, { status: 500 });
 
-    if (error) {
-      console.error("Supabase Update Error:", error);
+    if (!data?.length)
+      return NextResponse.json({ error: "id_jemaat not found" }, { status: 404 });
 
-      return NextResponse.json(
-        {
-          error: error.message,
-          code: error.code ?? null,
-          details: error.details ?? null,
-        },
-        { status: 500 }
-      );
-    }
-
-    // ✅ VALIDASI HASIL UPDATE
-    if (!data?.length) {
-      return NextResponse.json(
-        {
-          error: "Update gagal: id_jemaat tidak ditemukan di database",
-        },
-        { status: 404 }
-      );
-    }
-
-
-    if (data.length > 1) {
-      return NextResponse.json(
-        {
-          error:
-            "Update gagal: id_jemaat tidak unik (lebih dari satu row terupdate)",
-        },
-        { status: 500 }
-      );
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: data[0],
-    });
-  } catch (e) {
-    console.error("PATCH /api/jemaat error:", e);
-
-    return NextResponse.json(
-      {
-        error: e instanceof Error ? e.message : "Unexpected server error",
-      },
-      { status: 500 }
-    );
+    return NextResponse.json({ success: true, data: data[0] });
+  } catch {
+    return NextResponse.json({ error: "Unexpected server error" }, { status: 500 });
   }
 }
