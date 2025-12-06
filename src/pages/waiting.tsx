@@ -5,6 +5,8 @@ import Link from "next/link";
 
 type MeResponse = {
   isVerified: "pending" | "accepted" | "rejected" | null;
+  // ✅ PERBAIKAN: Menambahkan properti role untuk redirection berbasis peran
+  role: string | null; 
 };
 
 export default function WaitingPage() {
@@ -16,13 +18,25 @@ export default function WaitingPage() {
   try {
     const res = await fetch("/api/me");
 
-    const data = (await res.json()) as MeResponse; // ✅ FIX ESLint
+    // Menggunakan tipe MeResponse yang sudah diupdate
+    const data = (await res.json()) as MeResponse;
 
     if (data.isVerified) {
       setStatus(data.isVerified);
 
       if (data.isVerified === "accepted") {
-        window.location.href = "/statistic";
+        // ✅ PERBAIKAN: Logika redirection berdasarkan role
+        let destination = "/statistic"; // Default untuk role 'user'
+        
+        if (data.role === "admin") {
+            // Arahkan admin ke halaman admin (misalnya: /databaseUser)
+            destination = "/databaseUser";
+        } else if (data.role === "user") {
+            // Arahkan user biasa ke halaman statistik
+            destination = "/statistic";
+        }
+        
+        window.location.href = destination;
       }
     }
   } catch (error) {
