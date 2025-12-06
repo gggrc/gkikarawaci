@@ -864,7 +864,25 @@ export default function StatisticPage() {
     }, [dateStatsMap]);
   
   // --- END LOGIKA MULTI-DATE STATS ---
-  
+
+  // 🔥 SISIPKAN monthlyStatusData DI SINI
+  const monthlyStatusData = useMemo(() => {
+    const hadirPerBulan = fullAttendanceRecords.filter(a =>
+      new Date(a.tanggalKehadiran).getMonth() === startMonth &&
+      new Date(a.tanggalKehadiran).getFullYear() === year
+    );
+
+    const active = hadirPerBulan.filter(a => a.status === "Hadir").length;
+    const rare = hadirPerBulan.filter(a => a.status === "Jarang Hadir").length;
+    const inactive = hadirPerBulan.filter(a => a.status === "Tidak Aktif").length;
+
+    return [
+      { status: "Aktif", jumlah: active },
+      { status: "Jarang Hadir", jumlah: rare },
+      { status: "Tidak Aktif", jumlah: inactive },
+    ];
+  }, [fullAttendanceRecords, startMonth, year]);
+
   // FIX 6: Gunakan fungsi kalkulasi nyata untuk data Tahunan
   const yearlyStats = useMemo(() => calculateMonthlyTrends(fullAttendanceRecords, year, uniqueJemaatList), [fullAttendanceRecords, year, uniqueJemaatList]);
 
@@ -1420,7 +1438,6 @@ export default function StatisticPage() {
 
                         {/* Grafik Statistik Bulanan (DIUBAH) */}
                         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          
                           {/* Pie Chart: Distribusi Status Kehadiran Bulanan */}
                           <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
                             <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
@@ -1429,11 +1446,10 @@ export default function StatisticPage() {
                             <ResponsiveContainer width="100%" height={280}>
                               <PieChart>
                                 <Pie 
-                                  data={[
-                                    { name: 'Aktif', value: currentMonthStats.aktif },
-                                    { name: 'Jarang Hadir', value: currentMonthStats.jarangHadirlah },
-                                    { name: 'Tidak Aktif', value: currentMonthStats.tidakAktif }
-                                  ]} 
+                                  data={monthlyStatusData.map(d => ({
+                                    name: d.status,
+                                    value: d.jumlah
+                                  }))}
                                   cx="50%" 
                                   cy="50%" 
                                   labelLine={false} 

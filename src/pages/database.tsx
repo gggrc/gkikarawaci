@@ -1895,7 +1895,7 @@ export default function DatabasePage() {
     if (!formData) return;
 
     // Ambil ID Jemaat unik (id_jemaat)
-    const jemaatId = formData.id.split('-')[0] ?? formData.id;
+    const jemaatId = formData.id.slice(0, 36);
     
     // 1. Prepare payload for API
     const payload = {
@@ -2804,7 +2804,7 @@ export default function DatabasePage() {
                       </select>
                     </div>
                     
-                    {/* Dokumen Section */}
+                    {/* Dokumen Section
                     <div className="border-t pt-4">
                       <label className="block text-sm font-semibold text-gray-700 mb-2">
                         Dokumen (KTP/Kartu Keluarga, dll)
@@ -2847,7 +2847,7 @@ export default function DatabasePage() {
                             </div>
                           )}
                       </div>
-                    </div>
+                    </div> */}
 
                   </div>
                 </div>
