@@ -1,8 +1,8 @@
 // src/pages/statistic.tsx
 
-import { useEffect, useState, useMemo, useRef, useCallback } from "react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
-import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download, Settings, X, Loader2, Menu } from "lucide-react"; 
+import { useEffect, useState, useMemo, useRef } from "react";
+import { XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line } from "recharts";
+import { BarChart3, Calendar, ChevronLeft, ChevronRight, Download, Loader2, Menu } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
 import * as htmlToImage from "html-to-image";
@@ -10,6 +10,16 @@ import jsPDF from "jspdf";
 import 'jspdf-autotable'; // ⬅️ ini HARUS langsung setelah jsPDF
 // Import tipe data dari API untuk konsistensi
 import { type JemaatWithAttendanceInfo, type JemaatClient, type StatusKehadiran } from "~/app/api/jemaat/route";
+
+type RechartsEvent = unknown;
+
+interface RechartsActivePayload {
+  payload?: { fullSessionName?: string };
+}
+
+interface RechartsEventSafe {
+  activePayload?: RechartsActivePayload[];
+}
 
 
 // 🩹 Patch global untuk menghindari error oklch di runtime
@@ -22,33 +32,33 @@ if (typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('color', 'oklch(
 
 // Data Jemaat Granular (Per Record Kehadiran - JemaatRow)
 interface JemaatRow extends JemaatWithAttendanceInfo {
-  id: number | string; // id_jemaat-tanggal (di-mock)
+  id: string; // id_jemaat-tanggal (di-mock), must be string to match parent interface
   foto: string;
   nama: string;
   jabatan: string;
   statusKehadiran: StatusKehadiran; 
-  tanggalLahir?: string;
-  umur?: string;
-  keluarga?: string;
-  email?: string;
-  telepon?: string;
+  tanggalLahir: string;
+  umur: string;
+  keluarga: string;
+  email: string;
+  telepon: string;
   kehadiranSesi: string;
-  dokumen?: string;
+  dokumen: string;
   tanggalKehadiran: string; // Format: YYYY-MM-DD
 }
 
 // Data Jemaat Unik (Overall/Unique Jemaat - JemaatClient)
 interface UniqueJemaat extends JemaatClient {
-    id: number | string;
+    id: string;
     foto: string;
     nama: string;
     jabatan: string;
     statusKehadiran: StatusKehadiran; 
-    tanggalLahir?: string;
-    umur?: string;
-    keluarga?: string;
-    email?: string;
-    telepon?: string;
+    tanggalLahir: string;
+    umur: string;
+    keluarga: string;
+    email: string;
+    telepon: string;
     kehadiranSesi: string; // Mocked session (dari API)
 }
 
@@ -74,8 +84,6 @@ const getDayKey = (date: Date): string => {
   const day = String(date.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 };
-const getMonthKey = (month: number, year: number): string => 
-  `${year}-${String(month + 1).padStart(2, '0')}`;
 
 const getDaysInMonth = (month: number, year: number) => new Date(year, month + 1, 0).getDate();
 const getFirstDayOfMonth = (month: number, year: number) => new Date(year, month, 1).getDay();
@@ -89,23 +97,7 @@ const COLORS = ['#10B981', '#F59E0B', '#EF4444', '#4F46E5', '#8B5CF6', '#EC4899'
  * MENGHITUNG STATISTIK KESELURUHAN DARI DATA JEMAAT UNIK (overallJemaatList)
  * @param overallJemaatList 
  */
-const calculateOverallStats = (overallJemaatList: UniqueJemaat[]) => {
-  if (overallJemaatList.length === 0) {
-    return { totalJemaat: 0, jabatanDistribution: {}, kehadiranDistribution: {} as Record<UniqueJemaat['statusKehadiran'], number> };
-  }
-  
-  const jabatanDistribution = overallJemaatList.reduce((acc, j) => {
-    acc[j.jabatan] = (acc[j.jabatan] ?? 0) + 1;
-    return acc;
-  }, {} as Record<string, number>);
-  
-  const kehadiranDistribution = overallJemaatList.reduce((acc, j) => {
-    acc[j.statusKehadiran] = (acc[j.statusKehadiran] || 0) + 1;
-    return acc;
-  }, {} as Record<UniqueJemaat['statusKehadiran'], number>);
-
-  return { totalJemaat: overallJemaatList.length, jabatanDistribution, kehadiranDistribution };
-};
+// Removed: calculateOverallStats function - use uniqueJemaatList directly for overall statistics if needed
 
 
 /**
@@ -142,7 +134,7 @@ const calculateDateStats = (fullAttendanceRecords: JemaatRow[], uniqueJemaatList
           .map(j => j.id)
   ).size;
 
-  let totalKehadiranSemuaSesi = recordsHadirDiTanggalIni.length;
+  const totalKehadiranSemuaSesi = recordsHadirDiTanggalIni.length;
   
   // Total jemaat *unik* yang hadir di tanggal ini
   const uniqueAttendees = new Set(recordsHadirDiTanggalIni.map(r => r.id.toString().split('-')[0]));
@@ -190,7 +182,7 @@ const calculateDateStats = (fullAttendanceRecords: JemaatRow[], uniqueJemaatList
  * Menghitung status berdasarkan *status saat ini* dari jemaat yang hadir di bulan tersebut.
  */
 const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear: number, overallJemaatList: UniqueJemaat[]) => {
-    const monthlyStats: Record<string, { aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }> = {};
+    const monthlyStats: Record<string, { bulan: string; aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }> = {};
     const today = new Date();
     const currentMonthIndex = today.getMonth();
     const currentYear = today.getFullYear();
@@ -212,9 +204,10 @@ const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear
         
         // 3. For each month, find unique jemaat IDs
         const uniqueJemaatInMonth = new Set<string>();
-        records.forEach(r => {
-            uniqueJemaatInMonth.add(r.id.toString().split('-')[0]); // Use base ID
-        });
+          records.forEach(r => {
+              const cleanId = String(r.id ?? "").split("-")[0] ?? "";
+              if (cleanId) uniqueJemaatInMonth.add(cleanId);
+          });
         
         // 4. Map back to overallJemaatList to get their *current* status
         // FIX: Menghapus spasi dari nama variabel
@@ -232,7 +225,7 @@ const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear
         const total = records.length; // Total records (not unique jemaat)
         
         // 6. Store the result
-        const monthName = monthNames[monthIndex].substring(0, 3);
+        const monthName = monthNames[monthIndex]?.substring(0, 3) ?? "";
         monthlyStats[monthName] = {
             bulan: monthName,
             aktif: distribution.Aktif,
@@ -245,7 +238,7 @@ const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear
     // 7. Ensure all months (up to current month for current year) are included
     const result = monthNames.map((name, index) => {
         const shortName = name.substring(0, 3);
-        const stat = monthlyStats[shortName] || { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
+        const stat = monthlyStats[shortName] ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
         
         // Filter out future months in the current year
         if (selectedYear === currentYear && index > currentMonthIndex) {
@@ -278,11 +271,15 @@ const calculateDailyTrends = (fullAttendanceRecords: JemaatRow[], selectedMonth:
     
     // 1. Group records by date (YYYY-MM-DD)
     const recordsByDay = fullAttendanceRecords.reduce((acc, record) => {
-        acc[record.tanggalKehadiran] ??= [];
-        acc[record.tanggalKehadiran].push(record);
+        const key = record.tanggalKehadiran ?? "";
+
+        if (!key) return acc; // skip jika invalid
+
+        acc[key] ??= [];
+        acc[key].push(record);
+
         return acc;
     }, {} as Record<string, JemaatRow[]>);
-
 
     for (let day = 1; day <= daysInMonth; day++) {
         const dateKey = `${selectedYear}-${String(selectedMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -295,26 +292,39 @@ const calculateDailyTrends = (fullAttendanceRecords: JemaatRow[], selectedMonth:
         const recordsForDay = recordsByDay[dateKey];
         
         if (recordsForDay && recordsForDay.length > 0) {
-            // Find unique jemaat IDs for this day
-            const uniqueJemaatIDs = new Set<string>();
-            
             // Calculate status distribution based on the *current* status of the unique attendees
-            const distribution = recordsForDay.reduce((acc, record) => {
-                 // Only count the first instance for a unique jemaat to avoid double counting status
-                 const jemaatId = record.id.toString().split('-')[0];
-                 if (!acc.seen.has(jemaatId)) {
-                     acc.seen.add(jemaatId);
-                     acc[record.statusKehadiran] = (acc[record.statusKehadiran] ?? 0) + 1;
-                 }
-                 return acc;
-            }, { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0, seen: new Set<string>() } as Record<StatusKehadiran | 'seen', number | Set<string>>);
+            interface DailyDistributionAccumulator {
+              counts: Record<StatusKehadiran, number>;
+              seen: Set<string>;
+            }
+
+            const distribution = recordsForDay.reduce<DailyDistributionAccumulator>(
+              (acc, record) => {
+                const jemaatId = String(record.id ?? "").split("-")[0] ?? "";
+
+                if (jemaatId && !acc.seen.has(jemaatId)) {
+                  acc.seen.add(jemaatId);
+
+                  const status: StatusKehadiran = record.statusKehadiran ?? "Tidak Aktif";
+
+                  acc.counts[status] = (acc.counts[status] ?? 0) + 1;
+                }
+
+                return acc;
+              },
+              {
+                counts: { Aktif: 0, "Jarang Hadir": 0, "Tidak Aktif": 0 },
+                seen: new Set<string>(),
+              }
+            );
 
             data.push({
-                hari: day,
-                aktif: distribution.Aktif as number,
-                jarangHadirlah: distribution['Jarang Hadir'] as number,
-                tidakAktif: distribution['Tidak Aktif'] as number,
+              hari: day,
+              aktif: distribution.counts.Aktif,
+              jarangHadirlah: distribution.counts["Jarang Hadir"],
+              tidakAktif: distribution.counts["Tidak Aktif"],
             });
+
         } else {
             // Jika tidak ada data kehadiran tercatat di tanggal ini, tampilkan 0, bukan null
             data.push({ hari: day, aktif: 0, jarangHadirlah: 0, tidakAktif: 0 }); 
@@ -343,30 +353,31 @@ const getCleanSessionName = (session: string) => {
         .trim();
 }
 
-// Sesuaikan LegendPayload supaya kompatibel dengan Recharts (value bisa string|number, color optional)
-interface LegendPayload {
-  value: string | number;
-  color?: string;
-}
+import type { LegendPayload } from "recharts/types/component/DefaultLegendContent";
 
-// Ganti definisi renderLegend lama dengan ini
-const renderLegend = (props: any): React.ReactElement | null => {
-  const payload = props?.payload ?? [];
-  if (!payload || payload.length === 0) return null;
+// Perbaikan TOTAL tanpa any & tanpa unsafe
+const renderLegend = (
+  props: { payload?: readonly LegendPayload[] }
+): React.ReactElement | null => {
+
+  const payload = props.payload ?? [];
+  if (payload.length === 0) return null;
 
   return (
-    <div style={{
-      display: 'flex',
-      flexWrap: 'wrap',
-      justifyContent: 'center',
-      fontSize: '12px',
-      lineHeight: '1.2'
-    }}>
-      {payload.map((entry: any, index: number) => (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        fontSize: '12px',
+        lineHeight: '1.2'
+      }}
+    >
+      {payload.map((entry, index) => (
         <div
           key={`item-${index}`}
           style={{
-            color: entry?.color ?? '#000',
+            color: entry.color!,
             margin: '0 8px 4px 8px',
             fontWeight: 500,
             whiteSpace: 'nowrap'
@@ -377,12 +388,12 @@ const renderLegend = (props: any): React.ReactElement | null => {
               display: 'inline-block',
               width: 10,
               height: 10,
-              backgroundColor: entry?.color ?? '#000',
+              backgroundColor: entry.color!,
               borderRadius: '50%',
               marginRight: 6
             }}
           />
-          {String(entry?.value ?? '')}
+          {String(entry.value)}
         </div>
       ))}
     </div>
@@ -404,7 +415,7 @@ interface SessionLineChartProps {
   selectedDatesKeys: string[];
 }
 
-const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDatesKeys }: SessionLineChartProps) => {
+const SessionLineChart = ({ data, setHoveredSession, selectedDatesKeys }: SessionLineChartProps) => {
   const router = useRouter();
 
   // Handler untuk mengarahkan ke database dengan filter Tanggal + Sesi
@@ -419,76 +430,87 @@ const SessionLineChart = ({ data, hoveredSession, setHoveredSession, selectedDat
     }
   };
 
-  return (
-    <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
-        <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
-            Tren Status Kehadiran per Sesi Kebaktian (Akumulatif)
-        </h3>
-        <p className="text-sm text-gray-500 mb-4">
-            <span className="font-semibold text-indigo-600">Klik titik pada grafik untuk melihat detail tabel di Database!</span>
-        </p>
-        <ResponsiveContainer width="100%" height={280}>
-            <LineChart 
-                data={data} 
-                margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
-                onMouseDown={(state) => {
-                  const activePayload = (state as any)?.activePayload;
-                  if (activePayload && activePayload.length > 0) {
-                    const sessionName = activePayload[0].payload.fullSessionName;
-                    handleChartClick({ activePayload: [{ payload: { fullSessionName: sessionName } }] });
-                  }
-                }} // Adjusted to match the expected type
-                style={{ cursor: 'pointer' }}
-                onMouseEnter={(state: any) => {
-                  if (state?.activePayload && state.activePayload.length > 0) {
-                    setHoveredSession(state.activePayload[0].payload.fullSessionName);
-                  }
-                }}
-                onMouseLeave={() => setHoveredSession(null)}
-            >
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="session" />
-                <YAxis />
-                <Tooltip />
-                <Legend />
-                <Line 
-                  type="monotone" // Diatur agar garis mulus
-                  dataKey="Aktif" 
-                  stroke="#10B981" 
-                  strokeWidth={2} 
-                  name="Aktif" 
-                  dot={{ r: 4 }} 
-                  activeDot={{ r: 8 }} 
-                  opacity={hoveredSession === null || data.some((d: any) => d.fullSessionName === hoveredSession) ? 1 : 0.5}
-                />
-                <Line 
-                  type="monotone" // Diatur agar garis mulus
-                  dataKey="Jarang Hadir" 
-                  stroke="#F59E0B" 
-                  strokeWidth={2} 
-                  name="Jarang Hadir" 
-                  dot={{ r: 4 }} 
-                  activeDot={{ r: 8 }} 
-                  opacity={hoveredSession === null || data.some((d: any) => d.fullSessionName === hoveredSession) ? 1 : 0.5}
-                />
-                <Line 
-                  type="monotone" // Diatur agar garis mulus
-                  dataKey="Tidak Aktif" 
-                  stroke="#EF4444" 
-                  strokeWidth={2} 
-                  name="Tidak Aktif" 
-                  dot={{ r: 4 }} 
-                  activeDot={{ r: 8 }} 
-                  opacity={hoveredSession === null || data.some((d: any) => d.fullSessionName === hoveredSession) ? 1 : 0.5}
-                />
-            </LineChart>
-        </ResponsiveContainer>
-    </div>
-  );
+return (
+  <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
+    <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
+      Tren Status Kehadiran per Sesi Kebaktian (Akumulatif)
+    </h3>
+
+    <p className="text-sm text-gray-500 mb-4">
+      <span className="font-semibold text-indigo-600">
+        Klik titik pada grafik untuk melihat detail tabel di Database!
+      </span>
+    </p>
+
+    <ResponsiveContainer width="100%" height={280}>
+      <LineChart
+        data={data}
+        margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
+        onClick={(event: RechartsEvent) => {
+          const e = event as RechartsEventSafe;
+
+          const sessionName = e?.activePayload?.[0]?.payload?.fullSessionName;
+          if (!sessionName) return;
+
+          handleChartClick({
+            activePayload: [{ payload: { fullSessionName: sessionName } }],
+          });
+        }}
+        onMouseEnter={(event: RechartsEvent) => {
+          const e = event as RechartsEventSafe;
+
+          const sessionName = e?.activePayload?.[0]?.payload?.fullSessionName;
+          if (sessionName) setHoveredSession(sessionName);
+        }}
+        onMouseLeave={() => setHoveredSession(null)}
+        style={{ cursor: "pointer" }}
+      >
+        <CartesianGrid strokeDasharray="3 3" />
+        <XAxis dataKey="session" />
+        <YAxis />
+        <Tooltip />
+        <Legend />
+
+        <Line
+          type="monotone"
+          dataKey="Aktif"
+          stroke="#10B981"
+          strokeWidth={2}
+          dot={{ r: 4 }}
+          activeDot={{ r: 8 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="Jarang Hadir"
+          stroke="#F59E0B"
+          strokeWidth={2}
+          dot={{ r: 4 }}
+          activeDot={{ r: 8 }}
+        />
+        <Line
+          type="monotone"
+          dataKey="Tidak Aktif"
+          stroke="#EF4444"
+          strokeWidth={2}
+          dot={{ r: 4 }}
+          activeDot={{ r: 8 }}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  </div>
+);
 };
 
 // Komponen Line Chart Status Kehadiran Per Sesi untuk Rincian Tanggal
-const SingleDateStatusLineChart = ({ data }: { data: any[] }) => {
+interface SingleDateStatusData {
+  session: string;
+  fullSessionName: string;
+  Aktif: number;
+  'Jarang Hadir': number;
+  'Tidak Aktif': number;
+}
+
+const SingleDateStatusLineChart = ({ data }: { data: SingleDateStatusData[] }) => {
     return (
         <div className="bg-white p-6 rounded-xl shadow-inner border border-gray-200">
             <h5 className="text-lg font-bold text-gray-800 border-b pb-2 mb-4">
@@ -515,15 +537,21 @@ const SingleDateStatusLineChart = ({ data }: { data: any[] }) => {
 
 
 // Komponen Line Chart untuk Tampilan Bulanan (Timeseries Harian)
-const MonthLineChart = ({ data, month, year }: any) => {
+interface MonthLineChartProps {
+  data: Array<{ hari: number; aktif: number | null; jarangHadirlah: number | null; tidakAktif: number | null }>;
+  month: number;
+  year: number;
+}
+
+const MonthLineChart = ({ data, month, year }: MonthLineChartProps) => {
     const router = useRouter();
     const today = new Date();
     const todayKey = today.getDate();
     const currentMonthKey = today.getMonth();
     const currentYearKey = today.getFullYear();
 
-    const handleDailyChartClick = (state: any) => {
-        if (state?.activeLabel) {
+    const handleDailyChartClick = (state: { activeLabel?: number } | null) => {
+        if (state && typeof state === 'object' && 'activeLabel' in state && typeof state.activeLabel === 'number') {
             const day = state.activeLabel;
             
             // Format tanggal yang diklik: YYYY-MM-DD
@@ -541,7 +569,7 @@ const MonthLineChart = ({ data, month, year }: any) => {
     }
 
     // Filter data yang null (future dates)
-    const validData = data.filter((d: any) => d.hari <= maxDay);
+    const validData = data.filter((d: { hari: number; aktif: number | null; jarangHadirlah: number | null; tidakAktif: number | null }) => d.hari <= maxDay);
 
     return (
         <div className="bg-white p-6 rounded-xl shadow-lg border-2 border-gray-200">
@@ -555,7 +583,11 @@ const MonthLineChart = ({ data, month, year }: any) => {
                 <LineChart 
                     data={validData} // Gunakan data yang sudah difilter
                     margin={{ top: 10, right: 20, left: 10, bottom: 5 }}
-                    onMouseDown={handleDailyChartClick}
+                    onClick={(state) => {
+                          if (state?.activeLabel) {
+                            handleDailyChartClick({ activeLabel: typeof state.activeLabel === 'string' ? parseInt(state.activeLabel, 10) : state.activeLabel });
+                          }
+                        }}
                     style={{ cursor: 'pointer' }}
                 >
                     <CartesianGrid strokeDasharray="3 3" />
@@ -569,8 +601,11 @@ const MonthLineChart = ({ data, month, year }: any) => {
                     <Tooltip 
                       formatter={(value: unknown, name: string) => {
                         if (value === null || value === undefined) return ['Tidak Ada Data', name];
+                        if (typeof value === 'object') return [JSON.stringify(value), name];
                         if (Array.isArray(value)) return [value.join(', '), name];
-                        return [String(value), name];
+                        if (typeof value === 'number') return [String(value), name];
+                        if (typeof value === 'string') return [value, name];
+                        return ['', name];
                       }}
                       labelFormatter={(label: number) => `Tanggal ${label} ${monthNames[month]}`}
                     />
@@ -586,41 +621,19 @@ const MonthLineChart = ({ data, month, year }: any) => {
 };
 
 
-// Komponen Bar Chart (hanya digunakan untuk Distribusi Jabatan)
-const BarChartCard = ({ title, data, description }: any) => {
-  const chartData = Object.entries(data).map(([name, value], index) => ({ 
-    name, 
-    value, 
-    fill: COLORS[index % COLORS.length] 
-  }));
-  
-  return (
-    <div className="bg-white p-6 rounded-xl shadow-lg h-full">
-      <h3 className="text-lg font-bold text-gray-800 border-b pb-2 mb-3">{title}</h3>
-      <p className="text-sm text-gray-500 mb-4">{description}</p>
-      <ResponsiveContainer width="100%" height={250}>
-        <BarChart data={chartData}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="name" />
-          <YAxis />
-          <Tooltip />
-          <Legend />
-          <Bar dataKey="value" fill="#4F46E5" radius={[8, 8, 0, 0]}>
-              {chartData.map((entry, index) => (
-                <Cell key={`cell-${index}`} fill={entry.fill} />
-              ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
-    </div>
-  );
-};
-
 // Komponen Pie Chart (DIPERBAIKI TATA LETAK LEGENDA)
-const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSession }: any) => {
+interface PieChartCardProps {
+  title: string;
+  data: Record<string, number>;
+  description: string;
+  hoveredSession: string | null;
+  setHoveredSession: (session: string | null) => void;
+}
+
+const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSession }: PieChartCardProps) => {
   const chartData = Object.entries(data).map(([name, value]) => ({ name, value, fullSessionName: name }));
 
-  const handleMouseEnter = (entry: any) => {
+  const handleMouseEnter = (entry: { name: string; value: number; fullSessionName: string }) => {
     setHoveredSession(entry.fullSessionName);
   };
 
@@ -660,7 +673,8 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
             formatter={(value: unknown, name: string) => {
               if (value === null || value === undefined) return ['Tidak Ada Data', name];
               if (Array.isArray(value)) return [value.join(', '), name];
-              return [`${String(value)} orang`, name];
+              if (typeof value === 'object') return [JSON.stringify(value), name];
+              return [`${typeof value === 'number' ? value : 0} orang`, name];
             }}
           />
           <Legend 
@@ -675,6 +689,7 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
     </div>
   );
 };
+
 
 
 // --- Komponen Utama ---
@@ -716,8 +731,11 @@ export default function StatisticPage() {
         const res = await fetch("/api/jemaat");
         
         if (!res.ok) {
-          const errorBody = await res.json().catch(() => ({}));
-          const errorMessage = errorBody.error || `Gagal fetch data jemaat. Status: ${res.status}`;
+          const errorBody = await (res.json().catch(() => ({})) as Promise<unknown>);
+          const errorMessage =
+            typeof errorBody === "object" && errorBody !== null && "error" in errorBody && typeof (errorBody as { error?: unknown }).error === "string"
+              ? (errorBody as { error?: string }).error
+              : `Gagal fetch data jemaat. Status: ${res.status}`;
           throw new Error(errorMessage);
         }
 
@@ -772,9 +790,6 @@ export default function StatisticPage() {
   }, [router.isReady]);
 
 
-  // FIX 4: Gunakan uniqueJemaatList untuk statistik keseluruhan
-  const overallStats = useMemo(() => calculateOverallStats(uniqueJemaatList), [uniqueJemaatList]);
-  
   // --- LOGIKA MULTI-DATE STATS ---
   const dateStatsMap = useMemo(() => {
     if (selectedDatesKeys.length === 0) return {};
@@ -792,13 +807,6 @@ export default function StatisticPage() {
     return stats;
   }, [fullAttendanceRecords, selectedDatesKeys, actualAttendanceDates, uniqueJemaatList]);
 
-  // Total records kehadiran di tanggal yang dipilih (bukan jemaat unik)
-  const totalKehadiranRecordsSelectedDates = useMemo(() => {
-      return Object.values(dateStatsMap).reduce((sum, stats) => 
-          sum + stats.totalKehadiranSemuaSesi, 0
-      );
-  }, [dateStatsMap]);
-  
   // Total jemaat unik yang hadir di tanggal yang dipilih
   const totalHadirUnikSelectedDates = useMemo(() => {
     return Object.values(dateStatsMap).reduce((sum, stats) => 
@@ -810,7 +818,7 @@ export default function StatisticPage() {
       const combined: Record<string, number> = {};
       Object.values(dateStatsMap).forEach(stats => {
           Object.entries(stats.kehadiranBySesi).forEach(([session, count]) => {
-              combined[session] = (combined[session] || 0) + count;
+              combined[session] = (combined[session] ?? 0) + count;
           });
       });
       return combined;
@@ -892,10 +900,10 @@ export default function StatisticPage() {
     const arr = yearlyStats as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
     const found = arr.find(m => m.bulan === monthName);
     return found ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
-  }, [year, startMonth, yearlyStats]);
+  }, [startMonth, yearlyStats]);
   
   const currentYearStats = useMemo(() => {
-    let stats = yearlyStats;
+    const stats = yearlyStats;
     
     return stats; 
   }, [yearlyStats]);
@@ -925,7 +933,12 @@ export default function StatisticPage() {
       const uniqueAttendeesInYear = new Set<string>();
       fullAttendanceRecords
         .filter(r => r.tanggalKehadiran.startsWith(year.toString()))
-        .forEach(r => uniqueAttendeesInYear.add(r.id.toString().split('-')[0]));
+        .forEach(r => {
+          const jemaatId = r.id ? r.id.toString().split('-')[0] : undefined;
+          if (typeof jemaatId === 'string' && jemaatId.length > 0) {
+            uniqueAttendeesInYear.add(jemaatId);
+          }
+        });
         
       if (uniqueAttendeesInYear.size === 0) return 0;
 
@@ -1069,7 +1082,6 @@ export default function StatisticPage() {
 
 
   // Generate tahun untuk year picker
-  const currentYearForGrid = new Date().getFullYear();
   const yearsForPicker = useMemo(() => {
     const startYear = gridStartYear;
     return Array.from({ length: 10 }, (_, i) => startYear + i);
@@ -1096,7 +1108,7 @@ export default function StatisticPage() {
   };
 
   // Handler untuk LineChart Tahunan (Navigasi ke database bulan itu)
-  const handleYearlyChartClick = (state: any) => {
+  const handleYearlyChartClick = (state: { activeLabel?: string } | null) => {
     if (state?.activeLabel) {
       const monthName = state.activeLabel;
       const monthIndex = monthNames.findIndex(name => name.substring(0, 3) === monthName);
@@ -1112,15 +1124,17 @@ export default function StatisticPage() {
   // LOGIKA DOWNLOAD UTAMA PDF (DIUBAH UNTUK MENGATASI AUTO-TABLE ERROR)
   const handleDownload = async () => {
     try {
+      setIsDownloading(true);
       const statElement = document.getElementById("statistic-content");
       if (!statElement) {
         alert("Elemen konten statistik tidak ditemukan.");
+        setIsDownloading(false);
         return;
       }
 
       // Sembunyikan sidebar sementara agar tidak ikut ke capture
-      const sidebar = document.querySelector(".fixed.top-0.left-0.h-screen") as HTMLElement;
-      if (sidebar) sidebar.style.display = "none";
+      const sidebar = document.querySelector(".fixed.top-0.left-0.h-screen");
+      if (sidebar) (sidebar as HTMLElement).style.display = "none";
       // Sembunyikan tombol burger menu
       const menuButton = document.getElementById("mobile-menu-button");
       if (menuButton) menuButton.style.display = "none";
@@ -1142,15 +1156,17 @@ export default function StatisticPage() {
       // Hapus tombol-tombol yang tidak perlu di PDF (seperti tombol download/statistik)
       cloned.querySelectorAll('button').forEach(btn => {
         if (btn.textContent?.includes('Download') || btn.textContent?.includes('Statistik')) {
-          btn.style.display = 'none';
+          (btn as HTMLElement).style.display = 'none';
         }
       });
       // Sembunyikan juga tombol navigasi bulan/tahun
-      cloned.querySelectorAll('.rounded-full.p-3').forEach(btn => btn.style.display = 'none');
+      cloned.querySelectorAll('.rounded-full.p-3').forEach(btn => {
+        (btn as HTMLElement).style.display = 'none';
+      });
       // Sembunyikan juga keterangan "Klik titik pada grafik"
       cloned.querySelectorAll('p').forEach(p => {
         if (p.textContent?.includes('Klik titik pada grafik')) {
-            p.style.display = 'none';
+            (p as HTMLElement).style.display = 'none';
         }
       });
       
@@ -1165,7 +1181,7 @@ export default function StatisticPage() {
       });
 
       document.body.removeChild(cloned);
-      if (sidebar) sidebar.style.display = "";
+      if (sidebar) (sidebar as HTMLElement).style.display = "";
       if (menuButton) menuButton.style.display = "";
 
       // --- Generate PDF ---
@@ -1198,11 +1214,12 @@ export default function StatisticPage() {
         yOffset += (pageHeight - margin * 2); // Pindah halaman sesuai tinggi area cetak
         if (yOffset < scaledHeight) pdf.addPage();
       }
-
       pdf.save("Laporan-Statistik.pdf");
     } catch (error) {
       console.error("❌ Gagal membuat PDF:", error);
       alert("Gagal membuat PDF. Silakan coba lagi.");
+    } finally {
+      setIsDownloading(false);
     }
   };
 
@@ -1221,7 +1238,7 @@ export default function StatisticPage() {
       {/* Sidebar (FIX: Removed lg:relative) */}
       <div className={`fixed top-0 left-0 z-40 transition-transform duration-300 transform w-64 h-screen bg-white shadow-2xl lg:shadow-none lg:translate-x-0 ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         {/* Menggunakan `isOpen` dan `onClose` untuk kontrol di Sidebar */}
-        <Sidebar activeView='statistic' isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} style={{ height: '100%' }} />
+        <Sidebar activeView='statistic' isOpen={isSidebarOpen} onClose={() => setIsSidebarOpen(false)} />
       </div>
 
       {/* Main Content Wrapper (FIX: Use lg:ml-64 offset and control scrolling here) */}
@@ -1658,9 +1675,9 @@ export default function StatisticPage() {
                       const firstDay = getFirstDayOfMonth(monthIndex, year);
                       const startDayOffset = firstDay === 0 ? 6 : firstDay - 1;
                       const daysArray = [
-                        ...Array(startDayOffset).fill(null),
-                        ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
-                      ];
+                                              ...Array.from({ length: startDayOffset }, () => null),
+                                              ...Array.from({ length: daysInMonth }, (_, i) => i + 1),
+                                            ];
                       const datesWithStats = getDatesWithStats(monthIndex, year, actualAttendanceSet); // Digunakan untuk DOT
 
                       
@@ -1729,11 +1746,16 @@ export default function StatisticPage() {
                     </div>
                     
                     {/* 1. Total Kehadiran Semua Ibadah (Satu Kartu Gabungan) */}
-                    <div className="grid grid-cols-1 mb-6 max-w-lg mx-auto">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 mb-6 max-w-2xl mx-auto gap-4">
                         <div className="bg-red-100 p-6 rounded-xl shadow-md border-2 border-red-300">
                             <p className="text-sm text-red-700">Total Jemaat Unik Hadir</p>
                             <p className="text-5xl font-extrabold text-red-600 mt-1">{totalHadirUnikSelectedDates}</p>
                             <p className="text-xs text-red-500">Total akumulatif jemaat unik yang hadir di {selectedDatesKeys.length} tanggal</p>
+                        </div>
+                        <div className="bg-blue-100 p-6 rounded-xl shadow-md border-2 border-blue-300">
+                            <p className="text-sm text-blue-700">Persentase Kehadiran</p>
+                            <p className="text-5xl font-extrabold text-blue-600 mt-1">{combinedPresentaseKehadiran}</p>
+                            <p className="text-xs text-blue-500">Dari total potensi jemaat {totalPotentialAttendeesCombined} orang</p>
                         </div>
                     </div>
 
@@ -1798,6 +1820,7 @@ export default function StatisticPage() {
                                     .map(dateKey => {
                                     
                                     const stats = dateStatsMap[dateKey];
+                                    if (!stats) return null;
 
                                     // Data untuk Pie Chart Kehadiran Sesi per Tanggal
                                     const singleDatePieData = Object.entries(stats.kehadiranBySesi).map(([name, value]) => ({ 
@@ -1824,7 +1847,7 @@ export default function StatisticPage() {
                                           {new Date(dateKey).toLocaleDateString("id-ID", { weekday: 'long', day: "2-digit", month: "long", year: "numeric" })}
                                           {/* Tampilkan Total Hadir di Judul */}
                                           <span className="text-sm font-normal text-gray-500 ml-3">
-                                              (Jemaat Unik Hadir: {stats.totalHadir})
+                                              (Jemaat Unik Hadir: {stats?.totalHadir ?? 0})
                                           </span>
                                       </h4>
                                       
@@ -1836,8 +1859,8 @@ export default function StatisticPage() {
                                           </div>
                                           <div className="p-3 bg-green-50 rounded-lg">
                                               <p className="text-sm text-green-700">Sesi Terbanyak</p>
-                                              <p className="text-md font-semibold text-green-700 truncate" title={Object.entries(stats.kehadiranBySesi).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A'}>
-                                                  {getCleanSessionName(Object.entries(stats.kehadiranBySesi).sort(([, a], [, b]) => b - a)[0]?.[0] || 'N/A')}
+                                              <p className="text-md font-semibold text-green-700 truncate" title={Object.entries(stats.kehadiranBySesi).sort(([, a], [, b]) => b - a)[0]?.[0] ?? 'N/A'}>
+                                                  {getCleanSessionName(Object.entries(stats.kehadiranBySesi).sort(([, a], [, b]) => b - a)[0]?.[0] ?? 'N/A')}
                                               </p>
                                           </div>
                                           <div className="p-3 bg-blue-50 rounded-lg">
@@ -1877,9 +1900,15 @@ export default function StatisticPage() {
                                                             formatter={(value: unknown, name: string) => {
                                                               if (value === null || value === undefined) return ['Tidak Ada Data', name];
                                                               if (Array.isArray(value)) return [`${value.join(', ')} orang`, name];
-                                                              return [`${String(value)} orang`, name];
+                                                              if (typeof value === 'object') return [JSON.stringify(value), name];
+                                                              if (typeof value === 'object' && value !== null) {
+                                                                return [JSON.stringify(value) + ' orang', name];
+                                                              }
+                                                              if (typeof value === 'number') return [`${value} orang`, name];
+                                                              return ['Tidak Ada Data', name];
                                                             }}
                                                           />
+
                                                           <Legend 
                                                               layout="horizontal" 
                                                               align="center" 
