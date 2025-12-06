@@ -1,7 +1,8 @@
 // src/pages/databaseUser.tsx
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { Download, X, ChevronLeft, ChevronRight, BarChart3, Calendar, Eye, Menu, Loader2 } from "lucide-react"; 
+// Hapus import Pencil, Settings, X dari lucide-react (hanya untuk edit/manage)
+import { Download, ChevronLeft, ChevronRight, BarChart3, Calendar, Eye, Menu, Loader2, X } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
 import { jsPDF } from 'jspdf';
@@ -9,8 +10,6 @@ import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
 // Import tipe data yang lebih lengkap dari API route
 import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo } from "~/app/api/jemaat/route"; 
-import { type Ibadah } from "~/types/database.types"; 
-
 
 // --- Tipe Data Weekly Event (DITAMBAHKAN) ---
 interface WeeklyEvent {
@@ -91,8 +90,8 @@ const getFirstDayOfMonth = (month: number, year: number): number =>
   new Date(year, month, 1).getDay();
 
 /**
- * PERBAIKAN: Fungsi ini sekarang mengambil SESI UNIK (jenis_kebaktian) dari data kehadiran 
- * yang sudah diambil dari backend, BUKAN lagi hardcode.
+ * Fungsi ini sekarang mengambil SESI UNIK (jenis_kebaktian) dari data kehadiran 
+ * yang sudah diambil dari backend.
  */
 const getAvailableSessionNames = (allUniqueSessions: Set<string>): string[] => {
     // Mengembalikan semua sesi unik yang ada di data kehadiran (yang sudah disinkronkan dengan jenis_kebaktian)
@@ -218,104 +217,6 @@ const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
   memoryStorage.selectedEventsByDate = events;
 };
 
-/**
- * LOGIKA FILTER UTAMA: Filter data JemaatRow (Attendance Records)
- */
-const getFilteredJemaatPerEvent = (
-  attendanceRecords: JemaatRow[], 
-  dateKey: string, 
-  event: string, 
-  filterStatusKehadiran: string, 
-  filterJabatan: string, 
-  filterKehadiranSesi: string
-): JemaatRow[] => {
-      
-    // STEP 1: Filter KETAT - hanya record kehadiran yang tanggalKehadirannya PERSIS SAMA dengan dateKey
-    let filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
-
-    if (filteredByDate.length === 0) return [];
-    
-    // STEP 2: Filter berdasarkan status kehadiran dan jabatan
-    let filteredData = filteredByDate.filter(j =>
-      (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
-      (filterJabatan === "" || j.jabatan === filterJabatan)
-    );
-    
-    if (event === "KESELURUHAN DATA HARI INI") {
-        // Untuk keseluruhan data hari ini, tampilkan semua record kehadiran di tanggal ini
-        if (filterKehadiranSesi !== "") {
-            return filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
-        }
-        return filteredData; 
-    }
-    
-    // Filter berdasarkan sesi spesifik
-    return filteredData.filter(j => j.kehadiranSesi === event);
-};
-
-const getFilteredJemaatMonthlySummary = (
-    uniqueJemaatList: UniqueJemaat[], 
-    attendanceRecords: JemaatRow[], 
-    selectedDatesOnly: string[],
-    filterStatusKehadiran: string, 
-    filterJabatan: string, 
-    filterKehadiranSesi: string
-): JemaatRow[] => {
-    if (selectedDatesOnly.length === 0) return [];
-    
-    // 1. Tentukan ID jemaat unik yang hadir di SELURUH selectedDatesOnly
-    const uniqueJemaatIdsInSelectedDates = new Set<string>();
-    
-    attendanceRecords.forEach(j => {
-      if (selectedDatesOnly.includes(j.tanggalKehadiran)) {
-        const jemaatId = j.id.split('-')[0] ?? j.id; // Ambil ID jemaat saja (id_jemaat)
-        uniqueJemaatIdsInSelectedDates.add(jemaatId); 
-      }
-    });
-
-    // 2. Filter list Jemaat Attendance Records berdasarkan ID unik yang hadir
-    let filteredRecords = attendanceRecords.filter(j => 
-        uniqueJemaatIdsInSelectedDates.has(j.id.split('-')[0] ?? j.id)
-    );
-    
-    // 3. Filter berdasarkan status dan jabatan
-    filteredRecords = filteredRecords.filter(j =>
-        (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
-        (filterJabatan === "" || j.jabatan === filterJabatan)
-    );
-    
-    // 4. Filter sesi kehadiran (jika ada)
-    if (filterKehadiranSesi !== "") {
-        filteredRecords = filteredRecords.filter(j => j.kehadiranSesi === filterKehadiranSesi);
-    }
-
-    // 5. Hapus duplikat jemaat (hanya ambil satu representasi per jemaat)
-    const seenJemaatIds = new Set<string>();
-    const deDuplicatedRecords: JemaatRow[] = []; 
-    filteredRecords.forEach(j => {
-        const jemaatId = j.id.split('-')[0] ?? j.id;
-        if (!seenJemaatIds.has(jemaatId)) {
-            seenJemaatIds.add(jemaatId);
-            
-            // Cari data jemaat unik terbaru
-            const uniqueJemaatData = uniqueJemaatList.find(uj => uj.id === jemaatId);
-            
-            // Gabungkan data kehadiran yang sudah difilter dengan data jemaat unik terbaru
-            if (uniqueJemaatData) {
-                deDuplicatedRecords.push({
-                    ...j, // Ambil id_kehadiran, waktuPresensiFull, tanggalKehadiran
-                    ...uniqueJemaatData, // Timpa data lama dengan data unik terbaru (nama, status, jabatan dll)
-                    id: j.id, // Pastikan ID record kehadiran tetap benar
-                } as JemaatRow);
-            } else {
-                deDuplicatedRecords.push(j);
-            }
-        }
-    });
-    
-    return deDuplicatedRecords; 
-};
-
 
 // --- LOGIKA KALENDER (FROM database.tsx) ---
 interface CalendarSectionProps {
@@ -328,13 +229,13 @@ interface CalendarSectionProps {
     handleSelectDate: (day: number, month: number) => void;
     selectedDates: Date[];
     setShowYearDialog: React.Dispatch<React.SetStateAction<boolean>>;
-    actualAttendanceDates: string[]; // USE PROP
+    actualAttendanceDates: string[]; 
 }
 
 const CalendarSection = ({
     year, setYear, startMonth, setStartMonth, viewMode, 
     handleSelectMonth, handleSelectDate, selectedDates, setShowYearDialog,
-    actualAttendanceDates // USE PROP
+    actualAttendanceDates 
 }: CalendarSectionProps) => {
 
     const [isMobileView, setIsMobileView] = useState(false);
@@ -375,7 +276,7 @@ const CalendarSection = ({
     }, [startMonth, isMobileView]);
 
     const selectedKeys = useMemo(() => new Set(selectedDates.map(getDayKey)), [selectedDates]);
-    const attendanceSet = useMemo(() => new Set(actualAttendanceDates), [actualAttendanceDates]); // USE SET
+    const attendanceSet = useMemo(() => new Set(actualAttendanceDates), [actualAttendanceDates]); 
 
     return (
         <div className="lg:col-span-2 bg-white p-4 sm:p-6 rounded-xl shadow-lg border border-gray-100">
@@ -683,14 +584,14 @@ export default function DatabasePage() {
           throw new Error(`Gagal fetch data jemaat. Status: ${jemaatRes.status}`);
         }
 
-        const fetchedUniqueJemaat = (apiResponse.jemaatData || []) as UniqueJemaat[];
+        const fetchedUniqueJemaat = (apiResponse.jemaatData ?? []) as UniqueJemaat[];
         setUniqueJemaatList(fetchedUniqueJemaat);
-        setAttendanceRecords((apiResponse.fullAttendanceRecords || []) as JemaatRow[]);
+        setAttendanceRecords((apiResponse.fullAttendanceRecords ?? []) as JemaatRow[]);
         const fetchedAttendanceDates = apiResponse.attendanceDates || [];
         setActualAttendanceDates(fetchedAttendanceDates); 
         
         // Ambil semua sesi unik dari data kehadiran 
-        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) || []);
+        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) ?? []);
 
         // --- 2. PROSES DATA WEEKLY EVENTS ---
         let fetchedWeeklyEvents: WeeklyEvent[] = [];
@@ -703,7 +604,7 @@ export default function DatabasePage() {
         }
 
         // --- 3. INTEGRASI DAN CACHE EVENT ---
-        let initialEvents: EventsCache = {};
+        const initialEvents: EventsCache = {};
 
         fetchedAttendanceDates.forEach(dateKey => {
             const date = new Date(dateKey);
@@ -834,7 +735,7 @@ export default function DatabasePage() {
     
     datesWithEventsInMonth.forEach(d => {
         // Gunakan sesi unik sebagai base event list
-        const eventsList = memoryStorage.events[d.key] || populateEventsForDate(d.key, d.date, allUniqueSessions); 
+        const eventsList = memoryStorage.events[d.key] ?? populateEventsForDate(d.key, d.date, allUniqueSessions); 
         const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
         
@@ -1007,7 +908,7 @@ export default function DatabasePage() {
   }, [events, selectedDates, selectedEventsByDate, year, attendanceRecords]);
 
 
-  // **PERBAIKAN 2: Logika Pemilihan Event Berkala** (from database.tsx)
+  // **PERBAIKAN 2: Logika Pemilihan Event Berkala** (dari database.tsx)
   const handleSelectEvent = useCallback((dateKey: string, eventName: string) => {
       setViewMode('event_per_table'); 
       
@@ -1024,9 +925,9 @@ export default function DatabasePage() {
           const newDates: Date[] = [];
           const newEventsByDate: SelectedEventsByDate = {};
           
-          let currentDate = new Date(startDate);
+          const currentDate = new Date(startDate);
           
-          // Iterasi hari demi hari dari start_date hingga end_date (atau hari ini, mana yang lebih dulu)
+          // Iterasi hari demi hari dari start_date hingga end_date (hanya sampai hari ini/sebelumnya)
           while (currentDate.getTime() <= endDate.getTime() && currentDate.getTime() <= todayStart) {
               const currentKey = getDayKey(currentDate);
               const dayOfWeek = currentDate.getDay(); 
@@ -1093,23 +994,111 @@ export default function DatabasePage() {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
-  // FIX 4: LOGIKA FILTER UTAMA: Filter data JemaatRow (Attendance Records) - Re-implementasi dengan useCallback
+  // LOGIKA FILTER UTAMA: Filter data JemaatRow (Attendance Records) - Disesuaikan dari database.tsx
+  
+  const getFilteredJemaatPerEvent = useCallback((
+    attendanceRecords: JemaatRow[], 
+    dateKey: string, 
+    event: string, 
+  ): JemaatRow[] => {
+      
+    // STEP 1: Filter KETAT - hanya record kehadiran yang tanggalKehadirannya PERSIS SAMA dengan dateKey
+    let filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
+
+    if (filteredByDate.length === 0) return [];
+    
+    // STEP 2: Filter berdasarkan status kehadiran dan jabatan
+    let filteredData = filteredByDate.filter(j =>
+      (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
+      (filterJabatan === "" || j.jabatan === filterJabatan)
+    );
+    
+    if (event === "KESELURUHAN DATA HARI INI") {
+        // Untuk keseluruhan data hari ini, tampilkan semua record kehadiran di tanggal ini
+        if (filterKehadiranSesi !== "") {
+            return filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+        }
+        return filteredData; 
+    }
+    
+    // Filter berdasarkan sesi spesifik
+    return filteredData.filter(j => j.kehadiranSesi === event);
+  }, [filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
+
+  const getFilteredJemaatMonthlySummary = useCallback((
+      uniqueJemaatList: UniqueJemaat[], 
+      attendanceRecords: JemaatRow[], 
+  ): JemaatRow[] => {
+      if (selectedDatesOnly.length === 0) return [];
+      
+      // 1. Tentukan ID jemaat unik yang hadir di SELURUH selectedDatesOnly
+      const uniqueJemaatIdsInSelectedDates = new Set<string>();
+      
+      attendanceRecords.forEach(j => {
+        if (selectedDatesOnly.includes(j.tanggalKehadiran)) {
+          const jemaatId = j.id.split('-')[0] ?? j.id; // Ambil ID jemaat saja (id_jemaat)
+          uniqueJemaatIdsInSelectedDates.add(jemaatId); 
+        }
+      });
+
+      // 2. Filter list Jemaat Attendance Records berdasarkan ID unik yang hadir
+      let filteredRecords = attendanceRecords.filter(j => 
+          uniqueJemaatIdsInSelectedDates.has(j.id.split('-')[0] ?? j.id)
+      );
+      
+      // 3. Filter berdasarkan status dan jabatan
+      filteredRecords = filteredRecords.filter(j =>
+          (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
+          (filterJabatan === "" || j.jabatan === filterJabatan)
+      );
+      
+      // 4. Filter sesi kehadiran (jika ada)
+      if (filterKehadiranSesi !== "") {
+          filteredRecords = filteredRecords.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+      }
+
+      // 5. Hapus duplikat jemaat (hanya ambil satu representasi per jemaat)
+      const seenJemaatIds = new Set<string>();
+      const deDuplicatedRecords: JemaatRow[] = []; 
+      filteredRecords.forEach(j => {
+          const jemaatId = j.id.split('-')[0] ?? j.id;
+          if (!seenJemaatIds.has(jemaatId)) {
+              seenJemaatIds.add(jemaatId);
+              
+              // Cari data jemaat unik terbaru
+              const uniqueJemaatData = uniqueJemaatList.find(uj => uj.id === jemaatId);
+              
+              // Gabungkan data kehadiran yang sudah difilter dengan data jemaat unik terbaru
+              if (uniqueJemaatData) {
+                  deDuplicatedRecords.push({
+                      ...j, // Ambil id_kehadiran, waktuPresensiFull, tanggalKehadiran
+                      ...uniqueJemaatData, // Timpa data lama dengan data unik terbaru (nama, status, jabatan dll)
+                      id: j.id, // Pastikan ID record kehadiran tetap benar
+                  } as JemaatRow);
+              } else {
+                  deDuplicatedRecords.push(j);
+              }
+          }
+      });
+      
+      return deDuplicatedRecords; 
+  }, [
+      selectedDatesOnly,
+      filterStatusKehadiran,
+      filterJabatan,
+      filterKehadiranSesi
+    ]);
+
+
   const getFilteredJemaat = useCallback((
     uniqueJemaatList: UniqueJemaat[], 
     attendanceRecords: JemaatRow[]
   ): JemaatRow[] => {
-    const filterStatus = filterStatusKehadiran;
-    const filterJab = filterJabatan;
-    const filterSesi = filterKehadiranSesi;
 
     if (viewMode === 'monthly_summary') {
         return getFilteredJemaatMonthlySummary(
             uniqueJemaatList, 
             attendanceRecords, 
-            selectedDatesOnly, 
-            filterStatus, 
-            filterJab, 
-            filterSesi
         );
     }
     
@@ -1119,9 +1108,6 @@ export default function DatabasePage() {
             attendanceRecords, 
             selectedTables[0].date, 
             selectedTables[0].event,
-            filterStatus, 
-            filterJab, 
-            filterSesi
         );
         
         // Perluas data dengan data jemaat unik terbaru
@@ -1146,7 +1132,7 @@ export default function DatabasePage() {
     }
     
     return [];
-  }, [viewMode, selectedTables, selectedDatesOnly, attendanceRecords, uniqueJemaatList, filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
+  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent, uniqueJemaatList, attendanceRecords]);
 
 
   // FIX 5: Perbarui dataForPagination
@@ -1498,6 +1484,7 @@ export default function DatabasePage() {
                     </select>
                 )}
                 
+                {/* TOMBOL EDIT DIHAPUS */}
               </div>
               
               <div className="space-y-8" id="table-container"> 
@@ -1805,6 +1792,7 @@ export default function DatabasePage() {
                   Pilih Tahun
                 </h3>
                 <div className="grid grid-cols-4 gap-2 mb-6">
+                  {/* Simplifikasi tahun grid (hanya 4) */}
                   {Array.from({ length: 10 }, (_, i) => year - 5 + i).map((y) => (
                     <button
                       key={y}

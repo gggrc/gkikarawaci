@@ -52,7 +52,7 @@ export interface JemaatWithAttendanceInfo extends JemaatClient {
   waktuPresensiFull: string;
 }
 
-interface JemaatAPIResponse {
+export interface JemaatAPIResponse {
   jemaatData: JemaatClient[];
   attendanceDates: string[];
   fullAttendanceRecords: JemaatWithAttendanceInfo[];
@@ -83,7 +83,7 @@ const calculateStatusKehadiran = (attendanceCount: number): StatusKehadiran => {
 
 const normalizeDateToYYYYMMDD = (dateString: string): string => {
   if (!dateString) return "";
-  const match = dateString.match(/^\d{4}-\d{2}-\d{2}/);
+  const match = /^\d{4}-\d{2}-\d{2}/.exec(dateString);
   if (match) return match[0];
   return dateString.split(/[\sT]/)[0] ?? "";
 };

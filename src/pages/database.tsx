@@ -1,6 +1,7 @@
+// src/pages/database.tsx
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, FileText, Image as LucideImage, UploadCloud, Loader2, Pencil, Menu, Eye } from "lucide-react"; 
+import { Download, X, Settings, ChevronLeft, ChevronRight, BarChart3, Calendar, Loader2, Pencil, Menu, Eye } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
 import { jsPDF } from 'jspdf';
@@ -9,7 +10,6 @@ import type { UserOptions } from "jspdf-autotable";
 import dynamic from 'next/dynamic'; 
 // FIX 1: Import tipe data yang lebih lengkap dari API route
 import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo, type JemaatAPIResponse as FullJemaatAPIResponse } from "~/app/api/jemaat/route"; 
-import { type Ibadah } from "~/types/database.types"; // Import type Ibadah
 
 // --- Tipe Data Weekly Event (DITAMBAHKAN) ---
 interface WeeklyEvent {
@@ -38,16 +38,13 @@ interface JemaatRow extends JemaatWithAttendanceInfo {
   // Semua properti dari JemaatClient juga ada di sini
 }
 
-// Tipe Jemaat yang digunakan untuk state formData (hanya untuk mempermudah)
-interface Jemaat extends JemaatRow {}
-
 // Tipe Response dari API (Gunakan alias)
 interface JemaatAPIResponse extends FullJemaatAPIResponse {
-    // Tambahkan properti error yang mungkin dikirim oleh API
-    error?: string; 
-    weeklyEvents?: WeeklyEvent[];
-    jemaatData?: UniqueJemaat[]; // Tambahkan properti jemaatData agar sesuai dengan penggunaan
+  error?: string;
+  weeklyEvents?: WeeklyEvent[];
+  jemaatData: UniqueJemaat[]; 
 }
+
 
 
 export interface PreviewModalData {
@@ -67,7 +64,7 @@ export interface EventModalData {
     dateKey: string | null;
     oldName: string | null;
     newName: string;
-    periodicalDayOfWeek: number | null | 'Per Tanggal';
+    periodicalDayOfWeek: number | null;
     periodicalPeriod: string;
 }
 
@@ -285,7 +282,7 @@ const generateDatesForPeriod = (startDayKey: string, dayOfWeek: number | 'Per Ta
     if (period === '10y') {
         endDate.setFullYear(endDate.getFullYear() + 10);
     } else {
-        const match = period.match(/^(\d+)([my])$/);
+        const match = /^(\d+)([my])$/.exec(period);
         if (!match) {
             console.error("Invalid period format:", period);
             return [];
@@ -336,7 +333,7 @@ const generateDatesForPeriod = (startDayKey: string, dayOfWeek: number | 'Per Ta
     } else { // Weekly Repetition Logic
         
         // 3. Cari kemunculan pertama dari dayOfWeek yang diminta
-        currentDate = getNextDayOfWeek(currentDate, dayOfWeek as number);
+        currentDate = getNextDayOfWeek(currentDate, dayOfWeek);
         
         // 4. Loop untuk mengumpulkan semua tanggal yang valid
         while (currentDate.getTime() <= endDate.getTime()) {
@@ -770,9 +767,16 @@ export default function DatabasePage() {
   
   const [confirmationModal, setConfirmationModal] = useState<CustomConfirmation | null>(null);
 
-  const showConfirmation = useCallback((title: string, message: string, onConfirm: () => void, showCancelButton: boolean = false, onCancel: () => void = () => setConfirmationModal(null)) => {
-      setConfirmationModal({ isOpen: true, title, message, onConfirm, onCancel, showCancelButton });
+  const showConfirmation = useCallback((
+    title: string, 
+    message: string, 
+    onConfirm: () => void, 
+    showCancelButton = false, 
+    onCancel: () => void = () => setConfirmationModal(null)
+  ) => {
+    setConfirmationModal({ isOpen: true, title, message, onConfirm, onCancel, showCancelButton });
   }, []);
+
 
   const showAlert = useCallback((title: string, message: string) => {
       // PERBAIKAN: Menampilkan alert menggunakan ConfirmationModal (bukan window.alert)
@@ -807,18 +811,20 @@ export default function DatabasePage() {
   const [filterKehadiranSesi, setFilterKehadiranSesi] = useState(""); 
   
   const [openDownloadDialog, setOpenDownloadDialog] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [isUploading, setIsUploading] = useState(false);
+  const [, setSelectedFile] = useState<File | null>(null);
+  const [isUploading] = useState(false);
   const [previewModalData, setPreviewModalData] = useState<PreviewModalData | null>(null);
   
   const selectedDatesOnly = useMemo(() => selectedDates.map(getDayKey), [selectedDates]); 
   
+  /*
   const localPreviewUrl = useMemo(() => {
     if (selectedFile && isImageUrlOrBase64(selectedFile.name)) {
         return URL.createObjectURL(selectedFile);
     }
     return null;
   }, [selectedFile]);
+  */
 
   const handleGoToStats = useCallback(() => {
     const datesParam = selectedDatesOnly.join(','); 
@@ -848,15 +854,18 @@ export default function DatabasePage() {
         const apiResponse = data as JemaatAPIResponse;
         
         if (apiResponse.error) {
-             console.error("API Jemaat Error Body:", apiResponse.error);
-             showAlert("Gagal Mengambil Data Jemaat", `Terjadi kesalahan pada server/database: ${apiResponse.error}`);
-             throw new Error(apiResponse.error as string);
+          console.error("API Jemaat Error Body:", apiResponse.error);
+          showAlert(
+            "Gagal Mengambil Data Jemaat", 
+            `Terjadi kesalahan pada server/database: ${apiResponse.error}`
+          );
+          throw new Error(apiResponse.error);
         }
         if (!jemaatRes.ok) {
           throw new Error(`Gagal fetch data jemaat. Status: ${jemaatRes.status}`);
         }
 
-        const fetchedUniqueJemaat = (apiResponse.jemaatData || []) as UniqueJemaat[];
+        const fetchedUniqueJemaat = apiResponse.jemaatData || [];
         setUniqueJemaatList(fetchedUniqueJemaat);
         setDraftUniqueJemaatList(fetchedUniqueJemaat.map(j => ({ ...j })));
         setAttendanceRecords((apiResponse.fullAttendanceRecords || []) as JemaatRow[]);
@@ -864,7 +873,7 @@ export default function DatabasePage() {
         setActualAttendanceDates(fetchedAttendanceDates); 
         
         // Ambil semua sesi unik dari data kehadiran (ini adalah jenis_kebaktian yang sudah di-join)
-        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) || []);
+        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) ?? []);
 
         // --- 2. PROSES DATA WEEKLY EVENTS ---
         let fetchedWeeklyEvents: WeeklyEvent[] = [];
@@ -872,15 +881,22 @@ export default function DatabasePage() {
             fetchedWeeklyEvents = await weeklyEventsRes.json() as WeeklyEvent[];
             setWeeklyEvents(fetchedWeeklyEvents);
         } else {
-            const errorData = await weeklyEventsRes.json().catch(() => ({ error: "Unknown weekly-events API error." }));
-            console.error("API Weekly Events Error:", errorData);
-            showAlert("Peringatan Data Event", `Gagal memuat event berkala: ${errorData.error || 'Unknown error'}`);
+          const errorData = (await weeklyEventsRes.json().catch(() => ({
+            error: "Unknown weekly-events API error."
+          }))) as { error?: string };
+
+          console.error("API Weekly Events Error:", errorData);
+
+          showAlert(
+            "Peringatan Data Event",
+            `Gagal memuat event berkala: ${errorData.error ?? "Unknown error"}`
+          );
         }
 
         // --- 3. INTEGRASI DAN CACHE EVENT ---
-        let initialEvents: EventsCache = {};
+        const initialEvents: EventsCache = {};
 
-        fetchedAttendanceDates.forEach(dateKey => {
+        fetchedAttendanceDates.forEach((dateKey: string) => {
             const date = new Date(dateKey);
             // Gunakan sesi unik sebagai base event list
             initialEvents[dateKey] = populateEventsForDate(dateKey, date, allUniqueSessions); 
@@ -907,7 +923,7 @@ export default function DatabasePage() {
     };
 
     void fetchData();
-  }, [showAlert]); // Tambahkan showAlert sebagai dependency
+  }, [showAlert]); 
 
   // Perbarui useEffect untuk Caching/Integrating Events yang tampil di kalender
   useEffect(() => {
@@ -925,16 +941,22 @@ export default function DatabasePage() {
         const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events); 
         datesInMonth.forEach(d => {
             const date = d.date;
+            const dateKey: string = d.key;
             
             let currentEvents = memoryStorage.events[d.key];
             
             // Gunakan sesi unik sebagai base event list jika belum di-cache atau kosong
+            // PERUBAHAN KRITIS 1: Hanya isi event jika ada data kehadiran aktual
             if (!currentEvents || currentEvents.length === 0) {
-                currentEvents = populateEventsForDate(d.key, date, allUniqueSessions);
+                if (actualAttendanceDates.includes(dateKey)) { 
+                    currentEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
+                } else {
+                    currentEvents = []; // Biarkan kosong jika tidak ada data kehadiran aktual
+                }
             }
             
             const dayOfWeek = date.getDay();
-            
+
             // Integrate Weekly Events for the currently viewed month
             weeklyEvents.forEach(event => {
                 const startDate = new Date(event.start_date).setHours(0, 0, 0, 0);
@@ -945,13 +967,25 @@ export default function DatabasePage() {
                     if (event.repetition_type === 'Monthly' || dayOfWeek === event.day_of_week || event.repetition_type === 'Once') {
                         const eventName = event.title;
                         const lowerEventName = eventName.toLowerCase();
-                        
-                        if (!currentEvents.some(e => e.toLowerCase() === lowerEventName)) {
-                            currentEvents = [
-                                "KESELURUHAN DATA HARI INI", 
-                                ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
-                                eventName
-                            ].filter((v, i, a) => a.indexOf(v) === i);
+                        const safeCurrentEvents = currentEvents ?? [];
+
+                          if (!safeCurrentEvents.some(e => e.toLowerCase() === lowerEventName)) {
+                            const listWithoutOverall = safeCurrentEvents.filter(
+                              e => e !== "KESELURUHAN DATA HARI INI"
+                            );
+
+                            const hasOverall = safeCurrentEvents.includes("KESELURUHAN DATA HARI INI");
+
+                            let updatedList = [...listWithoutOverall, eventName];
+                            updatedList = [...new Set(updatedList)].filter(v => v.trim() !== "");
+
+
+                            if (hasOverall) {
+                                updatedList.unshift("KESELURUHAN DATA HARI INI");
+                            }
+                            
+                            currentEvents = updatedList;
+                            
                         }
                     }
                 }
@@ -967,7 +1001,7 @@ export default function DatabasePage() {
       setEvents(prev => ({ ...prev, ...newEvents }));
       memoryStorage.events = { ...memoryStorage.events, ...newEvents };
     }
-  }, [startMonth, year, attendanceRecords, weeklyEvents]); 
+  }, [startMonth, year, attendanceRecords, weeklyEvents, actualAttendanceDates]); // actualAttendanceDates DITAMBAHKAN
 
   useEffect(() => {
     memoryStorage.events = events;
@@ -1011,13 +1045,17 @@ export default function DatabasePage() {
     
     datesWithEventsInMonth.forEach(d => {
         // Gunakan sesi unik sebagai base event list
-        const eventsList = memoryStorage.events[d.key] || populateEventsForDate(d.key, d.date, allUniqueSessions); 
+        const eventsList = memoryStorage.events[d.key] ?? populateEventsForDate(d.key, d.date, allUniqueSessions); 
         const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
         
         // Ensure initial population happens if it hasn't or was empty
-        if (!memoryStorage.events[d.key] || memoryStorage.events[d.key].length === 0) {
-            memoryStorage.events[d.key] = eventsList;
+        if (!memoryStorage.events) {
+          memoryStorage.events = {};
+        }
+
+        if ((memoryStorage.events[d.key]?.length ?? 0) === 0) {
+          memoryStorage.events[d.key] = eventsList;
         }
     });
     
@@ -1152,16 +1190,22 @@ export default function DatabasePage() {
     let currentEvents = events[key];
     const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
     
-    // 💡 FIX: Populasikan event jika belum ada di cache
+    // 💡 FIX: Populasikan event jika belum ada di cache, HANYA JIKA ada data kehadiran aktual
     if (!currentEvents || currentEvents.length === 0) {
-        currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
-        // Jika tidak ada attendance, dan tidak ada default/user-added event, event list akan berisi hanya "KESELURUHAN DATA HARI INI"
-        setEvents(prev => ({ ...prev, [key]: currentEvents }));
+        if (actualAttendanceDates.includes(key)) { // <-- PERUBAHAN KRITIS 2: Cek attendance sebelum mengisi
+            currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
+        } else {
+            currentEvents = []; // <-- Jika tidak ada data kehadiran, biarkan kosong
+        }
+        
+        // Update cache
+        setEvents(prev => ({ ...prev, [key]: currentEvents ?? [] }));
         memoryStorage.events[key] = currentEvents;
     }
 
     let newDates: Date[];
     const newEventsByDate = { ...selectedEventsByDate };
+    const overallEvent = currentEvents.find(e => e === "KESELURUHAN DATA HARI INI"); // Gunakan currentEvents yang sudah diperbarui
 
     if (isCurrentlySelected) {
       // DESELECT
@@ -1180,10 +1224,7 @@ export default function DatabasePage() {
       // SELECT
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
       
-      const eventsList = currentEvents; // Use the newly populated list
-      const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
-      
-      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' (ini defaultnya, walaupun tidak ada data kehadiran)
+      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' (HANYA jika ada di currentEvents)
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
     
@@ -1209,7 +1250,7 @@ export default function DatabasePage() {
           const newDates: Date[] = [];
           const newEventsByDate: SelectedEventsByDate = {};
           
-          let currentDate = new Date(startDate);
+          const currentDate = new Date(startDate);
           
           // Iterasi hari demi hari dari start_date hingga end_date (atau hari ini, mana yang lebih dulu)
           // HILANGKAN BATAS TODAYSTART AGAR BISA MEMILIH EVENT BERKALA DI MASA DEPAN
@@ -1288,7 +1329,7 @@ export default function DatabasePage() {
       });
       
       setShowEventModal(true);
-  }, [showAlert]);
+  }, []);
 
   const handleSingleAddEvent = useCallback(() => {
     const key = eventModalData.dateKey;
@@ -1340,7 +1381,7 @@ export default function DatabasePage() {
     const eventName = newName?.trim();
     const dayOfWeek = periodicalDayOfWeek !== null ? periodicalDayOfWeek : new Date(dateKey ?? '').getDay();
 
-    if (!eventName || dayOfWeek === null || !dateKey || !periodicalPeriod) {
+    if (!eventName || dayOfWeek === undefined || !dateKey || !periodicalPeriod) {
         showAlert("Data Tidak Lengkap", "Pastikan semua field telah diisi dengan benar.");
         return;
     }
@@ -1351,10 +1392,10 @@ export default function DatabasePage() {
         const baseDate = new Date(dateKey);
         const endDate = new Date(baseDate.getTime());
         
-        const match = periodicalPeriod.match(/^(\d+)([my])$/);
+        const match = /^(\d+)([my])$/.exec(periodicalPeriod);
         if (match) {
-            const duration = parseInt(match[1], 10);
-            const unit = match[2];
+            const duration = parseInt(match[1]!, 10);
+            const unit = match[2]!;
             
             if (unit === 'm') {
                 endDate.setMonth(endDate.getMonth() + duration);
@@ -1370,7 +1411,8 @@ export default function DatabasePage() {
     const jenis_kebaktian = eventName; // Gunakan nama event sebagai jenis_kebaktian
     const sesi_ibadah = 99; // Placeholder
 
-    const repetitionType = dayOfWeek === 'Per Tanggal' ? 'Monthly' : 'Weekly';
+    const isMonthlyRepetition = periodicalPeriod && /^(\d+)m$/.test(periodicalPeriod);
+    const repetitionType = isMonthlyRepetition ? 'Monthly' : 'Weekly';
     
     const payload = {
       title: title,
@@ -1378,7 +1420,7 @@ export default function DatabasePage() {
       jenis_kebaktian: jenis_kebaktian,
       sesi_ibadah: sesi_ibadah,
       start_date: dateKey,
-      day_of_week: dayOfWeek === 'Per Tanggal' ? null : (dayOfWeek as number),
+      day_of_week: isMonthlyRepetition ? null : dayOfWeek,
       repetition_type: repetitionType,
       end_date: end_date,
     };
@@ -1392,8 +1434,8 @@ export default function DatabasePage() {
         });
 
         if (!res.ok) {
-            const errorData = await res.json().catch(() => ({ message: "Unknown API error or malformed response." }));
-            throw new Error(`Gagal menyimpan event berkala. Status: ${res.status}. Pesan: ${errorData.error || errorData.message || JSON.stringify(errorData)}`);
+            const errorData = (await res.json().catch(() => ({ message: "Unknown API error or malformed response." }))) as { error?: string; message?: string };
+            throw new Error(`Gagal menyimpan event berkala. Status: ${res.status}. Pesan: ${errorData.error ?? errorData.message ?? JSON.stringify(errorData)}`);
         }
         
         // 3. Update State (Refresh data event dari API)
@@ -1415,7 +1457,7 @@ export default function DatabasePage() {
         
         const newPeriodicalEvent = updatedWeeklyEvents.find(e => e.title === eventName);
         if (newPeriodicalEvent) {
-            let currentDate = new Date(newPeriodicalEvent.start_date);
+            const currentDate = new Date(newPeriodicalEvent.start_date);
             const loopEndDate = newPeriodicalEvent.end_date 
                 ? new Date(newPeriodicalEvent.end_date) 
                 : new Date(today.getFullYear() + 10, 0, 1);
@@ -1452,7 +1494,7 @@ export default function DatabasePage() {
         showAlert("Gagal Menyimpan Event", (error as Error).message);
         setShowEventModal(false);
     }
-  }, [eventModalData, events, selectedDates, showAlert, attendanceRecords, weeklyEvents]);
+  }, [eventModalData, showAlert, attendanceRecords, weeklyEvents]);
 
   const handleEventAction = useCallback(() => {
     switch(eventModalData.type) {
@@ -1494,7 +1536,7 @@ export default function DatabasePage() {
             
             setShowEventModal(false);
             setEventModalData({});
-            showAlert("Sukses Edit Satuan", `Event berhasil diubah dari "${oldName}" menjadi "${newNameTrim}" pada tanggal ${new Date(key!).toLocaleDateString("id-ID")}.`);
+            showAlert("Sukses Edit Satuan", `Event berhasil diubah dari "${oldName}" menjadi "${newNameTrim}" pada tanggal ${new Date(key).toLocaleDateString("id-ID")}.`);
             break;
         case 'edit-periodical-confirm':
             const { dateKey: startKey, oldName: nameToChange, newName: newNPeriodic } = eventModalData;
@@ -1518,7 +1560,7 @@ export default function DatabasePage() {
 
                     // Filter: hanya tanggal setelah/sama dengan tanggal awal
                     if (currentDate >= startDate) { // Removed blocking future dates logic
-                        let eventsList = updatedEvents[key] ?? [];
+                        const eventsList = updatedEvents[key] ?? [];
                         
                         const targetEventIndex = eventsList.findIndex(e => e.toLowerCase() === lowerNameChange);
                         
@@ -1548,7 +1590,7 @@ export default function DatabasePage() {
 
                     // Filter: hanya tanggal setelah/sama dengan tanggal awal
                     if (currentDate >= startDate) { // Removed blocking future dates logic
-                         let selectedList = updatedSelected[key] ?? [];
+                         const selectedList = updatedSelected[key] ?? [];
                          const targetSelectedEventIndex = selectedList.findIndex(e => e.toLowerCase() === lowerNameChange);
                          
                          if(targetSelectedEventIndex !== -1) {
@@ -1576,7 +1618,13 @@ export default function DatabasePage() {
         default:
             break;
     }
-  }, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, events, selectedDates, showAlert, attendanceRecords]);
+  }, [
+      eventModalData,
+      handleSingleAddEvent,
+      handlePeriodicalAddEvent,
+      selectedDates,
+      showAlert
+    ]);
 
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
@@ -1719,7 +1767,7 @@ export default function DatabasePage() {
   const getFilteredJemaatPerEvent = useCallback((attendanceRecords: JemaatRow[], dateKey: string, event: string): JemaatRow[] => {
       
     // STEP 1: Filter KETAT - hanya record kehadiran yang tanggalKehadirannya PERSIS SAMA dengan dateKey
-    let filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
+    const filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
 
     if (filteredByDate.length === 0) {
       return [];
@@ -1805,9 +1853,13 @@ export default function DatabasePage() {
     });
     
     return deDuplicatedRecords; 
-  }, [selectedDatesOnly, filterStatusKehadiran, filterJabatan, filterKehadiranSesi, uniqueJemaatList, attendanceRecords]);
+  }, [
+      selectedDatesOnly,
+      filterStatusKehadiran,
+      filterJabatan,
+      filterKehadiranSesi
+    ]);
 
-  
   const getFilteredJemaat = useCallback((
     uniqueJemaatList: UniqueJemaat[], 
     attendanceRecords: JemaatRow[]
@@ -1842,8 +1894,14 @@ export default function DatabasePage() {
     }
     
     return [];
-  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent, uniqueJemaatList, attendanceRecords]);
-  
+  }, [
+      viewMode,
+      selectedTables,
+      getFilteredJemaatMonthlySummary,
+      getFilteredJemaatPerEvent
+    ]);
+
+
   // FIX 5: Perbarui dataForPagination
   const dataForPagination = useMemo(() => getFilteredJemaat(uniqueJemaatList, attendanceRecords), [uniqueJemaatList, attendanceRecords, getFilteredJemaat]);
   const filteredCount = dataForPagination.length;
@@ -1915,9 +1973,11 @@ export default function DatabasePage() {
         });
 
         if (!res.ok) {
-            const errorBody = await res.json().catch(() => ({}));
-            // Menggunakan errorBody.error yang sudah diperkaya di backend
-            throw new Error(errorBody.error || `Gagal menyimpan data jemaat. Status: ${res.status}`);
+          const errorBody = (await res.json().catch(() => ({}))) as { error?: string };
+          // Menggunakan errorBody.error yang sudah diperkaya di backend
+          throw new Error(
+            errorBody.error ?? `Gagal menyimpan data jemaat. Status: ${res.status}`
+          );
         }
         
         // API call was successful, now apply local changes
@@ -1969,8 +2029,9 @@ export default function DatabasePage() {
         console.error("Error saving form:", error);
         showAlert("Gagal Menyimpan", (error as Error).message);
     }
-  }, [formData, showAlert, uniqueJemaatList, attendanceRecords]);
+  }, [formData, showAlert]);
   
+  /*
   const handleFileChange = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
       const file = event.target.files ? event.target.files[0] : null;
       setSelectedFile(file ?? null);
@@ -1978,7 +2039,9 @@ export default function DatabasePage() {
           setFormData(f => f ? { ...f, dokumen: undefined } : null);
       }
   }, []);
+  */
   
+  /*
   const handleFileUpload = useCallback(async () => {
       if (!selectedFile || !formData) return;
 
@@ -2015,7 +2078,9 @@ export default function DatabasePage() {
           setSelectedFile(null); 
       }
   }, [selectedFile, formData, showAlert]);
+  */
   
+  /*
   const openPreviewModal = useCallback((jemaatItem: JemaatRow) => {
     if (!jemaatItem.dokumen) return;
 
@@ -2034,6 +2099,7 @@ export default function DatabasePage() {
         type: type
     });
   }, []);
+  */
 
   const closePreviewModal = useCallback(() => {
     setPreviewModalData(null);
@@ -2104,18 +2170,27 @@ export default function DatabasePage() {
             csv += headers.map(h => `"${h}"`).join(",") + "\n";
             
             csv += dataForTable.map(row => 
-              keys.map(key => {
-                const val = row[key] ?? '';
-                // Handle dokumen field for csv (just output existence or a placeholder)
-                if (key === 'dokumen') return `"Dokumen tersedia"`;
-                
-                return `"${String(val).replace(/"/g, '""')}"`; 
-              }).join(",")
-            ).join("\n") + "\n";
-            
-            if (tableIndex < tablesToRender.length - 1) {
-              csv += "\n" + "=".repeat(80) + "\n";
-            }
+            keys.map(key => {
+              const val = row[key] ?? '';
+
+              // Handle dokumen field for csv (just output existence or a placeholder)
+              if (key === 'dokumen') return `"Dokumen tersedia"`;
+
+              const safeString =
+                typeof val === "string" ? val
+                : typeof val === "number" || typeof val === "boolean" ? String(val)
+                : val instanceof Date ? val.toISOString()
+                : val && typeof val === "object" ? JSON.stringify(val)
+                : "";
+
+
+              return `"${safeString.replace(/"/g, '""')}"`; 
+            }).join(",")
+          ).join("\n") + "\n";
+
+          if (tableIndex < tablesToRender.length - 1) {
+            csv += "\n" + "=".repeat(80) + "\n";
+          }
           });
           
           const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
@@ -2209,13 +2284,15 @@ export default function DatabasePage() {
     return false;
   }, [viewMode, selectedTables]);
   
+  /*
   const getPreviewUrl = useMemo(() => {
     if (selectedFile) {
         if (localPreviewUrl) return localPreviewUrl;
         return null; 
     }
     return formData?.dokumen ?? null;
-  }, [selectedFile, localPreviewUrl, formData?.dokumen]);
+  }, [selectedFile, localPreviewUrl, formData?.dokumen]);\
+  */
 
   if (isLoading) {
     return (
@@ -2495,7 +2572,7 @@ export default function DatabasePage() {
                                         <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
                                         {editMode ? (
                                             <select
-                                            value={draftItem.jabatan}
+                                            value={draftItem.jabatan ?? "Jemaat"}
                                             onChange={(e) => setDraftUniqueJemaatList(prev => prev.map(d => d.id === jemaatId ? { ...d, jabatan: e.target.value } : d))}
                                             className="border-2 border-indigo-300 rounded px-2 py-1 focus:border-indigo-500 focus:outline-none text-sm"
                                             onClick={(e) => e.stopPropagation()} 
@@ -2625,9 +2702,9 @@ export default function DatabasePage() {
                         ? 'bg-indigo-600 text-white shadow-md' 
                         : 'bg-gray-100 text-gray-800 hover:bg-indigo-50 hover:text-indigo-600'
                       }
-                      ${y > currentYear ? 'opacity-50 cursor-not-allowed' : ''}
+                      
                     `}
-                    disabled={y > currentYear}
+                    // Hapus disabled={y > currentYear} agar bisa memilih tahun masa depan
                   >
                     {y}
                   </button>
