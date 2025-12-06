@@ -1,7 +1,5 @@
 // src/components/EventManagementModal.tsx
-
-import React, { useState, useEffect, useMemo } from 'react';
-import { X, Pencil } from 'lucide-react';
+import { X } from 'lucide-react';
 
 // --- Tipe Data ---
 
@@ -12,7 +10,7 @@ export interface EventModalData {
     dateKey: string | null;
     oldName: string | null;
     newName: string;
-    periodicalDayOfWeek: number | null;
+    periodicalDayOfWeek: number | 'Per Tanggal' | null;
     periodicalPeriod: string;
 }
 
@@ -179,13 +177,15 @@ export default function EventManagementModal({
                             <select
                             value={periodicalDayOfWeek ?? 0}
                             onChange={(e) => {
-                                const value = e.target.value === 'Per Tanggal'
+                                const value =
+                                e.target.value === 'Per Tanggal'
                                     ? 'Per Tanggal'
                                     : Number(e.target.value);
 
                                 onUpdateData({ periodicalDayOfWeek: value });
-                                }}
+                            }}
                             >
+
                             {dayOptions.map((day, index) => (
                                 <option key={day} value={day === 'Per Tanggal' ? 'Per Tanggal' : index}>
                                 {day}

@@ -10,7 +10,7 @@ import type { UserOptions } from "jspdf-autotable";
 import dynamic from 'next/dynamic'; 
 // FIX 1: Import tipe data yang lebih lengkap dari API route
 import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo, type JemaatAPIResponse as FullJemaatAPIResponse } from "~/app/api/jemaat/route"; 
-
+import type { EventModalData } from "@/types/event-modal";
 // --- Tipe Data Weekly Event (DITAMBAHKAN) ---
 interface WeeklyEvent {
   id: string; // ID unik dari event berkala
@@ -56,17 +56,6 @@ export interface PreviewModalData {
 type ViewMode = 'event_per_table' | 'monthly_summary';
 type SelectedEventsByDate = Record<string, string[]>;
 type EventsCache = Record<string, string[]>;
-
-type EventModalType = 'add-single' | 'add-periodical' | 'edit-single' | 'edit-periodical-confirm' | 'flow-select';
-
-export interface EventModalData {
-    type: EventModalType;
-    dateKey: string | null;
-    oldName: string | null;
-    newName: string;
-    periodicalDayOfWeek: number | null;
-    periodicalPeriod: string;
-}
 
 interface CustomConfirmation {
     isOpen: boolean;
