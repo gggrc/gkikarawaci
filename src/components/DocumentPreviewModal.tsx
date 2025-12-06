@@ -1,8 +1,8 @@
 // src/components/DocumentPreviewModal.tsx
 import React from 'react';
 import Image from "next/image";
-import { X, FileText, Image as LucideImage } from "lucide-react"; 
-import { isImageUrlOrBase64 } from "../pages/database.tsx"; // Import helper function
+import { X, FileText } from "lucide-react"; 
+import { isImageUrlOrBase64 } from "../pages/database"; // Import helper function
 
 interface PreviewModalData {
     url: string; 

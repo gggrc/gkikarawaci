@@ -88,8 +88,17 @@ const normalizeDateToYYYYMMDD = (dateString: string): string => {
   return dateString.split(/[\sT]/)[0] ?? "";
 };
 
-const toKey = (val: unknown) =>
-  val === null || val === undefined ? "" : String(val);
+const toKey = (val: unknown): string => {
+  if (val === null || val === undefined) return "";
+
+  if (typeof val === "string") return val;
+  if (typeof val === "number") return String(val);
+
+  throw new Error(
+    `Invalid key type: expected string | number, got ${typeof val}`
+  );
+};
+
 
 // ==============================
 // GET HANDLER
@@ -174,10 +183,13 @@ export async function GET() {
 
       let dominantSesi = "Belum Ada Ibadah";
       if (sesiMap && sesiMap.size > 0) {
-        dominantSesi = Array.from(sesiMap.entries()).sort(
+        const sorted = Array.from(sesiMap.entries()).sort(
           (a, b) => b[1] - a[1]
-        )[0][0];
+        );
+
+        dominantSesi = sorted[0]?.[0] ?? "Belum Ada Ibadah";
       }
+
 
       const birth = j.tanggal_lahir
         ? normalizeDateToYYYYMMDD(j.tanggal_lahir)
@@ -264,10 +276,30 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
-    const body = await req.json();
-    const { id_jemaat, name, jabatan, email, handphone, tanggal_lahir } = body;
+    type JemaatPatchBody = {
+      id_jemaat: string;
+      name?: string;
+      jabatan?: string | null;
+      email?: string | null;
+      handphone?: string | null;
+      tanggal_lahir?: string | null;
+    };
 
-    console.log("PATCH PAYLOAD:", body);
+    const rawBody: unknown = await req.json();
+
+    if (!rawBody || typeof rawBody !== "object") {
+      return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+    }
+
+    const {
+      id_jemaat,
+      name,
+      jabatan,
+      email,
+      handphone,
+      tanggal_lahir,
+    } = rawBody as JemaatPatchBody;
+
 
     if (!id_jemaat || typeof id_jemaat !== "string") {
       return NextResponse.json(
@@ -316,7 +348,7 @@ export async function PATCH(req: NextRequest) {
     }
 
     // ✅ VALIDASI HASIL UPDATE
-    if (!data || data.length === 0) {
+    if (!data?.length) {
       return NextResponse.json(
         {
           error: "Update gagal: id_jemaat tidak ditemukan di database",
@@ -324,6 +356,7 @@ export async function PATCH(req: NextRequest) {
         { status: 404 }
       );
     }
+
 
     if (data.length > 1) {
       return NextResponse.json(

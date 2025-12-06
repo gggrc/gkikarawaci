@@ -103,7 +103,7 @@ export default function EventManagementModal({
         content = (
             <div className="space-y-4 p-2">
                 <p className={`text-lg font-medium ${newName ? 'text-blue-700' : 'text-red-700'}`}>
-                    PERINGATAN! Aksi ini akan berlaku untuk **SEMUA** event bernama **"{oldName}"** pada tanggal **{dateDisplay}** dan **semua tanggal setelahnya**.
+                    PERINGATAN! Aksi ini akan berlaku untuk <strong>SEMUA</strong> event bernama <strong>&quot;{oldName}&quot;</strong> pada tanggal <strong>{dateDisplay}</strong> dan <strong>semua tanggal setelahnya</strong>.
                 </p>
                 <p className="text-gray-700">Anda akan {actionText} mulai dari {dateDisplay} dan ke depannya (hingga 10 tahun simulasi).</p>
                 {/* Input hanya muncul saat mode EDIT (newName ada isinya dan bukan mode deletion) */}
@@ -179,9 +179,12 @@ export default function EventManagementModal({
                             <select
                             value={periodicalDayOfWeek ?? 0}
                             onChange={(e) => {
-                                const value = e.target.value === 'Per Tanggal' ? 'Per Tanggal' : parseInt(e.target.value, 10);
-                                onUpdateData({ periodicalDayOfWeek: value as any });
-                            }}
+                                const value = e.target.value === 'Per Tanggal'
+                                    ? 'Per Tanggal'
+                                    : Number(e.target.value);
+
+                                onUpdateData({ periodicalDayOfWeek: value });
+                                }}
                             >
                             {dayOptions.map((day, index) => (
                                 <option key={day} value={day === 'Per Tanggal' ? 'Per Tanggal' : index}>
