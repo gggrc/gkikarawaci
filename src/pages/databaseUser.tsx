@@ -1,29 +1,47 @@
 // src/pages/databaseUser.tsx
 import { useEffect, useState, useMemo, useCallback } from "react";
 import Image from "next/image";
-import { Download, X,  ChevronLeft, ChevronRight, BarChart3, Calendar, Eye, Menu } from "lucide-react"; 
+import { Download, X, ChevronLeft, ChevronRight, BarChart3, Calendar, Eye, Menu, Loader2 } from "lucide-react"; 
 import Sidebar from "~/components/Sidebar"; 
 import { useRouter } from 'next/router';
+import { jsPDF } from 'jspdf';
+import autoTable from "jspdf-autotable";
+import type { UserOptions } from "jspdf-autotable";
+// Import tipe data yang lebih lengkap dari API route
+import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo } from "~/app/api/jemaat/route"; 
+import { type Ibadah } from "~/types/database.types"; 
 
-// --- Tipe Data ---
-interface Jemaat {
-  id: number | string;
-  foto: string;
-  nama: string;
-  jabatan: string;
-  statusKehadiran: "Aktif" | "Jarang Hadir" | "Tidak Aktif";
-  tanggalLahir?: string;
-  umur?: string;
-  keluarga?: string;
-  email?: string;
-  telepon?: string;
-  kehadiranSesi: string; 
-  dokumen?: string; 
+
+// --- Tipe Data Weekly Event (DITAMBAHKAN) ---
+interface WeeklyEvent {
+  id: string; // ID unik dari event berkala
+  title: string; // Nama event yang ditampilkan
+  day_of_week: number; // Hari (0=Minggu, 1=Senin, dst)
+  start_date: string; // Tanggal mulai (YYYY-MM-DD)
+  end_date: string | null; // Tanggal selesai (YYYY-MM-DD) atau null jika selamanya
+  repetition_type: 'Once' | 'Weekly' | 'Monthly';
+  jenis_kebaktian: string;
+  sesi_ibadah: number;
+  Ibadah?: { tanggal_ibadah: string }[]; // Tambahkan properti Ibadah sesuai penggunaan
 }
 
-interface JemaatAPIResponse { // NEW INTERFACE
-    jemaatData: Jemaat[];
+// List Jemaat Unik (untuk status overall, edit form, dan draft)
+interface UniqueJemaat extends JemaatClient {
+  id: string; // id_jemaat
+}
+
+// Baris Data Kehadiran (untuk tabel dan detail drawer - Attendance Instance)
+interface JemaatRow extends JemaatWithAttendanceInfo {
+  id: string; // id_jemaat-tanggal (ID unik per record kehadiran)
+  // Semua properti dari JemaatClient juga ada di sini
+}
+
+// Tipe Response dari API (Disesuaikan dari database.tsx)
+interface JemaatAPIResponse {
+    jemaatData?: UniqueJemaat[]; 
     attendanceDates: string[];
+    fullAttendanceRecords?: JemaatRow[];
+    error?: string; 
 }
 
 
@@ -31,7 +49,7 @@ type ViewMode = 'event_per_table' | 'monthly_summary';
 type SelectedEventsByDate = Record<string, string[]>;
 type EventsCache = Record<string, string[]>;
 
-// --- UTILITY FUNCTIONS & CONSTANTS ---
+// --- UTILITY FUNCTIONS & CONSTANTS (Adapted from database.tsx) ---
 
 const calculateAge = (dobString: string | undefined): string => {
   if (!dobString) return "";
@@ -72,46 +90,83 @@ const getDaysInMonth = (month: number, year: number): number =>
 const getFirstDayOfMonth = (month: number, year: number): number => 
   new Date(year, month, 1).getDay();
 
-
-const getAvailableSessionNames = (date: Date): string[] => {
-    const dayOfWeek = date.getDay(); // 0 = Minggu, 6 = Sabtu
-    if (dayOfWeek === 6) { // Sabtu
-        return ["Ibadah Dewasa : Sabtu, 17:00", "Ibadah Lansia : Sabtu, 10:00"];
-    } else if (dayOfWeek === 0) { // Minggu
-        return ["Kebaktian I : 07:00", "Kebaktian II : 10:00", "Kebaktian III : 17:00", "Ibadah Anak : Minggu, 10:00", "Ibadah Remaja : Minggu, 10:00", "Ibadah Pemuda : Minggu, 10:00"];
-    }
-    return [];
+/**
+ * PERBAIKAN: Fungsi ini sekarang mengambil SESI UNIK (jenis_kebaktian) dari data kehadiran 
+ * yang sudah diambil dari backend, BUKAN lagi hardcode.
+ */
+const getAvailableSessionNames = (allUniqueSessions: Set<string>): string[] => {
+    // Mengembalikan semua sesi unik yang ada di data kehadiran (yang sudah disinkronkan dengan jenis_kebaktian)
+    const sessions = [...allUniqueSessions].filter(s => s && s.trim() !== "");
+    return sessions.sort();
 };
 
-const populateEventsForDate = (dateKey: string, date: Date): string[] => {
-    const defaultEventsForDay = getAvailableSessionNames(date);
+/**
+ * Memastikan event 'KESELURUHAN DATA HARI INI' selalu ada 
+ * dan event dihasilkan berdasarkan sesi unik yang ada di database.
+ */
+const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: Set<string>): string[] => {
+    // Ambil semua sesi unik yang ada di database (kehadiranSesi)
+    const defaultEventsFromDatabase = getAvailableSessionNames(allUniqueSessions);
+    const combinedEvents = [...defaultEventsFromDatabase];
     
-    // Untuk halaman read-only, kita hanya menggunakan event yang sudah ada (di mockEventsGenerator)
+    // Sort dan filter duplikat
+    const uniqueEvents = [...new Set(combinedEvents)].filter(e => e.trim() !== "" && e !== "KESELURUHAN DATA HARI INI");
+
+    // Memastikan "KESELURUHAN DATA HARI INI" selalu ada di awal
     const finalEvents = [
-        "KESELURUHAN DATA HARI INI",
-        ...defaultEventsForDay.sort()
-    ];
-
-    return finalEvents;
-};
-
-const mockEventsGenerator = (dateKey: string, date: Date): string[] => {
-    const defaultEvents = getAvailableSessionNames(date);
+        "KESELURUHAN DATA HARI INI", 
+        ...uniqueEvents.sort()
+    ].filter((v, i, a) => a.indexOf(v) === i && v.trim() !== ""); 
     
-    const dateTimestamp = new Date(dateKey).setHours(0, 0, 0, 0);
-    if (dateTimestamp <= todayStart && defaultEvents.length > 0) {
-        // Tambahkan opsi 'KESELURUHAN DATA HARI INI'
-        defaultEvents.unshift("KESELURUHAN DATA HARI INI");
-    }
-    return defaultEvents;
+    // Kembalikan event yang ada (minimal event keseluruhan)
+    return finalEvents.length > 0 ? finalEvents : ["KESELURUHAN DATA HARI INI"];
 };
 
-// MODIFIED: Fungsi ini kini menerima actualAttendanceDates untuk memfilter tanggal yang diproses.
+// **Logika Integrasi Event Berkala (Caching)**
+const integrateWeeklyEvents = (
+  weeklyEvents: WeeklyEvent[], 
+  existingEvents: EventsCache, 
+  allUniqueSessions: Set<string>
+): EventsCache => {
+    const updatedEvents = { ...existingEvents };
+
+    for (const event of weeklyEvents) {
+        const eventName = event.title;
+        const lowerEventName = eventName.toLowerCase();
+
+        // Loop lewat semua tanggal Ibadah yang dikembalikan dari API
+        for (const ibadah of event.Ibadah ?? []) {
+            const ibadahDate = new Date(ibadah.tanggal_ibadah);
+            const dayKey = getDayKey(ibadahDate);
+
+            // Gunakan `populateEventsForDate` untuk mendapatkan list awal (termasuk sesi unik dari data kehadiran)
+            const initialEvents = updatedEvents[dayKey] ?? populateEventsForDate(dayKey, ibadahDate, allUniqueSessions);
+            const eventExists = initialEvents.some(e => e.toLowerCase() === lowerEventName);
+
+            if (!eventExists) {
+                updatedEvents[dayKey] = [
+                    "KESELURUHAN DATA HARI INI",
+                    ...initialEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"),
+                    eventName
+                ].filter((v, i, a) => a.indexOf(v) === i);
+            } else {
+                // perbaiki capitalization
+                updatedEvents[dayKey] = initialEvents.map(e =>
+                    e.toLowerCase() === lowerEventName ? eventName : e
+                );
+            }
+        }
+    }
+
+    return updatedEvents;
+};
+
+
 const getDatesWithEventsInMonth = (
   month: number, 
   currentYear: number, 
-  currentEvents: EventsCache, 
-  actualAttendanceDates: string[] // NEW PARAMETER
+  currentEvents: EventsCache,
+  actualAttendanceDates: string[] 
 ): { date: Date, key: string, events: string[] }[] => {
   const daysInMonth = getDaysInMonth(month, currentYear);
   const dates: { date: Date, key: string, events: string[] }[] = [];
@@ -121,18 +176,20 @@ const getDatesWithEventsInMonth = (
     const date = new Date(currentYear, month, day);
     const dayKey = getDayKey(date);
     
-    // HANYA proses tanggal yang memiliki data kehadiran aktual
-    if (attendanceSet.has(dayKey)) {
-      const mockEvents = mockEventsGenerator(dayKey, date);
-      const currentEventList = currentEvents[dayKey] ?? mockEvents;
+    // HANYA proses tanggal yang sudah lewat atau hari ini
+    if (new Date(date).setHours(0, 0, 0, 0) <= todayStart) { 
+        
+      const currentEventList = currentEvents[dayKey] ?? []; 
       
-      if (currentEventList.length > 0) { 
+      // Jika ada event di cache ATAU ada data kehadiran aktual, masukkan ke list
+      if (currentEventList.length > 0 || attendanceSet.has(dayKey)) {
         dates.push({ date, key: dayKey, events: currentEventList });
       }
     }
   }
-  return dates;
+  return dates; 
 };
+
 
 // --- Helper untuk in-memory storage ---
 const memoryStorage: { 
@@ -161,7 +218,106 @@ const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
   memoryStorage.selectedEventsByDate = events;
 };
 
-// --- LOGIKA KALENDER ---
+/**
+ * LOGIKA FILTER UTAMA: Filter data JemaatRow (Attendance Records)
+ */
+const getFilteredJemaatPerEvent = (
+  attendanceRecords: JemaatRow[], 
+  dateKey: string, 
+  event: string, 
+  filterStatusKehadiran: string, 
+  filterJabatan: string, 
+  filterKehadiranSesi: string
+): JemaatRow[] => {
+      
+    // STEP 1: Filter KETAT - hanya record kehadiran yang tanggalKehadirannya PERSIS SAMA dengan dateKey
+    let filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
+
+    if (filteredByDate.length === 0) return [];
+    
+    // STEP 2: Filter berdasarkan status kehadiran dan jabatan
+    let filteredData = filteredByDate.filter(j =>
+      (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
+      (filterJabatan === "" || j.jabatan === filterJabatan)
+    );
+    
+    if (event === "KESELURUHAN DATA HARI INI") {
+        // Untuk keseluruhan data hari ini, tampilkan semua record kehadiran di tanggal ini
+        if (filterKehadiranSesi !== "") {
+            return filteredData.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+        }
+        return filteredData; 
+    }
+    
+    // Filter berdasarkan sesi spesifik
+    return filteredData.filter(j => j.kehadiranSesi === event);
+};
+
+const getFilteredJemaatMonthlySummary = (
+    uniqueJemaatList: UniqueJemaat[], 
+    attendanceRecords: JemaatRow[], 
+    selectedDatesOnly: string[],
+    filterStatusKehadiran: string, 
+    filterJabatan: string, 
+    filterKehadiranSesi: string
+): JemaatRow[] => {
+    if (selectedDatesOnly.length === 0) return [];
+    
+    // 1. Tentukan ID jemaat unik yang hadir di SELURUH selectedDatesOnly
+    const uniqueJemaatIdsInSelectedDates = new Set<string>();
+    
+    attendanceRecords.forEach(j => {
+      if (selectedDatesOnly.includes(j.tanggalKehadiran)) {
+        const jemaatId = j.id.split('-')[0] ?? j.id; // Ambil ID jemaat saja (id_jemaat)
+        uniqueJemaatIdsInSelectedDates.add(jemaatId); 
+      }
+    });
+
+    // 2. Filter list Jemaat Attendance Records berdasarkan ID unik yang hadir
+    let filteredRecords = attendanceRecords.filter(j => 
+        uniqueJemaatIdsInSelectedDates.has(j.id.split('-')[0] ?? j.id)
+    );
+    
+    // 3. Filter berdasarkan status dan jabatan
+    filteredRecords = filteredRecords.filter(j =>
+        (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
+        (filterJabatan === "" || j.jabatan === filterJabatan)
+    );
+    
+    // 4. Filter sesi kehadiran (jika ada)
+    if (filterKehadiranSesi !== "") {
+        filteredRecords = filteredRecords.filter(j => j.kehadiranSesi === filterKehadiranSesi);
+    }
+
+    // 5. Hapus duplikat jemaat (hanya ambil satu representasi per jemaat)
+    const seenJemaatIds = new Set<string>();
+    const deDuplicatedRecords: JemaatRow[] = []; 
+    filteredRecords.forEach(j => {
+        const jemaatId = j.id.split('-')[0] ?? j.id;
+        if (!seenJemaatIds.has(jemaatId)) {
+            seenJemaatIds.add(jemaatId);
+            
+            // Cari data jemaat unik terbaru
+            const uniqueJemaatData = uniqueJemaatList.find(uj => uj.id === jemaatId);
+            
+            // Gabungkan data kehadiran yang sudah difilter dengan data jemaat unik terbaru
+            if (uniqueJemaatData) {
+                deDuplicatedRecords.push({
+                    ...j, // Ambil id_kehadiran, waktuPresensiFull, tanggalKehadiran
+                    ...uniqueJemaatData, // Timpa data lama dengan data unik terbaru (nama, status, jabatan dll)
+                    id: j.id, // Pastikan ID record kehadiran tetap benar
+                } as JemaatRow);
+            } else {
+                deDuplicatedRecords.push(j);
+            }
+        }
+    });
+    
+    return deDuplicatedRecords; 
+};
+
+
+// --- LOGIKA KALENDER (FROM database.tsx) ---
 interface CalendarSectionProps {
     year: number;
     setYear: React.Dispatch<React.SetStateAction<number>>;
@@ -172,7 +328,7 @@ interface CalendarSectionProps {
     handleSelectDate: (day: number, month: number) => void;
     selectedDates: Date[];
     setShowYearDialog: React.Dispatch<React.SetStateAction<boolean>>;
-    actualAttendanceDates: string[]; // NEW PROP
+    actualAttendanceDates: string[]; // USE PROP
 }
 
 const CalendarSection = ({
@@ -180,6 +336,19 @@ const CalendarSection = ({
     handleSelectMonth, handleSelectDate, selectedDates, setShowYearDialog,
     actualAttendanceDates // USE PROP
 }: CalendarSectionProps) => {
+
+    const [isMobileView, setIsMobileView] = useState(false);
+    
+    useEffect(() => {
+        const checkScreenSize = () => {
+            if (typeof window !== 'undefined') {
+                 setIsMobileView(window.innerWidth < 768);
+            }
+        };
+        checkScreenSize();
+        window.addEventListener('resize', checkScreenSize);
+        return () => window.removeEventListener('resize', checkScreenSize);
+    }, []);
 
     const handlePrevMonth = useCallback(() => { 
         const newMonth = (startMonth - 1 + 12) % 12;
@@ -197,21 +366,19 @@ const CalendarSection = ({
 
     const monthsToDisplay = useMemo(() => {
         const months = [];
-        // Menampilkan 1 bulan di HP (isMobileView), 3 bulan di Desktop
-        const isMobileView = typeof window !== 'undefined' && window.innerWidth < 768;
         const count = isMobileView ? 1 : 3; 
         for (let i = 0; i < count; i++) {
           const monthIndex = (startMonth + i) % 12;
           months.push(monthIndex);
         }
         return months;
-    }, [startMonth]);
+    }, [startMonth, isMobileView]);
 
     const selectedKeys = useMemo(() => new Set(selectedDates.map(getDayKey)), [selectedDates]);
     const attendanceSet = useMemo(() => new Set(actualAttendanceDates), [actualAttendanceDates]); // USE SET
 
     return (
-        <div className="lg:col-span-2 bg-white p-4 md:p-6 rounded-xl shadow-lg border border-gray-100">
+        <div className="lg:col-span-2 bg-white p-4 sm:p-6 rounded-xl shadow-lg border border-gray-100">
             <h2 className="text-xl font-bold text-indigo-700 mb-4 flex items-center gap-2">
               <Calendar size={20} />
               Pilih Tanggal Ibadah
@@ -228,7 +395,7 @@ const CalendarSection = ({
                 
                 <div className="flex items-center gap-3">
                     <h2 
-                      className={`text-lg md:text-2xl font-bold text-gray-800 cursor-pointer hover:text-indigo-600 transition px-2 py-1 md:px-4 md:py-2 rounded-lg ${
+                      className={`text-xl md:text-2xl font-bold text-gray-800 cursor-pointer hover:text-indigo-600 transition px-4 py-2 rounded-lg ${
                         viewMode === 'monthly_summary' ? 'bg-indigo-100 text-indigo-700 shadow-sm' : 'hover:bg-indigo-100'
                       }`}
                       onClick={() => setShowYearDialog(true)}
@@ -246,10 +413,12 @@ const CalendarSection = ({
                 </button>
             </div>
             
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 md:gap-4">
+            {/* Apply grid changes based on screen size: grid-cols-1 on mobile, md:grid-cols-3 on desktop */}
+            <div className={`grid grid-cols-1 ${isMobileView ? 'gap-0' : 'md:grid-cols-3 gap-4'}`}>
               {monthsToDisplay.map((monthIndex) => {
                 const daysInMonth = getDaysInMonth(monthIndex, year);
                 const firstDay = getFirstDayOfMonth(monthIndex, year);
+                // Menyesuaikan startDayOffset untuk memulai Senin (0=Minggu, 1=Senin)
                 const startDayOffset = firstDay === 0 ? 6 : firstDay - 1; 
                 const daysArray: (number | null)[] = [
                   ...Array(startDayOffset).fill(null) as (number | null)[],
@@ -257,9 +426,9 @@ const CalendarSection = ({
                 ];
                   
                 return (
-                  <div key={`${year}-${monthIndex}`} className="bg-white rounded-xl border border-gray-100 p-2 md:p-0">
+                  <div key={`${year}-${monthIndex}`} className="bg-white rounded-xl border border-gray-100">
                     <h4 
-                      className="mb-3 pt-3 md:pt-4 text-center text-sm font-bold text-indigo-600 cursor-pointer hover:text-indigo-800 transition"
+                      className="mb-3 pt-4 text-center text-sm md:text-md font-bold text-indigo-600 cursor-pointer hover:text-indigo-800 transition"
                       onClick={() => handleSelectMonth(monthIndex, year)} 
                       role="button"
                     >
@@ -270,7 +439,7 @@ const CalendarSection = ({
                         <div key={d} className="text-center">{d}</div>
                       ))}
                     </div>
-                    <div className="grid grid-cols-7 gap-1 text-center text-sm p-2 md:p-4 pt-0"> 
+                    <div className="grid grid-cols-7 gap-1 text-center text-sm p-4 pt-0"> 
                       {daysArray.map((day, i) => {
                         if (day === null) return <div key={i} className="p-1"></div>;
                         
@@ -280,14 +449,19 @@ const CalendarSection = ({
                         const dateTimestamp = new Date(thisDate).setHours(0, 0, 0, 0);
                         const isFutureDay = dateTimestamp > todayStart;
                         
-                        const hasAttendanceData = attendanceSet.has(dayKey);
+                        // 💡 LOGIC DOT: Cek apakah ada data kehadiran di tanggal ini
+                        const hasAttendanceData = attendanceSet.has(dayKey); 
                         
                         let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm";
-                        if (isFutureDay) {
+                        
+                        // MODIFIED: Hanya blokir tanggal masa depan.
+                        if (isFutureDay) { 
                           dayClass += " text-gray-300 cursor-not-allowed";
                         } else if (isSelected) {
+                          // Tetap tampilkan warna biru jika terpilih
                           dayClass += " bg-indigo-600 text-white font-bold cursor-pointer shadow-md"; 
                         } else { 
+                          // Mengizinkan klik di semua tanggal yang sudah lewat
                           dayClass += " text-gray-700 hover:bg-indigo-200 cursor-pointer";
                         }
 
@@ -295,12 +469,14 @@ const CalendarSection = ({
                           <div 
                             key={i} 
                             className={dayClass} 
+                            // MODIFIED: Panggil handler selama bukan tanggal masa depan
                             onClick={() => !isFutureDay && handleSelectDate(day, monthIndex)} 
                             role="button"
                           >
                             {day}
-                            {hasAttendanceData && !isSelected && (
-                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-indigo-600`}></div>
+                            {/* 💡 Titik hanya muncul jika ADA data kehadiran DAN TIDAK terpilih */}
+                            {hasAttendanceData && !isSelected && ( 
+                              <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-red-600`}></div>
                             )}
                           </div>
                         );
@@ -314,24 +490,34 @@ const CalendarSection = ({
     );
 };
 
-// --- LOGIKA DAFTAR EVENT ---
+
+// --- LOGIKA DAFTAR EVENT (FROM database.tsx - READ ONLY) ---
 interface SelectedEventsSectionProps {
     selectedDates: Date[];
     selectedEventsByDate: SelectedEventsByDate;
     events: EventsCache;
     viewMode: ViewMode;
     handleSelectEvent: (dateKey: string, event: string) => void;
+    // NEW: Tambahkan weeklyEvents (read-only)
+    weeklyEvents: WeeklyEvent[]; 
 }
 
 const SelectedEventsSection = ({
     selectedDates, selectedEventsByDate, events, viewMode,
-    handleSelectEvent,
+    handleSelectEvent, weeklyEvents 
 }: SelectedEventsSectionProps) => {
     
     const selectedDateKeys = useMemo(() => selectedDates.map(getDayKey), [selectedDates]);
+    
+    // Tanda Event Berkala
+    const periodicalEventNames = useMemo(() => 
+        new Set(weeklyEvents.map(we => we.title)), 
+        [weeklyEvents]
+    );
 
     return (
-        <div className="bg-white p-4 md:p-6 rounded-xl border border-gray-100 lg:sticky lg:top-8 h-fit lg:max-h-[80vh]"> 
+        // Menggunakan max-h-screen untuk scroll di layar besar
+        <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-100 lg:sticky lg:top-8 h-fit lg:max-h-[80vh]"> 
             <h3 className="text-lg font-bold text-indigo-700 mb-4 border-b pb-2">
               {selectedDates.length} Tanggal Dipilih ({viewMode === 'monthly_summary' ? '1 Tabel' : `${selectedDateKeys.reduce((acc, key) => acc + (selectedEventsByDate[key]?.length ?? 0), 0)} Event`})
             </h3>
@@ -350,12 +536,11 @@ const SelectedEventsSection = ({
                     month: "long",
                     year: "numeric"
                   });
-                  // Event list mungkin kosong jika tanggal tidak ada data
                   const currentEvents = events[key] ?? [];
                   const selectedEvents = selectedEventsByDate[key] ?? [];
                   
                   return (
-                    <div key={key} className="p-4 border-2 border-indigo-200 rounded-lg bg-indigo-50"> 
+                    <div key={key} className="p-3 sm:p-4 border-2 border-indigo-200 rounded-lg bg-indigo-50"> 
                       <div className="flex justify-between items-center mb-3">
                         <span className="font-semibold text-gray-800 text-sm">{dateDisplay}</span>
                         {/* Tombol + Event Dihapus */}
@@ -370,12 +555,13 @@ const SelectedEventsSection = ({
                             {currentEvents.map((ev, idx) => {
                                 const isSelected = selectedEvents.includes(ev);
                                 const isOverall = ev === "KESELURUHAN DATA HARI INI";
+                                const isPeriodical = periodicalEventNames.has(ev);
 
                                 return (
-                                <div key={idx} className="relative inline-block">
+                                <div key={ev+idx} className="relative inline-block">
                                     <button
                                         onClick={() => handleSelectEvent(key, ev)} 
-                                        className={`text-xs px-3 py-1.5 rounded-lg transition 
+                                        className={`text-xs px-3 py-1.5 rounded-lg transition text-left relative
                                           ${isOverall 
                                             ? isSelected 
                                               ? 'bg-green-600 text-white' 
@@ -383,10 +569,17 @@ const SelectedEventsSection = ({
                                             : isSelected
                                               ? 'bg-indigo-600 text-white' 
                                               : 'border-2 border-indigo-300 text-indigo-700 hover:bg-indigo-100'
-                                          }`}
+                                          }
+                                          ${isPeriodical ? 'shadow-lg border-purple-500 ring-2 ring-purple-300' : ''}
+                                        `}
                                     >
                                         {ev}
+                                        {isPeriodical && (
+                                            <span className="absolute top-[-4px] right-[-4px] text-[8px] bg-purple-600 text-white px-1 rounded-full font-bold">R</span>
+                                        )}
                                     </button>
+                                    
+                                    {/* Hapus tombol Edit dan Hapus Event */}
                                 </div>
                                 );
                             })}
@@ -407,10 +600,11 @@ const SelectedEventsSection = ({
     );
 };
 
+
 // --- KOMPONEN UTAMA ---
 export default function DatabasePage() {
   const router = useRouter();
-    // ｧ鯛 昨汳ｻ Role check (user only)
+    // ✅ Auth check (user only)
     useEffect(() => {
       const checkRole = async () => {
         const res = await fetch("/api/me");
@@ -422,8 +616,11 @@ export default function DatabasePage() {
       void checkRole();
     }, [router]);
 
-  const [jemaat, setJemaat] = useState<Jemaat[]>([]);
-  const [actualAttendanceDates, setActualAttendanceDates] = useState<string[]>([]); // NEW STATE
+  // Jemaat Unik (digunakan untuk summary/filter)
+  const [uniqueJemaatList, setUniqueJemaatList] = useState<UniqueJemaat[]>([]); 
+  // Records Kehadiran (digunakan untuk tabel/filtering)
+  const [attendanceRecords, setAttendanceRecords] = useState<JemaatRow[]>([]); 
+  const [weeklyEvents, setWeeklyEvents] = useState<WeeklyEvent[]>([]); 
   const [isLoading, setIsLoading] = useState(true); 
   
   const [year, setYear] = useState<number>(currentYear);
@@ -432,15 +629,17 @@ export default function DatabasePage() {
   const [selectedDates, setSelectedDates] = useState<Date[]>([]);
   const [selectedEventsByDate, setSelectedEventsByDate] = useState<SelectedEventsByDate>({});
   const [events, setEvents] = useState<EventsCache>(() => memoryStorage.events || {});
+  const [actualAttendanceDates, setActualAttendanceDates] = useState<string[]>([]); 
   const [viewMode, setViewMode] = useState<ViewMode>('event_per_table');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // NEW STATE
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false); 
 
   const [tablePage, setTablePage] = useState(1);
   const [openDetailDrawer, setOpenDetailDrawer] = useState(false);
-  const [formData, setFormData] = useState<Jemaat | null>(null); // Hanya untuk display detail
+  // Menggunakan JemaatRow untuk detail drawer
+  const [formData, setFormData] = useState<JemaatRow | null>(null); 
   const itemsPerPage = 10;
   
-  const [filterStatusKehadiran, setFilterStatusKehadiran] = useState(""); 
+  const [filterStatusKehadiran, setFilterStatusKehadiran] = useState<StatusKehadiran | "">(""); 
   const [filterJabatan, setFilterJabatan] = useState("");
   const [filterKehadiranSesi, setFilterKehadiranSesi] = useState(""); 
   
@@ -462,72 +661,138 @@ export default function DatabasePage() {
   }, []);
 
   useEffect(() => {
+    // 💡 FUNGSI INI MENGAMBIL DATA UTAMA DARI TABEL KEHADIRAN & JEMAAT + WEEKLY EVENTS
     const fetchData = async () => {
       setIsLoading(true);
       try {
-        const res = await fetch("/api/jemaat"); 
-        
-        if (!res.ok) {
-          throw new Error(`Gagal fetch data jemaat. Status: ${res.status}`);
-        }
+        // Fetch both necessary data sources
+        const [jemaatRes, weeklyEventsRes] = await Promise.all([
+          fetch("/api/jemaat"), // Data Jemaat dan Kehadiran (full)
+          fetch("/api/weekly-events"), // Data Event Berkala
+        ]);
 
-        const data: unknown = await res.json();
+        // --- 1. PROSES DATA JEMAAT/KEHADIRAN ---
+        const data: unknown = await jemaatRes.json();
         const apiResponse = data as JemaatAPIResponse;
         
-        if (Array.isArray(apiResponse.jemaatData) && apiResponse.jemaatData.length > 0) {
-          const fetchedJemaat = apiResponse.jemaatData;
-          setJemaat(fetchedJemaat);
-          setActualAttendanceDates(apiResponse.attendanceDates); // SET STATE BARU
-          
-          // Generate event defaults for dates with attendance data
-          const newEvents: EventsCache = {};
-          apiResponse.attendanceDates.forEach(dateKey => {
-              const date = new Date(dateKey);
-              if (!memoryStorage.events[dateKey]) {
-                  const finalEvents = populateEventsForDate(dateKey, date); // Menggunakan utilitas yang sudah ada
-                  if (finalEvents.length > 0) {
-                      newEvents[dateKey] = finalEvents;
-                  }
-              }
-          });
-          const mergedEvents = { ...memoryStorage.events, ...newEvents };
-          memoryStorage.events = mergedEvents;
-          setEvents(mergedEvents);
-
-        } else {
-          setJemaat([]);
-          setActualAttendanceDates([]);
+        if (apiResponse.error) {
+             console.error("API Jemaat Error Body:", apiResponse.error);
+             throw new Error(apiResponse.error as string);
         }
+        if (!jemaatRes.ok) {
+          throw new Error(`Gagal fetch data jemaat. Status: ${jemaatRes.status}`);
+        }
+
+        const fetchedUniqueJemaat = (apiResponse.jemaatData || []) as UniqueJemaat[];
+        setUniqueJemaatList(fetchedUniqueJemaat);
+        setAttendanceRecords((apiResponse.fullAttendanceRecords || []) as JemaatRow[]);
+        const fetchedAttendanceDates = apiResponse.attendanceDates || [];
+        setActualAttendanceDates(fetchedAttendanceDates); 
+        
+        // Ambil semua sesi unik dari data kehadiran 
+        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) || []);
+
+        // --- 2. PROSES DATA WEEKLY EVENTS ---
+        let fetchedWeeklyEvents: WeeklyEvent[] = [];
+        if (weeklyEventsRes.ok) {
+            fetchedWeeklyEvents = await weeklyEventsRes.json() as WeeklyEvent[];
+            setWeeklyEvents(fetchedWeeklyEvents);
+        } else {
+            const errorData = await weeklyEventsRes.json().catch(() => ({ error: "Unknown weekly-events API error." }));
+            console.error("API Weekly Events Error:", errorData);
+        }
+
+        // --- 3. INTEGRASI DAN CACHE EVENT ---
+        let initialEvents: EventsCache = {};
+
+        fetchedAttendanceDates.forEach(dateKey => {
+            const date = new Date(dateKey);
+            // Gunakan sesi unik sebagai base event list
+            initialEvents[dateKey] = populateEventsForDate(dateKey, date, allUniqueSessions); 
+        });
+        
+        // Menggunakan Logika Integrasi yang Benar
+        const mergedEvents = integrateWeeklyEvents(fetchedWeeklyEvents, initialEvents, allUniqueSessions);
+        
+        setEvents(mergedEvents);
+        memoryStorage.events = mergedEvents;
+        
       } catch (err) {
-        console.error("Error fetch jemaat:", err);
-        setJemaat([]); 
-        setActualAttendanceDates([]);
+        const errorMessage = err instanceof Error ? err.message : "Terjadi kesalahan saat mengambil data (unknown error).";
+        console.error("Error fetch data:", errorMessage);
+        setUniqueJemaatList([]);
+        setAttendanceRecords([]);
+        setActualAttendanceDates([]); 
+        setWeeklyEvents([]); 
       } finally {
         setIsLoading(false);
       }
     };
 
     void fetchData();
-  }, []);
-  
+  }, []); 
+
+  // Perbarui useEffect untuk Caching/Integrating Events yang tampil di kalender
   useEffect(() => {
     const newEvents: EventsCache = {};
-    const months = [startMonth, (startMonth + 1) % 12, (startMonth + 2) % 12];
+    const count = window.innerWidth < 768 ? 1 : 3; 
+    const months = [];
+    for (let i = 0; i < count; i++) {
+      const monthIndex = (startMonth + i) % 12;
+      months.push(monthIndex);
+    }
     
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+
     months.forEach(month => {
+        // Gunakan getDatesWithEventsInMonth versi user (yang bergantung pada actualAttendanceDates)
         const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events, actualAttendanceDates); 
         datesInMonth.forEach(d => {
-            if (!memoryStorage.events[d.key]) { 
-                newEvents[d.key] = populateEventsForDate(d.key, d.date);
+            const date = d.date;
+            
+            let currentEvents = memoryStorage.events[d.key];
+            
+            // Gunakan sesi unik sebagai base event list jika belum di-cache atau kosong
+            if (!currentEvents || currentEvents.length === 0) {
+                currentEvents = populateEventsForDate(d.key, date, allUniqueSessions);
+            }
+            
+            const dayOfWeek = date.getDay();
+            
+            // Integrate Weekly Events for the currently viewed month (Logic from database.tsx)
+            weeklyEvents.forEach(event => {
+                const startDate = new Date(event.start_date).setHours(0, 0, 0, 0);
+                const endDate = event.end_date ? new Date(event.end_date).setHours(0, 0, 0, 0) : Infinity;
+                const currentDateTimestamp = date.setHours(0, 0, 0, 0);
+
+                if (currentDateTimestamp >= startDate && currentDateTimestamp <= endDate) {
+                    if (event.repetition_type === 'Monthly' || dayOfWeek === event.day_of_week || event.repetition_type === 'Once') {
+                        const eventName = event.title;
+                        const lowerEventName = eventName.toLowerCase();
+                        
+                        if (!currentEvents.some(e => e.toLowerCase() === lowerEventName)) {
+                            currentEvents = [
+                                "KESELURUHAN DATA HARI INI", 
+                                ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
+                                eventName
+                            ].filter((v, i, a) => a.indexOf(v) === i);
+                        }
+                    }
+                }
+            });
+            
+            if (currentEvents.length > 0 && JSON.stringify(currentEvents) !== JSON.stringify(memoryStorage.events[d.key])) {
+               newEvents[d.key] = currentEvents;
             }
         });
     });
     
     if (Object.keys(newEvents).length > 0) {
       setEvents(prev => ({ ...prev, ...newEvents }));
+      memoryStorage.events = { ...memoryStorage.events, ...newEvents };
     }
-  }, [startMonth, year, actualAttendanceDates]); 
-  
+  }, [startMonth, year, attendanceRecords, weeklyEvents, actualAttendanceDates]); 
+
   useEffect(() => {
     memoryStorage.events = events;
   }, [events]);
@@ -565,10 +830,18 @@ export default function DatabasePage() {
     const newDates = datesWithEventsInMonth.map(d => d.date);
     const newEventsByDate: SelectedEventsByDate = {};
     
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+    
     datesWithEventsInMonth.forEach(d => {
-        const overallEvent = d.events.find(e => e === "KESELURUHAN DATA HARI INI");
+        // Gunakan sesi unik sebagai base event list
+        const eventsList = memoryStorage.events[d.key] || populateEventsForDate(d.key, d.date, allUniqueSessions); 
+        const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
-        memoryStorage.events[d.key] ??= d.events;
+        
+        // Ensure initial population happens if it hasn't or was empty
+        if (!memoryStorage.events[d.key] || memoryStorage.events[d.key].length === 0) {
+            memoryStorage.events[d.key] = eventsList;
+        }
     });
     
     setEvents(prev => ({ ...prev, ...memoryStorage.events }));
@@ -579,16 +852,70 @@ export default function DatabasePage() {
     setStartMonth(monthIndex);
     setYear(currentYear);
     setViewMode('monthly_summary');
-  }, [viewMode, startMonth, year, setStartMonth, setYear, actualAttendanceDates]);
+  }, [viewMode, startMonth, year, setStartMonth, setYear, attendanceRecords, actualAttendanceDates]); 
 
   useEffect(() => {
-    if (!router.isReady || isLoading || jemaat.length === 0) return; 
+    // Logic untuk inisialisasi dari URL query (dari database.tsx)
+    if (!router.isReady || isLoading || uniqueJemaatList.length === 0 || attendanceRecords.length === 0 || actualAttendanceDates.length === 0) return; 
 
-    const { dates } = router.query;
+    const { dates, date, mode, event: eventQuery } = router.query;
     
     const currentEventsCache = memoryStorage.events;
-    
-    // Logic untuk inisialisasi dari URL query... (dibiarkan seperti ini karena tidak melibatkan editing)
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
+
+    if (typeof dates === 'string' && dates.includes(',')) {
+        const dateRegex = /^\d{4}-\d{2}-\d{2}$/;
+        const datesArray = dates.split(',').filter(d => dateRegex.exec(d));
+        const firstDate = datesArray.length > 0 && datesArray[0] !== undefined ? new Date(datesArray[0]) : null;
+        
+        if (!firstDate) return;
+
+        const newSelectedDates: Date[] = [];
+        const newSelectedEventsByDate: SelectedEventsByDate = {};
+        const targetMonth = firstDate.getMonth();
+        const targetYear = firstDate.getFullYear();
+        
+        datesArray.forEach(dateKey => {
+            const dateObj = new Date(dateKey);
+            
+            // Generate events if missing from cache
+            let availableEvents = currentEventsCache[dateKey];
+            if (!availableEvents) { // No longer restricted by actualAttendanceDates
+                availableEvents = populateEventsForDate(dateKey, dateObj, allUniqueSessions);
+                currentEventsCache[dateKey] = availableEvents;
+            }
+
+            let selectedEvents: string[] = [];
+            
+            if (typeof eventQuery === 'string' && eventQuery) {
+                const decodedEvent = decodeURIComponent(eventQuery);
+                if (availableEvents.includes(decodedEvent)) {
+                    selectedEvents = [decodedEvent];
+                }
+            } else {
+                const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
+                if (overallEvent) {
+                    selectedEvents = [overallEvent];
+                }
+            }
+            
+            if (selectedEvents.length > 0) {
+                newSelectedDates.push(dateObj);
+                newSelectedEventsByDate[dateKey] = selectedEvents;
+            }
+        });
+        
+        setEvents({ ...currentEventsCache });
+        setSelectedDates(newSelectedDates.sort((a, b) => a.getTime() - b.getTime()));
+        setSelectedEventsByDate(newSelectedEventsByDate);
+        setStartMonth(targetMonth);
+        setYear(targetYear);
+        setViewMode('event_per_table'); 
+        saveSelection(newSelectedDates, newSelectedEventsByDate);
+        
+        void router.replace(router.pathname, undefined, { shallow: true });
+        return;
+    }
 
     if (typeof dates === 'string' && /^\d{4}-\d{2}-\d{2}$/.exec(dates)) {
         const dateKey = dates;
@@ -596,18 +923,15 @@ export default function DatabasePage() {
         
         if (isNaN(targetDate.getTime())) return;
         
-        const availableEvents = currentEventsCache[dateKey]; // Ambil dari cache/generated
         
-        // Handle case jika URL merujuk ke tanggal tanpa attendance data
-        if (!availableEvents && !actualAttendanceDates.includes(dateKey)) {
-             // Jika tidak ada data, kita perlu buat entry kosong di cache supaya bisa dipilih
-             const emptyEvents: string[] = [];
-             currentEventsCache[dateKey] = emptyEvents;
+        let availableEvents = currentEventsCache[dateKey];
+        
+        if (!availableEvents) { // No longer restricted by actualAttendanceDates
+            availableEvents = populateEventsForDate(dateKey, targetDate, allUniqueSessions);
+            currentEventsCache[dateKey] = availableEvents;
         }
 
-        const eventsToUse = currentEventsCache[dateKey] ?? [];
-
-        const overallEvent = eventsToUse.find(e => e === "KESELURUHAN DATA HARI INI");
+        const overallEvent = availableEvents.find(e => e === "KESELURUHAN DATA HARI INI");
         const selectedEvents = overallEvent ? [overallEvent] : []; 
         
         setEvents({ ...currentEventsCache });
@@ -622,11 +946,18 @@ export default function DatabasePage() {
         return;
     }
     
-    // ... logic lainnya untuk inisialisasi dari URL
-    
-  }, [router, isLoading, jemaat.length, handleSelectMonth, actualAttendanceDates]); 
+    if (typeof date === 'string' && /^\d{4}-\d{2}$/.exec(date) && mode === 'monthly') {
+        const y = parseInt(date.substring(0, 4), 10);
+        const m = parseInt(date.substring(5, 7), 10) - 1;
+        
+        handleSelectMonth(m, y, true);
+        
+        void router.replace(router.pathname, undefined, { shallow: true });
+        return;
+    }
+  }, [router, isLoading, uniqueJemaatList.length, handleSelectMonth, actualAttendanceDates, attendanceRecords]); 
 
-  // MODIFIED: Implementasi logic klik dari database.tsx
+  // 💡 LOGIC UTAMA: Menghandle klik di kalender (dari database.tsx)
   const handleSelectDate = useCallback((day: number, month: number) => {
     setViewMode('event_per_table'); 
     
@@ -635,56 +966,27 @@ export default function DatabasePage() {
     const dateTimestamp = new Date(clickedDate).setHours(0, 0, 0, 0);
     const isFuture = dateTimestamp > todayStart;
     
-    if (isFuture) return;
-
-    const hasAttendance = actualAttendanceDates.includes(key);
-    const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
-    
-    // --- LOGIC BARU: Mengizinkan select pada tanggal tanpa data, tetapi event list akan kosong ---
-    
-    if (!hasAttendance && isCurrentlySelected) {
-        // Jika deselect tanggal yang tidak ada data, hapus entry kosong dari events cache
-        setSelectedDates(prev => prev.filter(d => getDayKey(d) !== key));
-        setSelectedEventsByDate(prev => {
-            const newState = { ...prev };
-            delete newState[key];
-            saveSelection(selectedDates.filter(d => getDayKey(d) !== key), newState);
-            return newState;
-        });
-        if (events[key]?.length === 0) {
-             setEvents(prev => {
-                const updated = { ...prev };
-                delete updated[key];
-                memoryStorage.events = updated;
-                return updated;
-             });
-        }
+    if (isFuture) { 
         return;
     }
+
+    const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
     
-    if (!hasAttendance && !isCurrentlySelected) {
-        // Jika select tanggal tanpa data, inisialisasi events cache dengan array kosong
-        if (!events[key]) {
-             setEvents(prev => ({ ...prev, [key]: [] }));
-             memoryStorage.events[key] = [];
-        }
-    }
+    // Handle Event Caching/Generation for ANY selected date (past/present)
+    let currentEvents = events[key];
+    const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
     
-    // Handle Event Caching/Generation (Hanya untuk tanggal dengan data)
-    const currentEvents = events[key];
-    if (hasAttendance && !currentEvents) {
-        const currentEvents = populateEventsForDate(key, clickedDate);
+    // 💡 FIX: Populasikan event jika belum ada di cache
+    if (!currentEvents || currentEvents.length === 0) {
+        currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
         setEvents(prev => ({ ...prev, [key]: currentEvents }));
         memoryStorage.events[key] = currentEvents;
     }
 
-    // Pengecekan ulang apakah masih ter-select
-    const isStillSelected = selectedDates.some(d => getDayKey(d) === key);
-
     let newDates: Date[];
     const newEventsByDate = { ...selectedEventsByDate };
 
-    if (isStillSelected) {
+    if (isCurrentlySelected) {
       // DESELECT
       newDates = selectedDates.filter(d => getDayKey(d) !== key);
       delete newEventsByDate[key];
@@ -692,48 +994,96 @@ export default function DatabasePage() {
       // SELECT
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
       
-      const eventsList = events[key] ?? [];
+      const eventsList = currentEvents; // Use the newly populated list
       const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
       
-      // Jika ada event (berarti ada data), select 'KESELURUHAN DATA HARI INI', jika tidak []
+      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' (ini defaultnya, walaupun tidak ada data kehadiran)
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
     
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
-  }, [events, selectedDates, selectedEventsByDate, year, actualAttendanceDates]);
+  }, [events, selectedDates, selectedEventsByDate, year, attendanceRecords]);
 
-  const handleSelectEvent = useCallback((dateKey: string, event: string) => {
-    setViewMode('event_per_table'); 
-    
-    setSelectedEventsByDate(prev => {
-      const current = prev[dateKey] ?? [];
-      const isEventSelected = current.includes(event);
+
+  // **PERBAIKAN 2: Logika Pemilihan Event Berkala** (from database.tsx)
+  const handleSelectEvent = useCallback((dateKey: string, eventName: string) => {
+      setViewMode('event_per_table'); 
       
-      let updated: string[];
+      const isPeriodicalEvent = weeklyEvents.find(e => e.title === eventName);
       
-      if (event === "KESELURUHAN DATA HARI INI") {
-          if (isEventSelected) {
-              updated = current.filter(e => e !== event); 
-          } else {
-              updated = [event];
+      if (isPeriodicalEvent) {
+          // --- LOGIKA SELEKSI EVENT BERKALA ---
+          
+          const startDate = new Date(isPeriodicalEvent.start_date);
+          const endDate = isPeriodicalEvent.end_date 
+              ? new Date(isPeriodicalEvent.end_date) 
+              : new Date(today.getFullYear() + 10, 0, 1); 
+          
+          const newDates: Date[] = [];
+          const newEventsByDate: SelectedEventsByDate = {};
+          
+          let currentDate = new Date(startDate);
+          
+          // Iterasi hari demi hari dari start_date hingga end_date (atau hari ini, mana yang lebih dulu)
+          while (currentDate.getTime() <= endDate.getTime() && currentDate.getTime() <= todayStart) {
+              const currentKey = getDayKey(currentDate);
+              const dayOfWeek = currentDate.getDay(); 
+
+              // Filter ketat: tanggal harus match hari repetisi ATAU event sekali jalan/bulanan
+              const isCorrectDay = isPeriodicalEvent.repetition_type === 'Once' 
+                || isPeriodicalEvent.repetition_type === 'Monthly' // Tambahkan cek bulanan
+                || dayOfWeek === isPeriodicalEvent.day_of_week;
+
+              if (isCorrectDay) {
+                  
+                  const availableEvents = events[currentKey] ?? [];
+                  if (availableEvents.includes(eventName)) {
+                      newDates.push(new Date(currentKey));
+                      newEventsByDate[currentKey] = [eventName]; 
+                  }
+              }
+              
+              currentDate.setDate(currentDate.getDate() + 1);
           }
+          
+          // Atur state
+          setSelectedDates(newDates.sort((a, b) => a.getTime() - b.getTime()));
+          setSelectedEventsByDate(newEventsByDate);
+          saveSelection(newDates, newEventsByDate);
+
       } else {
-          if (isEventSelected) {
-              updated = current.filter((e: string) => e !== event);
-          } else {
-              updated = [...current.filter(e => e !== "KESELURUHAN DATA HARI INI"), event];
-          }
+          // --- LOGIKA SELEKSI EVENT SATUAN (untuk event non-periodik) ---
+          setSelectedEventsByDate(prev => {
+              const current = prev[dateKey] ?? [];
+              const isEventSelected = current.includes(eventName);
+              
+              let updated: string[];
+              
+              if (eventName === "KESELURUHAN DATA HARI INI") {
+                  if (isEventSelected) {
+                      updated = current.filter(e => e !== eventName); 
+                  } else {
+                      updated = [eventName];
+                  }
+              } else {
+                  if (isEventSelected) {
+                      updated = current.filter((e: string) => e !== eventName);
+                  } else {
+                      updated = [...current.filter(e => e !== "KESELURUHAN DATA HARI INI"), eventName];
+                  }
+              }
+              
+              const newEventsByDate = { ...prev, [dateKey]: updated.filter(e => e) };
+              saveSelection(selectedDates, newEventsByDate);
+              return newEventsByDate;
+          });
       }
-      
-      const newEventsByDate = { ...prev, [dateKey]: updated.filter(e => e) };
-      saveSelection(selectedDates, newEventsByDate);
 
-      return newEventsByDate;
-    });
-  }, [selectedDates]);
-  
+  }, [selectedDates, weeklyEvents, events]);
+
+
   const handleSelectYearFromGrid = useCallback((selectedYear: number) => {
     setYear(selectedYear);
     setShowYearDialog(false);
@@ -743,55 +1093,266 @@ export default function DatabasePage() {
     return calculateAge(formData?.tanggalLahir);
   }, [formData?.tanggalLahir]);
   
+  // FIX 4: LOGIKA FILTER UTAMA: Filter data JemaatRow (Attendance Records) - Re-implementasi dengan useCallback
+  const getFilteredJemaat = useCallback((
+    uniqueJemaatList: UniqueJemaat[], 
+    attendanceRecords: JemaatRow[]
+  ): JemaatRow[] => {
+    const filterStatus = filterStatusKehadiran;
+    const filterJab = filterJabatan;
+    const filterSesi = filterKehadiranSesi;
 
-  
-  const getFilteredJemaat = useCallback((jemaatList: Jemaat[]): Jemaat[] => {
-    // Logic gabungan filter
-    return jemaatList; // Simplified for brevity
-  }, []);
-  
-  const dataForPagination = useMemo(() => getFilteredJemaat(jemaat), [jemaat, getFilteredJemaat]);
+    if (viewMode === 'monthly_summary') {
+        return getFilteredJemaatMonthlySummary(
+            uniqueJemaatList, 
+            attendanceRecords, 
+            selectedDatesOnly, 
+            filterStatus, 
+            filterJab, 
+            filterSesi
+        );
+    }
+    
+    if (selectedTables.length === 1 && selectedTables[0]) {
+        // Gabungkan data filter event dengan data jemaat unik terbaru
+        const filteredByEvent = getFilteredJemaatPerEvent(
+            attendanceRecords, 
+            selectedTables[0].date, 
+            selectedTables[0].event,
+            filterStatus, 
+            filterJab, 
+            filterSesi
+        );
+        
+        // Perluas data dengan data jemaat unik terbaru
+        return filteredByEvent.map(j => {
+            const jemaatId = j.id.split('-')[0] ?? j.id;
+            const uniqueJemaatData = uniqueJemaatList.find(uj => uj.id === jemaatId);
+
+            if (uniqueJemaatData) {
+                return {
+                    ...j, 
+                    ...uniqueJemaatData, 
+                    id: j.id, // Pertahankan ID record kehadiran
+                } as JemaatRow;
+            }
+            return j;
+        });
+    }
+
+    // Jika multiple tables atau no selection, return empty list
+    if (selectedTables.length > 1) {
+        return [];
+    }
+    
+    return [];
+  }, [viewMode, selectedTables, selectedDatesOnly, attendanceRecords, uniqueJemaatList, filterStatusKehadiran, filterJabatan, filterKehadiranSesi]);
+
+
+  // FIX 5: Perbarui dataForPagination
+  const dataForPagination = useMemo(() => getFilteredJemaat(uniqueJemaatList, attendanceRecords), [uniqueJemaatList, attendanceRecords, getFilteredJemaat]);
   const filteredCount = dataForPagination.length;
   const totalPages = Math.ceil(filteredCount / itemsPerPage);
   
-  const getPagedData = useCallback((jemaatList: Jemaat[]) => {
+  const getPagedData = useCallback((jemaatList: JemaatRow[]) => {
     const filtered = jemaatList; 
     const indexOfLast = tablePage * itemsPerPage;
     const indexOfFirst = indexOfLast - itemsPerPage;
-    return filtered.slice(indexOfFirst, indexOfLast);
+    // Fix slice end index (database.tsx uses indexOfFirst + itemsPerPage)
+    return filtered.slice(indexOfFirst, indexOfFirst + itemsPerPage); 
   }, [tablePage]);
   
+  // FIX 7: Ambil dari list unik
   const uniqueJabatan = useMemo(() => 
-    [...new Set(jemaat.map((j) => j.jabatan))], [jemaat]);
+    [...new Set(uniqueJemaatList.map((j) => j.jabatan).filter(j => j) as string[])], [uniqueJemaatList]);
     
+  // FIX 8: Ambil dari list kehadiran granular
   const uniqueKehadiranSesiByDate = useMemo(() => {
-    // Logic untuk sesi unik
-    return [...new Set(jemaat.map((j) => j.kehadiranSesi))]; // Simplified for brevity
-  }, [jemaat]);
+    // Ambil semua sesi unik dari attendance records (yang merupakan jenis_kebaktian)
+    const allUniqueSessions = Array.from(new Set(attendanceRecords.map((j) => j.kehadiranSesi).filter(s => s)));
 
-  const handleRowClick = useCallback((row: Jemaat) => {
+    if (selectedTables.length === 0 || viewMode === 'monthly_summary') {
+        return allUniqueSessions.sort();
+    }
+    
+    if (selectedTables.length === 1 && selectedTables[0]?.event === 'KESELURUHAN DATA HARI INI') {
+        return allUniqueSessions.sort();
+    } 
+    
+    if (selectedTables.length > 0 && selectedTables[0]) {
+        // Jika event spesifik sudah terpilih, filter tidak perlu menampilkan sesi lain
+        return allUniqueSessions.includes(selectedTables[0].event) ? [selectedTables[0].event] : allUniqueSessions.sort();
+    }
+    
+    return allUniqueSessions.sort();
+  }, [attendanceRecords, selectedTables, viewMode]);
+
+  // FIX 9: Perbarui handleRowClick (menggunakan JemaatRow)
+  const handleRowClick = useCallback((row: JemaatRow) => {
+      // Tidak ada edit mode, langsung tampilkan
       setFormData({ ...row });
       setOpenDetailDrawer(true);
-  }, []); 
-
+  }, []);
+  
   const tablesToRender = useMemo(() => {
     if (viewMode === 'monthly_summary') {
       if (selectedDatesOnly.length === 0) return [];
       return [{ date: getDayKey(new Date(year, startMonth, 1)), event: 'KESELURUHAN BULAN INI' }];
     } else {
-      return selectedTables;
+      // 💡 Hanya tampilkan 1 tabel (jika ada event terpilih)
+      return selectedTables.length === 1 && selectedTables[0] ? [selectedTables[0]] : [];
     }
   }, [viewMode, selectedTables, selectedDatesOnly.length, startMonth, year]);
 
   const handleDownload = useCallback(async (format: 'csv' | 'pdf') => {
-    // Logika download PDF/CSV (disederhanakan untuk kode ini)
     if (tablesToRender.length === 0) {
-        alert("Tidak ada data untuk diunduh.");
+        alert("Download Gagal: Tidak ada data untuk diunduh. Pilih tanggal dan event terlebih dahulu.");
         return;
     }
-    // Placeholder untuk logic download yang sesungguhnya
-    console.log(`Downloading ${format} report...`);
-  }, [tablesToRender]);
+    
+    setOpenDownloadDialog(false);
+    
+    const loadingDiv = document.createElement('div');
+    loadingDiv.id = 'download-loading';
+    loadingDiv.className = 'fixed inset-0 bg-black/50 flex items-center justify-center z-[999]';
+    loadingDiv.innerHTML = `
+      <div class="bg-white p-6 rounded-xl shadow-2xl">
+        <div class="flex items-center gap-3">
+          <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-600"></div>
+          <span class="text-lg font-semibold text-gray-800">Membuat ${format.toUpperCase()} (${tablesToRender.length} tabel)...</span>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(loadingDiv);
+
+    try {
+        const startDate = selectedDates.length > 0 ? selectedDates[0] : undefined;
+        const endDate = selectedDates.length > 0 ? selectedDates[selectedDates.length - 1] : undefined;
+        const dateRange = startDate && endDate
+          ? `${startDate instanceof Date ? startDate.toLocaleDateString('id-ID') : new Date(startDate).toLocaleDateString('id-ID')} sampai ${endDate instanceof Date ? endDate.toLocaleDateString('id-ID') : new Date(endDate).toLocaleDateString('id-ID')}`
+          : "N/A";
+          
+        const summaryHeader = viewMode === 'monthly_summary'
+          ? `Data Gabungan Bulanan: ${monthNames[startMonth]} ${year}`
+          : `Data Kehadiran Jemaat - ${dateRange}`;
+
+        if (format === 'csv') {
+          let csv = "";
+          csv += `"${summaryHeader}"\n\n`;
+          
+          const keys: (keyof JemaatRow)[] = ['id', 'nama', 'statusKehadiran', 'jabatan', 'kehadiranSesi', 'email', 'telepon'];
+          
+          tablesToRender.forEach(({ date, event }, tableIndex) => {
+            // Gunakan getFilteredJemaat dengan kedua list data
+            const dataForTable = getFilteredJemaat(uniqueJemaatList, attendanceRecords);
+            
+            if (dataForTable.length === 0) return;
+            
+            const tableHeader = viewMode === 'monthly_summary'
+              ? `Data Keseluruhan | ${monthNames[startMonth]} ${year}`
+              : `${new Date(date).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })} - ${event}`;
+            
+            csv += `\n"${tableHeader}"\n`;
+            csv += `"Total Data: ${dataForTable.length}"\n`;
+            
+            const headers = ['ID (Attendance)', 'Nama', 'Status Kehadiran', 'Jabatan', 'Jenis Ibadah', 'Email', 'Telp'];
+            csv += headers.map(h => `"${h}"`).join(",") + "\n";
+            
+            csv += dataForTable.map(row => 
+              keys.map(key => {
+                const val = row[key] ?? '';
+                // Handle dokumen field for csv (just output existence or a placeholder)
+                if (key === 'dokumen') return `"Dokumen tersedia"`;
+                
+                return `"${String(val).replace(/"/g, '""')}"`; 
+              }).join(",")
+            ).join("\n") + "\n";
+            
+            if (tableIndex < tablesToRender.length - 1) {
+              csv += "\n" + "=".repeat(80) + "\n";
+            }
+          });
+          
+          const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.setAttribute("download", `data_jemaat_${new Date().toISOString().substring(0, 10)}.csv`);
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+        } else if (format === 'pdf') {
+            const pdf = new jsPDF('p', 'mm', 'a4');
+            const margin = 10;
+            let isFirstTable = true;
+            
+            tablesToRender.forEach(({ date, event }) => {
+              // Gunakan getFilteredJemaat dengan kedua list data
+              const dataForTable = getFilteredJemaat(uniqueJemaatList, attendanceRecords);
+              
+              if (dataForTable.length === 0) return;
+              
+              if (!isFirstTable) {
+                pdf.addPage();
+              }
+              isFirstTable = false;
+              
+              let yPosition = 20;
+              
+              const tableHeader = viewMode === 'monthly_summary'
+                ? `Data Gabungan Bulanan: ${monthNames[startMonth]} ${year}`
+                : `${new Date(date).toLocaleDateString("id-ID", { day: "2-digit", month: "long", year: "numeric" })} - ${event}`;
+              
+              pdf.setFontSize(14);
+              pdf.setFont('helvetica', 'bold');
+              pdf.text(tableHeader, margin, yPosition);
+              yPosition += 8;
+              
+              pdf.setFontSize(10);
+              pdf.setFont('helvetica', 'normal');
+              pdf.text(`Total Data: ${dataForTable.length}`, margin, yPosition);
+              yPosition += 10;
+              
+              const head = [['ID (Attendance)', 'Nama', 'Status', 'Jabatan', 'Jenis Ibadah', 'Telp']];
+              const body = dataForTable.map(row => [
+                  String(row.id),
+                  row.nama,
+                  row.statusKehadiran,
+                  row.jabatan,
+                  row.kehadiranSesi,
+                  row.telepon ?? '-'
+              ]);
+
+              autoTable(pdf, {
+                startY: yPosition,
+                head: head,
+                body: body,
+                margin: { left: margin, right: margin },
+                headStyles: { fillColor: [79, 70, 229] },
+                didDrawPage: (data: { pageNumber: number }) => {
+                    pdf.setFontSize(8);
+                    pdf.setTextColor(128, 128, 128);
+                    pdf.text(
+                        `Halaman ${data.pageNumber} | ${summaryHeader} | Generated: ${new Date().toLocaleString('id-ID')}`,
+                        margin,
+                        pdf.internal.pageSize.getHeight() - 10
+                    );
+                }
+              } as UserOptions);
+            });
+            
+            pdf.save(`data_jemaat_${new Date().toISOString().substring(0, 10)}.pdf`);
+        } 
+      } catch (error) {
+        console.error("Error generating report:", error);
+        alert(`Download Gagal: Gagal membuat laporan ${format.toUpperCase()}.`);
+      } finally {
+        const finalLoadingDiv = document.getElementById('download-loading');
+        if (finalLoadingDiv) {
+            document.body.removeChild(finalLoadingDiv);
+        }
+      }
+  }, [tablesToRender, selectedDates, viewMode, startMonth, year, uniqueJemaatList, attendanceRecords, getFilteredJemaat]);
   
   const showSesiFilter = useMemo(() => {
     if (viewMode === 'monthly_summary') return true;
@@ -804,6 +1365,17 @@ export default function DatabasePage() {
   }, [viewMode, selectedTables]);
 
   const closeSidebar = () => setIsSidebarOpen(false);
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen bg-gray-50">
+        <main className="flex-grow p-8 max-w-7xl mx-auto w-full flex justify-center items-center">
+          <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
+          <p className="text-xl text-indigo-600">Memuat data jemaat...</p>
+        </main>
+      </div>
+    );
+  }
 
   return (
     // FIX: Set outer container to h-screen
@@ -839,7 +1411,7 @@ export default function DatabasePage() {
 
           <div className="flex justify-between items-start mb-6 flex-wrap gap-4">
             <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
-              Data Kehadiran Jemaat (Read-Only)
+              Data Kehadiran Jemaat
             </h1>
             <div className="flex space-x-3 flex-wrap justify-end gap-2">
               <button 
@@ -882,6 +1454,7 @@ export default function DatabasePage() {
               events={events}
               viewMode={viewMode}
               handleSelectEvent={handleSelectEvent}
+              weeklyEvents={weeklyEvents} // Pass weekly events
             />
           </div>
 
@@ -892,7 +1465,7 @@ export default function DatabasePage() {
                 
                 <select 
                   value={filterStatusKehadiran} 
-                  onChange={e => setFilterStatusKehadiran(e.target.value)}
+                  onChange={e => setFilterStatusKehadiran(e.target.value as StatusKehadiran | "")}
                   className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
                 >
                   <option value="">Semua Status Kehadiran</option>
@@ -931,10 +1504,7 @@ export default function DatabasePage() {
                 
                 {tablesToRender.map(({ date, event }, idx) => {
                   
-                  const dataToRender = dataForPagination;
-                      
-                  const filteredData = dataToRender;
-                  
+                  const filteredData = dataForPagination;
                   const pagedData = idx === 0 ? getPagedData(filteredData) : filteredData; 
                   
                   const tableFilteredCount = filteredData.length;
@@ -957,88 +1527,103 @@ export default function DatabasePage() {
                       </div>
                       
                       <div className="overflow-x-auto">
-                        <table className="min-w-full divide-y divide-gray-200">
-                          <thead className="bg-indigo-50"> 
-                            <tr>
-                              <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">No</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">ID</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Foto</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
-                              <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
-                              <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
-                            </tr>
-                          </thead>
-                          <tbody className="bg-white divide-y divide-gray-200">
-                            {pagedData.map((j, i) => {
-                              const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
-
-                              return (
-                                <tr 
-                                  key={j.id} 
-                                  className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
-                                  onClick={() => handleRowClick(j)}
-                                >
-                                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
-                                    {rowIndex + 1}
-                                  </td>
-                                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
-                                    {j.id}
-                                  </td>
-                                  <td className="px-4 py-3 whitespace-nowrap">
-                                    {/* FIX: Add relative to parent div for Image fill/object-fit */}
-                                    <div className="relative w-10 h-10">
-                                      <Image
-                                        src={j.foto}
-                                        alt={j.nama}
-                                        fill
-                                        className="rounded-full object-cover shadow-sm"
-                                        unoptimized
-                                      />
-                                    </div>
-                                  </td>
-                                  
-                                  <td className="px-4 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
-                                    {j.nama}
-                                  </td>
-                                  
-                                  <td className="px-4 py-3 whitespace-nowrap text-sm">
-                                    <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
-                                      j.statusKehadiran === "Aktif" 
-                                        ? 'bg-green-100 text-green-800 border border-green-200' 
-                                        : j.statusKehadiran === "Jarang Hadir"
-                                        ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
-                                        : 'bg-red-100 text-red-800 border border-red-200'
-                                    }`}>
-                                      {j.statusKehadiran}
-                                    </span>
-                                  </td>
-                                  
-                                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                                    {j.jabatan}
-                                  </td>
-                                  <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-700">
-                                      {j.kehadiranSesi}
-                                  </td>
-                                  <td className="px-4 py-3 whitespace-nowrap text-center">
-                                    <button 
-                                      onClick={(e) => { 
-                                        e.stopPropagation(); 
-                                        handleRowClick(j); 
-                                      }}
-                                      className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium flex items-center gap-1 mx-auto" 
-                                    >
-                                      <Eye size={14} />
-                                      Lihat
-                                    </button>
-                                  </td>
+                        {tableFilteredCount > 0 ? (
+                            <table className="min-w-full divide-y divide-gray-200">
+                                <thead className="bg-indigo-50"> 
+                                <tr>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[40px]">No</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[80px]">ID</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[60px]">Foto</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Dokumen</th> 
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
                                 </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                {pagedData.map((j, i) => {
+                                    const rowIndex = idx === 0 ? (tablePage - 1) * itemsPerPage + i : i; 
+
+                                    return (
+                                    <tr 
+                                        key={j.id} 
+                                        className="hover:bg-indigo-50 transition duration-150 cursor-pointer"
+                                        onClick={() => handleRowClick(j)}
+                                    >
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-600 text-center font-medium">
+                                        {rowIndex + 1}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-indigo-600">
+                                        {j.id.split('-')[0]} {/* Tampilkan ID Jemaat saja, bukan ID Record Kehadiran */}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap">
+                                        <div className="relative w-10 h-10">
+                                            <Image
+                                                src={j.foto}
+                                                alt={j.nama}
+                                                fill
+                                                className="rounded-full object-cover shadow-sm"
+                                                unoptimized
+                                            />
+                                        </div>
+                                        </td>
+                                        
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                                        {j.nama}
+                                        </td>
+                                        
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm">
+                                            <span className={`inline-flex px-2.5 py-1 text-xs font-semibold rounded-full shadow-sm ${
+                                            j.statusKehadiran === "Aktif" 
+                                                ? 'bg-green-100 text-green-800 border border-green-200' 
+                                                : j.statusKehadiran === "Jarang Hadir"
+                                                ? 'bg-yellow-100 text-yellow-800 border border-yellow-200'
+                                                : 'bg-red-100 text-red-800 border border-red-200'
+                                            }`}>
+                                            {j.statusKehadiran}
+                                            </span>
+                                        </td>
+                                        
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
+                                        {j.jabatan}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
+                                            {j.kehadiranSesi}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
+                                            {j.dokumen ? (
+                                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">
+                                                    Dokumen Tersedia
+                                                </span>
+                                            ) : (
+                                                <span className="text-gray-400">N/A</span>
+                                            )}
+                                        </td>
+                                        <td className="px-3 py-3 whitespace-nowrap text-center">
+                                        <button 
+                                            onClick={(e) => { 
+                                            e.stopPropagation(); 
+                                            handleRowClick(j); 
+                                            }}
+                                            className="px-3 py-1.5 border-2 border-blue-600 text-blue-600 rounded-lg hover:bg-blue-50 transition text-xs font-medium flex items-center gap-1 mx-auto" 
+                                        >
+                                            <Eye size={14} /> Lihat
+                                        </button>
+                                        </td>
+                                    </tr>
+                                    );
+                                })}
+                                </tbody>
+                            </table>
+                        ) : (
+                            <div className="p-8 text-center text-gray-500">
+                                <p className="text-lg font-semibold">Tidak Ada Data Kehadiran</p>
+                                <p className="text-sm">Tidak ada data kehadiran jemaat yang tercatat untuk tanggal/sesi ini berdasarkan filter saat ini.</p>
+                            </div>
+                        )}
+                    </div>
                       
                       {showPagination && (
                         <div className="flex justify-center items-center gap-4 p-4 border-t bg-gray-50 flex-wrap">
@@ -1076,11 +1661,18 @@ export default function DatabasePage() {
 
           {/* Detail Drawer (Read Only) */}
           {openDetailDrawer && formData && (
-            <div className="fixed inset-0 bg-black/50 flex justify-end z-50">
-              <div className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"> 
+            // ✅ Tambahkan onClick ke overlay dan e.stopPropagation() ke drawer content
+            <div 
+              className="fixed inset-0 bg-black/50 flex justify-end z-50"
+              onClick={() => setOpenDetailDrawer(false)}
+            >
+              <div 
+                className="bg-white w-full max-w-md h-full overflow-y-auto animate-slide-in"
+                onClick={(e) => e.stopPropagation()}
+              > 
                 <div className="p-6">
                   <div className="flex items-center justify-between border-b pb-4 mb-6">
-                    <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat (Read-Only)</h2>
+                    <h2 className="text-2xl font-bold text-indigo-700">Detail Jemaat</h2>
                     <button
                       onClick={() => setOpenDetailDrawer(false)}
                       className="text-gray-500 hover:text-red-500 transition p-2 hover:bg-red-50 rounded-full"
@@ -1106,6 +1698,7 @@ export default function DatabasePage() {
                     <h3 className="text-center font-bold text-xl text-gray-800 mb-6">{formData.nama}</h3>
 
                     <div className="space-y-4">
+                      {/* Read-only fields */}
                       <div>
                         <label className="block text-sm font-semibold text-gray-700 mb-2">
                           Tanggal Lahir
@@ -1282,6 +1875,17 @@ export default function DatabasePage() {
         }
         .animate-slide-in {
           animation: slide-in 0.3s ease-out;
+        }
+        .animate-spin {
+          animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+          from {
+            transform: rotate(0deg);
+          }
+          to {
+            transform: rotate(360deg);
+          }
         }
       `}</style>
     </div>

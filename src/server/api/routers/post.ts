@@ -57,9 +57,17 @@ export const ibadahRouter = createTRPCRouter({
   getKehadiranByIbadah: publicProcedure
     .input(z.object({ id_ibadah: z.string() }))
     .query(async ({ ctx, input }) => {
+      // PERBAIKAN: Menambahkan include relasi 'ibadah' untuk mengambil 'jenis_kebaktian'
       return ctx.db.kehadiran.findMany({
         where: { id_ibadah: input.id_ibadah },
-        include: { jemaat: true },
+        include: { 
+          jemaat: true, 
+          ibadah: { // Mengakses tabel Ibadah melalui relasi
+            select: {
+              jenis_kebaktian: true, // Mengambil kolom jenis_kebaktian
+            },
+          },
+        }, 
       });
     }),
 
