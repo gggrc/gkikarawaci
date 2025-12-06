@@ -2419,7 +2419,7 @@ export default function DatabasePage() {
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
-                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Dokumen</th> 
+                                    {/* <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Dokumen</th>  */}
                                     <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
                                 </tr>
                                 </thead>
@@ -2512,7 +2512,7 @@ export default function DatabasePage() {
                                         <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
                                             {draftItem.kehadiranSesi}
                                         </td>
-                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
+                                        {/* <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
                                         {j.dokumen ? (
                                             <button
                                             onClick={(e) => { 
@@ -2528,7 +2528,7 @@ export default function DatabasePage() {
                                         ) : (
                                             <span className="text-gray-400">N/A</span>
                                         )}
-                                        </td>
+                                        </td> */}
                                         <td className="px-3 py-3 whitespace-nowrap text-center">
                                         <button 
                                             onClick={(e) => { 
