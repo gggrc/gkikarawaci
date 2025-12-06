@@ -9,38 +9,49 @@
     "moduleDetection": "force",
     "isolatedModules": true,
     "verbatimModuleSyntax": false,
-
     /* Strictness */
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "checkJs": true,
-
     /* Bundled projects */
-    "lib": ["dom", "dom.iterable", "ES2022"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "ES2022"
+    ],
     "noEmit": true,
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "jsx": "preserve",
-    "plugins": [{ "name": "next" }],
+    "jsx": "react-jsx",
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ],
     "incremental": true,
     // Mempertahankan solusi untuk warning 'baseUrl is deprecated'
-
     "baseUrl": "src",
     // ❌ Menghapus rootDirs: ["./src"]
     "paths": {
       // ✅ Diperbaiki agar alias "~" menunjuk ke folder "src"
-      "@/*": ["*"],
-      "~/*": ["*"]
+      "@/*": [
+        "*"
+      ],
+      "~/*": [
+        "*"
+      ]
     }
   },
-  
   "include": [
     "next-env.d.ts",
     "**/*.ts",
     "**/*.tsx",
     "**/*.cjs",
     "**/*.js",
-    ".next/types/**/*.ts"
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": [
+    "node_modules"
+  ]
 }

@@ -21,6 +21,10 @@ interface RechartsEventSafe {
   activePayload?: RechartsActivePayload[];
 }
 
+interface YearlyChartHandlerState {
+  activeLabel?: string | number;
+}
+
 
 // 🩹 Patch global untuk menghindari error oklch di runtime
 if (typeof CSS !== 'undefined' && CSS.supports && !CSS.supports('color', 'oklch(50% 0.2 200)')) {
@@ -1108,18 +1112,19 @@ export default function StatisticPage() {
   };
 
   // Handler untuk LineChart Tahunan (Navigasi ke database bulan itu)
-  const handleYearlyChartClick = (state: { activeLabel?: string } | null) => {
-    if (state?.activeLabel) {
-      const monthName = state.activeLabel;
-      const monthIndex = monthNames.findIndex(name => name.substring(0, 3) === monthName);
-      
-      if (monthIndex > -1) {
-        // NAVIGASI DENGAN PARAMETER YANG JELAS: date=YYYY-MM
-        const dateKey = `${year}-${String(monthIndex + 1).padStart(2, '0')}`; 
-        void router.push(`/database?date=${dateKey}&mode=monthly`);
-      }
+const handleYearlyChartClick = (state: YearlyChartHandlerState | null) => {
+  if (state?.activeLabel) {
+    // ✅ FIX: Konversi activeLabel ke string secara eksplisit
+    const monthName = String(state.activeLabel); 
+    const monthIndex = monthNames.findIndex(name => name.substring(0, 3) === monthName);
+    
+    if (monthIndex > -1) {
+      // NAVIGASI DENGAN PARAMETER YANG JELAS: date=YYYY-MM
+      const dateKey = `${year}-${String(monthIndex + 1).padStart(2, '0')}`; 
+      void router.push(`/database?date=${dateKey}&mode=monthly`);
     }
-  };
+  }
+};
   
   // LOGIKA DOWNLOAD UTAMA PDF (DIUBAH UNTUK MENGATASI AUTO-TABLE ERROR)
   const handleDownload = async () => {
