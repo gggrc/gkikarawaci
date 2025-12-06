@@ -322,7 +322,13 @@ export async function PATCH(req: NextRequest) {
       { auth: { persistSession: false } }
     );
 
-    const { data, error } = await supabase
+    const supabaseUnsafe = createClient<any, any>(
+      supabaseUrl,
+      supabaseServiceRoleKey,
+      { auth: { persistSession: false } }
+    );
+
+    const { data, error } = await supabaseUnsafe
       .from("Jemaat")
       .update({
         name,
@@ -332,7 +338,8 @@ export async function PATCH(req: NextRequest) {
         tanggal_lahir,
       })
       .eq("id_jemaat", id_jemaat)
-      .select(); // ✅ TANPA .single()
+      .select();
+
 
     if (error) {
       console.error("Supabase Update Error:", error);
