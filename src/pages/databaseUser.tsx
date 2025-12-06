@@ -175,12 +175,13 @@ const getDatesWithEventsInMonth = (
     const date = new Date(currentYear, month, day);
     const dayKey = getDayKey(date);
     
-    // HANYA proses tanggal yang sudah lewat atau hari ini
+    // HANYA proses tanggal yang sudah lewat atau hari ini (Batasan untuk tampil di Monthly Summary)
     if (new Date(date).setHours(0, 0, 0, 0) <= todayStart) { 
         
       const currentEventList = currentEvents[dayKey] ?? []; 
       
       // Jika ada event di cache ATAU ada data kehadiran aktual, masukkan ke list
+      // Note: Logic ini hanya untuk Monthly Summary (yang harus di masa lalu/sekarang)
       if (currentEventList.length > 0 || attendanceSet.has(dayKey)) {
         dates.push({ date, key: dayKey, events: currentEventList });
       }
@@ -353,25 +354,25 @@ const CalendarSection = ({
                         // 💡 LOGIC DOT: Cek apakah ada data kehadiran di tanggal ini
                         const hasAttendanceData = attendanceSet.has(dayKey); 
                         
-                        let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm";
+                        // Perubahan 1: Hapus logic yang membatasi klik, tambahkan 'cursor-pointer' global.
+                        let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm cursor-pointer";
                         
-                        // MODIFIED: Hanya blokir tanggal masa depan.
-                        if (isFutureDay) { 
-                          dayClass += " text-gray-300 cursor-not-allowed";
-                        } else if (isSelected) {
-                          // Tetap tampilkan warna biru jika terpilih
-                          dayClass += " bg-indigo-600 text-white font-bold cursor-pointer shadow-md"; 
+                        if (isSelected) {
+                          dayClass += " bg-indigo-600 text-white font-bold shadow-md"; 
+                        } else if (isFutureDay) {
+                          // Allow click, but style differently to indicate future
+                          dayClass += " text-indigo-400 font-normal hover:bg-indigo-100";
                         } else { 
-                          // Mengizinkan klik di semua tanggal yang sudah lewat
-                          dayClass += " text-gray-700 hover:bg-indigo-200 cursor-pointer";
+                          // Past/Present
+                          dayClass += " text-gray-700 hover:bg-indigo-200";
                         }
 
                         return (
                           <div 
                             key={i} 
                             className={dayClass} 
-                            // MODIFIED: Panggil handler selama bukan tanggal masa depan
-                            onClick={() => !isFutureDay && handleSelectDate(day, monthIndex)} 
+                            // Perubahan 2: Memastikan semua tanggal dapat di klik
+                            onClick={() => handleSelectDate(day, monthIndex)} 
                             role="button"
                           >
                             {day}
@@ -577,17 +578,20 @@ export default function DatabasePage() {
         const apiResponse = data as JemaatAPIResponse;
         
         if (apiResponse.error) {
-             console.error("API Jemaat Error Body:", apiResponse.error);
-             throw new Error(apiResponse.error as string);
+          console.error("API Jemaat Error Body:", apiResponse.error);
+          throw new Error(apiResponse.error);
         }
         if (!jemaatRes.ok) {
           throw new Error(`Gagal fetch data jemaat. Status: ${jemaatRes.status}`);
         }
 
-        const fetchedUniqueJemaat = (apiResponse.jemaatData ?? []) as UniqueJemaat[];
+        const fetchedUniqueJemaat = apiResponse.jemaatData ?? [];
         setUniqueJemaatList(fetchedUniqueJemaat);
-        setAttendanceRecords((apiResponse.fullAttendanceRecords ?? []) as JemaatRow[]);
+
+        setAttendanceRecords(apiResponse.fullAttendanceRecords ?? []);
+
         const fetchedAttendanceDates = apiResponse.attendanceDates || [];
+
         setActualAttendanceDates(fetchedAttendanceDates); 
         
         // Ambil semua sesi unik dari data kehadiran 
@@ -599,7 +603,9 @@ export default function DatabasePage() {
             fetchedWeeklyEvents = await weeklyEventsRes.json() as WeeklyEvent[];
             setWeeklyEvents(fetchedWeeklyEvents);
         } else {
-            const errorData = await weeklyEventsRes.json().catch(() => ({ error: "Unknown weekly-events API error." }));
+          const errorData = (await weeklyEventsRes.json().catch(() => ({
+            error: "Unknown weekly-events API error."
+          }))) as { error?: string };
             console.error("API Weekly Events Error:", errorData);
         }
 
@@ -650,37 +656,60 @@ export default function DatabasePage() {
         const datesInMonth = getDatesWithEventsInMonth(month, year, memoryStorage.events, actualAttendanceDates); 
         datesInMonth.forEach(d => {
             const date = d.date;
+            const dateKey: string = d.key;
             
-            let currentEvents = memoryStorage.events[d.key];
+            let currentEvents = memoryStorage.events[dateKey];
             
-            // Gunakan sesi unik sebagai base event list jika belum di-cache atau kosong
+            // PERUBAHAN KRITIS 3: Populasikan event HANYA JIKA ada data kehadiran aktual
             if (!currentEvents || currentEvents.length === 0) {
-                currentEvents = populateEventsForDate(d.key, date, allUniqueSessions);
+              if (actualAttendanceDates.includes(dateKey)) {
+                currentEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
+              } else {
+                currentEvents = []; // Jika tidak ada data kehadiran, event list kosong
+              }
             }
             
             const dayOfWeek = date.getDay();
             
             // Integrate Weekly Events for the currently viewed month (Logic from database.tsx)
             weeklyEvents.forEach(event => {
-                const startDate = new Date(event.start_date).setHours(0, 0, 0, 0);
-                const endDate = event.end_date ? new Date(event.end_date).setHours(0, 0, 0, 0) : Infinity;
-                const currentDateTimestamp = date.setHours(0, 0, 0, 0);
+              const startDate = new Date(event.start_date).setHours(0, 0, 0, 0);
+              const endDate = event.end_date
+                ? new Date(event.end_date).setHours(0, 0, 0, 0)
+                : Infinity;
 
-                if (currentDateTimestamp >= startDate && currentDateTimestamp <= endDate) {
-                    if (event.repetition_type === 'Monthly' || dayOfWeek === event.day_of_week || event.repetition_type === 'Once') {
-                        const eventName = event.title;
-                        const lowerEventName = eventName.toLowerCase();
-                        
-                        if (!currentEvents.some(e => e.toLowerCase() === lowerEventName)) {
-                            currentEvents = [
-                                "KESELURUHAN DATA HARI INI", 
-                                ...currentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"), 
-                                eventName
-                            ].filter((v, i, a) => a.indexOf(v) === i);
-                        }
+              const currentDateTimestamp = date.setHours(0, 0, 0, 0);
+
+              if (currentDateTimestamp >= startDate && currentDateTimestamp <= endDate) {
+                if (
+                  event.repetition_type === 'Monthly' ||
+                  dayOfWeek === event.day_of_week ||
+                  event.repetition_type === 'Once'
+                ) {
+                  const eventName = event.title;
+                  const lowerEventName = eventName.toLowerCase();
+
+                  const safeCurrentEvents = currentEvents ?? [];
+
+                  if (!safeCurrentEvents.some(e => e.toLowerCase() === lowerEventName)) {
+                    // Hanya tambahkan jika tidak ada data kehadiran (currentEvents kosong) ATAU
+                    // jika ada data kehadiran tapi event ini belum terdaftar (kasus event berkala di hari attendance)
+                    const listWithoutOverall = safeCurrentEvents.filter(e => e !== "KESELURUHAN DATA HARI INI");
+                    const hasOverall = safeCurrentEvents.includes("KESELURUHAN DATA HARI INI");
+                    
+                    let updatedList = [...listWithoutOverall, eventName];
+                    updatedList = [...new Set(updatedList)].filter(v => v.trim() !== "");
+
+                    if (hasOverall) {
+                        updatedList.unshift("KESELURUHAN DATA HARI INI");
                     }
+                    
+                    currentEvents = updatedList;
+                  }
                 }
+              }
             });
+
             
             if (currentEvents.length > 0 && JSON.stringify(currentEvents) !== JSON.stringify(memoryStorage.events[d.key])) {
                newEvents[d.key] = currentEvents;
@@ -740,8 +769,12 @@ export default function DatabasePage() {
         newEventsByDate[d.key] = overallEvent ? [overallEvent] : [];
         
         // Ensure initial population happens if it hasn't or was empty
-        if (!memoryStorage.events[d.key] || memoryStorage.events[d.key].length === 0) {
-            memoryStorage.events[d.key] = eventsList;
+        if (!memoryStorage.events) {
+          memoryStorage.events = {};
+        }
+
+        if ((memoryStorage.events[d.key]?.length ?? 0) === 0) {
+          memoryStorage.events[d.key] = eventsList;
         }
     });
     
@@ -858,34 +891,44 @@ export default function DatabasePage() {
     }
   }, [router, isLoading, uniqueJemaatList.length, handleSelectMonth, actualAttendanceDates, attendanceRecords]); 
 
-  // 💡 LOGIC UTAMA: Menghandle klik di kalender (dari database.tsx)
+  // 💡 LOGIC UTAMA: Menghandle klik di kalender 
   const handleSelectDate = useCallback((day: number, month: number) => {
     setViewMode('event_per_table'); 
     
     const clickedDate = new Date(year, month, day);
     const key = getDayKey(clickedDate);
-    const dateTimestamp = new Date(clickedDate).setHours(0, 0, 0, 0);
-    const isFuture = dateTimestamp > todayStart;
     
-    if (isFuture) { 
-        return;
-    }
-
     const isCurrentlySelected = selectedDates.some(d => getDayKey(d) === key);
     
-    // Handle Event Caching/Generation for ANY selected date (past/present)
+    // Handle Event Caching/Generation for ANY selected date (past/present/future)
     let currentEvents = events[key];
     const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
     
-    // 💡 FIX: Populasikan event jika belum ada di cache
+    // PERUBAHAN KRITIS: Populasikan event HANYA JIKA ada data kehadiran aktual
+    // Jika tidak ada data kehadiran aktual, event list dibiarkan kosong, sehingga 
+    // SelectedEventsSection menampilkan "Tidak ada event di tanggal ini".
     if (!currentEvents || currentEvents.length === 0) {
+      if (actualAttendanceDates.includes(key)) {
         currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
-        setEvents(prev => ({ ...prev, [key]: currentEvents }));
-        memoryStorage.events[key] = currentEvents;
+      } else {
+        currentEvents = []; // ✅ Pastikan tetap array
+      }
+
+      const safeEvents = currentEvents ?? [];
+
+      setEvents(prev => ({
+        ...prev,
+        [key]: safeEvents, 
+      }));
+
+      memoryStorage.events[key] = safeEvents; 
     }
+
+
 
     let newDates: Date[];
     const newEventsByDate = { ...selectedEventsByDate };
+    const overallEvent = (currentEvents ?? []).find(e => e === "KESELURUHAN DATA HARI INI");
 
     if (isCurrentlySelected) {
       // DESELECT
@@ -895,17 +938,14 @@ export default function DatabasePage() {
       // SELECT
       newDates = [...selectedDates, clickedDate].sort((a, b) => a.getTime() - b.getTime());
       
-      const eventsList = currentEvents; // Use the newly populated list
-      const overallEvent = eventsList.find(e => e === "KESELURUHAN DATA HARI INI");
-      
-      // 💡 Otomatis pilih 'KESELURUHAN DATA HARI INI' (ini defaultnya, walaupun tidak ada data kehadiran)
+      // Otomatis pilih 'KESELURUHAN DATA HARI INI' jika ada
       newEventsByDate[key] = overallEvent ? [overallEvent] : []; 
     }
     
     setSelectedDates(newDates);
     setSelectedEventsByDate(newEventsByDate);
     saveSelection(newDates, newEventsByDate);
-  }, [events, selectedDates, selectedEventsByDate, year, attendanceRecords]);
+  }, [events, selectedDates, selectedEventsByDate, year, attendanceRecords, actualAttendanceDates]);
 
 
   // **PERBAIKAN 2: Logika Pemilihan Event Berkala** (dari database.tsx)
@@ -1003,12 +1043,12 @@ export default function DatabasePage() {
   ): JemaatRow[] => {
       
     // STEP 1: Filter KETAT - hanya record kehadiran yang tanggalKehadirannya PERSIS SAMA dengan dateKey
-    let filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
+    const filteredByDate = attendanceRecords.filter(j => j.tanggalKehadiran === dateKey);
 
     if (filteredByDate.length === 0) return [];
     
     // STEP 2: Filter berdasarkan status kehadiran dan jabatan
-    let filteredData = filteredByDate.filter(j =>
+    const filteredData = filteredByDate.filter(j =>
       (filterStatusKehadiran === "" || j.statusKehadiran === filterStatusKehadiran) &&
       (filterJabatan === "" || j.jabatan === filterJabatan)
     );
@@ -1132,9 +1172,12 @@ export default function DatabasePage() {
     }
     
     return [];
-  }, [viewMode, selectedTables, getFilteredJemaatMonthlySummary, getFilteredJemaatPerEvent, uniqueJemaatList, attendanceRecords]);
-
-
+  }, [
+      viewMode,
+      selectedTables,
+      getFilteredJemaatMonthlySummary,
+      getFilteredJemaatPerEvent
+    ]);
   // FIX 5: Perbarui dataForPagination
   const dataForPagination = useMemo(() => getFilteredJemaat(uniqueJemaatList, attendanceRecords), [uniqueJemaatList, attendanceRecords, getFilteredJemaat]);
   const filteredCount = dataForPagination.length;
@@ -1246,13 +1289,22 @@ export default function DatabasePage() {
             
             csv += dataForTable.map(row => 
               keys.map(key => {
-                const val = row[key] ?? '';
-                // Handle dokumen field for csv (just output existence or a placeholder)
-                if (key === 'dokumen') return `"Dokumen tersedia"`;
-                
-                return `"${String(val).replace(/"/g, '""')}"`; 
-              }).join(",")
-            ).join("\n") + "\n";
+              const val = row[key] ?? '';
+
+              // Handle dokumen field for csv (just output existence or a placeholder)
+              if (key === 'dokumen') return `"Dokumen tersedia"`;
+
+              const safeString =
+                typeof val === "string" ? val
+                : typeof val === "number" || typeof val === "boolean" ? String(val)
+                : val instanceof Date ? val.toISOString()
+                : val && typeof val === "object" ? JSON.stringify(val)
+                : "";
+
+
+              return `"${safeString.replace(/"/g, '""')}"`; 
+            }).join(",")
+          ).join("\n") + "\n";
             
             if (tableIndex < tablesToRender.length - 1) {
               csv += "\n" + "=".repeat(80) + "\n";
@@ -1525,7 +1577,7 @@ export default function DatabasePage() {
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
-                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Dokumen</th> 
+                                
                                     <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
                                 </tr>
                                 </thead>
@@ -1579,15 +1631,7 @@ export default function DatabasePage() {
                                         <td className="px-3 py-3 whitespace-nowrap text-sm text-gray-700">
                                             {j.kehadiranSesi}
                                         </td>
-                                        <td className="px-3 py-3 whitespace-nowrap text-sm text-center">
-                                            {j.dokumen ? (
-                                                <span className="inline-flex items-center gap-1 px-3 py-1 bg-indigo-100 text-indigo-700 rounded-lg text-xs font-medium">
-                                                    Dokumen Tersedia
-                                                </span>
-                                            ) : (
-                                                <span className="text-gray-400">N/A</span>
-                                            )}
-                                        </td>
+                                        
                                         <td className="px-3 py-3 whitespace-nowrap text-center">
                                         <button 
                                             onClick={(e) => { 
@@ -1610,7 +1654,7 @@ export default function DatabasePage() {
                                 <p className="text-sm">Tidak ada data kehadiran jemaat yang tercatat untuk tanggal/sesi ini berdasarkan filter saat ini.</p>
                             </div>
                         )}
-                    </div>
+                      </div>
                       
                       {showPagination && (
                         <div className="flex justify-center items-center gap-4 p-4 border-t bg-gray-50 flex-wrap">
