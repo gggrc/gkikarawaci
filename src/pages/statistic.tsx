@@ -872,9 +872,9 @@ export default function StatisticPage() {
       new Date(a.tanggalKehadiran).getFullYear() === year
     );
 
-    const active = hadirPerBulan.filter(a => a.status === "Hadir").length;
-    const rare = hadirPerBulan.filter(a => a.status === "Jarang Hadir").length;
-    const inactive = hadirPerBulan.filter(a => a.status === "Tidak Aktif").length;
+    const active = hadirPerBulan.filter(a => a.statusKehadiran === "Aktif").length;
+    const rare = hadirPerBulan.filter(a => a.statusKehadiran === "Jarang Hadir").length;
+    const inactive = hadirPerBulan.filter(a => a.statusKehadiran === "Tidak Aktif").length;
 
     return [
       { status: "Aktif", jumlah: active },
@@ -1446,16 +1446,16 @@ export default function StatisticPage() {
                             <ResponsiveContainer width="100%" height={280}>
                               <PieChart>
                                 <Pie 
-                                  data={monthlyStatusData.map(d => ({
-                                    name: d.status,
-                                    value: d.jumlah
+                                  data={monthlyStatusData.map(item => ({
+                                    name: item.status,
+                                    value: item.jumlah
                                   }))}
-                                  cx="50%" 
-                                  cy="50%" 
-                                  labelLine={false} 
-                                  label={false} 
-                                  outerRadius={90} 
-                                  fill="#8884d8" 
+                                  cx="50%"
+                                  cy="50%"
+                                  labelLine={false}
+                                  label={false}
+                                  outerRadius={90}
+                                  fill="#8884d8"
                                   dataKey="value"
                                 >
                                   <Cell fill="#10B981" />
