@@ -1,3 +1,4 @@
+// src/pages/waiting.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -5,7 +6,7 @@ import Link from "next/link";
 
 type MeResponse = {
   isVerified: "pending" | "accepted" | "rejected" | null;
-  // ✅ PERBAIKAN: Menambahkan properti role untuk redirection berbasis peran
+  // ✅ PERBAIKAN: Menambahkan properti role untuk redirection
   role: string | null; 
 };
 
@@ -16,7 +17,8 @@ export default function WaitingPage() {
  useEffect(() => {
   const checkStatus = async () => {
   try {
-    const res = await fetch("/api/me");
+    // Selalu fetch dari server
+    const res = await fetch("/api/me"); 
 
     // Menggunakan tipe MeResponse yang sudah diupdate
     const data = (await res.json()) as MeResponse;
@@ -25,32 +27,42 @@ export default function WaitingPage() {
       setStatus(data.isVerified);
 
       if (data.isVerified === "accepted") {
-        // ✅ PERBAIKAN: Logika redirection berdasarkan role
-        let destination = "/statistic"; // Default untuk role 'user'
         
+        let destination = "/statistic"; 
+        
+        // 🎯 PERBAIKAN: Logika Redirection Berdasarkan Role
         if (data.role === "admin") {
-            // Arahkan admin ke halaman admin (misalnya: /databaseUser)
-            destination = "/databaseUser";
+            destination = "/databaseUser"; // Arahkan admin ke halaman admin
         } else if (data.role === "user") {
-            // Arahkan user biasa ke halaman statistik
-            destination = "/statistic";
+            destination = "/statistic"; // Arahkan user biasa
         }
         
+        // Menggunakan window.location.href untuk hard redirect
         window.location.href = destination;
+        
+        // Hentikan interval setelah berhasil redirect
+        return true; 
       }
     }
+    return false; // Tidak redirect
+
   } catch (error) {
     console.error("Gagal mengambil status user:", error);
+    return false;
   }
 };
-
 
   // Jalankan langsung saat pertama kali mount
   void checkStatus();
 
-  // Lalu jalankan tiap 3 detik
+  // Lalu jalankan tiap 3 detik (3000 ms)
   const interval = setInterval(() => {
-    void checkStatus(); // ✅ tidak mengembalikan Promise ke setInterval
+    // Mengecek apakah redirection sudah terjadi
+    void checkStatus().then((redirected) => {
+        if (redirected) {
+            clearInterval(interval);
+        }
+    });
   }, 3000);
 
   return () => clearInterval(interval);
@@ -148,17 +160,17 @@ export default function WaitingPage() {
           )}
 
           {/* 🔘 Tombol */}
-          <div className="flex justify-center gap-3">
+          <div className="flex flex-col sm:flex-row justify-center gap-3">
             <Link
   href="/"
-  className="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition"
+  className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold"
 >
   Kembali ke Beranda
 </Link>
 
             <a
               href="mailto:admin@example.com"
-              className="px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition"
+              className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition font-semibold"
             >
               Hubungi Admin
             </a>

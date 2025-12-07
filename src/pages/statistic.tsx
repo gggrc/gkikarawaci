@@ -699,6 +699,46 @@ const PieChartCard = ({ title, data, description, hoveredSession, setHoveredSess
 // --- Komponen Utama ---
 export default function StatisticPage() {
   const router = useRouter();
+
+  useEffect(() => {
+    const checkUserStatus = async () => {
+      try {
+        const res = await fetch("/api/me");
+        const data = (await res.json()) as { role?: "admin" | "user" | null; isVerified?: "pending" | "accepted" | "rejected" | null }; 
+
+        // Jika tidak ada data atau tidak terautentikasi (opsional: Clerk handle ini, tapi bagus untuk jaga-jaga)
+        if (!data.role) {
+            void router.push("/login");
+            return;
+        }
+
+        // Hanya user biasa yang boleh akses /statistic, dan harus accepted
+        if (data.role === "admin") {
+            void router.push("/database"); // Admin harusnya ke /database
+            return;
+        }
+        
+        // User yang masih pending atau rejected tidak boleh akses
+        if (data.isVerified === "pending") {
+            void router.push("/unauthorized"); // ✅ PERUBAHAN: Dialihkan ke /unauthorized jika status pending
+            return;
+        }
+        
+        if (data.isVerified === "rejected") {
+            void router.push("/rejected"); // atau ke halaman lain
+            return;
+        }
+
+      } catch (err) {
+        console.error("Error checking user status:", err);
+        // Fallback: kirim ke halaman utama jika ada error
+        void router.push("/"); 
+      }
+    };
+    
+    // Periksa status saat komponen dimuat
+    void checkUserStatus();
+  }, [router]);
   
   // FIX 1: Ganti state jemaat menjadi data kehadiran granular
   const [fullAttendanceRecords, setFullAttendanceRecords] = useState<JemaatRow[]>([]);

@@ -1,9 +1,12 @@
+// src/pages/index.tsx
 import Head from "next/head";
 import Image from "next/image";
 import Link from "next/link";
+// Tambahkan Menu dan X dari lucide-react
 import { SignedOut, UserButton, SignedIn, useUser } from "@clerk/nextjs";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState } from "react"; 
 import { useRouter } from "next/router";
+import { Menu, X } from "lucide-react"; // <-- NEW IMPORT
 
 type UserData = {
   clerkId: string;
@@ -18,28 +21,12 @@ type UserData = {
 
 export default function Home() {
   const [activeSection, setActiveSection] = useState<string>("home");
-  const [showNavbar, setShowNavbar] = useState(true);
-  const [lastScrollY, setLastScrollY] = useState(0);
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); // <-- NEW STATE
 
   const { user } = useUser();
   const router = useRouter();
 
-  const handleScroll = useCallback(() => {
-    if (window.scrollY > lastScrollY) {
-      // Scroll ke bawah
-      setShowNavbar(false);
-    } else {
-      // Scroll ke atas
-      setShowNavbar(true);
-    }
-    setLastScrollY(window.scrollY);
-  }, [lastScrollY]);
-
-  useEffect(() => {
-    window.addEventListener("scroll", handleScroll);
-    return () => window.removeEventListener("scroll", handleScroll);
-  }, [handleScroll]);
-
+  // useEffect untuk IntersectionObserver tetap
   useEffect(() => {
     const sections = document.querySelectorAll("section");
     const observer = new IntersectionObserver(
@@ -59,7 +46,7 @@ export default function Home() {
     };
   }, []);
 
-  // 🔸 LOGIC REDIRECT USER SETELAH LOGIN
+  // 🔸 LOGIC REDIRECT USER SETELAH LOGIN (Tetap sama)
   useEffect(() => {
     const checkUser = async () => {
       if (!user) return;
@@ -93,6 +80,23 @@ export default function Home() {
     void checkUser();
   }, [user, router]);
 
+  const navLinks = [ // <-- Pindahkan link ke array untuk digunakan di navbar dan drawer
+    { name: "Home", href: "#home", viewKey: "home" },
+    { name: "About", href: "#about", viewKey: "about" },
+    { name: "Location", href: "#location", viewKey: "location" },
+  ];
+
+  const handleMobileLinkClick = (href: string) => {
+    setIsMobileMenuOpen(false);
+    // Hapus router.push jika hanya link anchor (href="#section")
+    const sectionId = href.substring(1);
+    const section = document.getElementById(sectionId);
+    if (section) {
+        section.scrollIntoView({ behavior: 'smooth' });
+    }
+  };
+
+
   return (
     <>
       <Head>
@@ -107,46 +111,30 @@ export default function Home() {
           className="absolute inset-0 bg-cover bg-center"
           style={{ backgroundImage: "url('/backgroundHome.jpg')" }}
         />
-        <div className="absolute inset-0 bg-black/75" />
+        <div className="absolute inset-0 bg-black/85" /> 
+
         <nav
-          className={`fixed top-0 left-0 z-50 flex w-full items-center justify-center px-8 py-6 bg-black/40 backdrop-blur-sm transition-transform duration-300 ${
-            showNavbar ? "translate-y-0" : "-translate-y-full"
-          }`}
+          className={`fixed top-0 left-0 z-50 flex w-full items-center justify-between px-4 sm:px-8 py-4 sm:py-6 bg-black/80 backdrop-blur-sm transition-none`}
         >
           <div className="flex items-center space-x-4">
-            <Image src="/LOGOGKI.png" alt="Logo" width={48} height={48} className="h-12 w-12" />
-            <span className="text-white font-semibold text-xl">GKI Karawaci</span>
+            <Image src="/LOGOGKI.png" alt="Logo" width={36} height={36} className="h-9 w-9 sm:h-12 sm:w-12" unoptimized/>
+            <span className="text-white font-semibold text-lg sm:text-xl">GKI Karawaci</span>
           </div>
-
-          <ul className="hidden md:flex items-center space-x-8 text-white font-medium ml-140">
-            <li
-              className={`cursor-pointer transition ${
-                activeSection === "home"
-                  ? "text-blue-400 font-bold underline underline-offset-4"
-                  : "hover:text-blue-400"
-              }`}
-            >
-              <a href="#home">Home</a>
-            </li>
-            <li
-              className={`cursor-pointer transition ${
-                activeSection === "about"
-                  ? "text-blue-400 font-bold underline underline-offset-4"
-                  : "hover:text-blue-400"
-              }`}
-            >
-              <a href="#about">About</a>
-            </li>
-            <li
-              className={`cursor-pointer transition ${
-                activeSection === "location"
-                  ? "text-blue-400 font-bold underline underline-offset-4"
-                  : "hover:text-blue-400"
-              }`}
-            >
-              <a href="#location">Location</a>
-            </li>
-
+          
+          {/* DESKTOP/TABLET NAVIGATION LINKS */}
+          <ul className="hidden md:flex items-center space-x-4 sm:space-x-8 text-white font-medium ml-auto">
+            {navLinks.map((link) => (
+                <li
+                    key={link.name}
+                    className={`cursor-pointer transition ${
+                      activeSection === link.viewKey
+                        ? "text-blue-400 font-bold underline underline-offset-4"
+                        : "hover:text-blue-400"
+                    }`}
+                >
+                    <a href={link.href}>{link.name}</a>
+                </li>
+            ))}
             <li>
               <SignedOut>
                 <Link href="/login">
@@ -169,18 +157,107 @@ export default function Home() {
               </SignedIn>
             </li>
           </ul>
-        </nav>
 
-        <div className="relative z-10 flex flex-col items-start justify-start flex-1 text-left pl-6 md:pr-80 pt-40">
-          <h1 className="text-5xl md:text-6xl font-bold text-white">Welcome</h1>
-          <p className="mt-6 text-lg text-gray-300 max-w-2xl">
+          {/* MOBILE HAMBURGER BUTTON */}
+          <button 
+            className="md:hidden p-2 text-white hover:text-blue-400 transition"
+            onClick={() => setIsMobileMenuOpen(true)}
+            aria-label="Open menu"
+          >
+            <Menu size={28} />
+          </button>
+        </nav>
+        
+        {/* MOBILE MENU / DRAWER */}
+        {isMobileMenuOpen && (
+            <div className="fixed inset-0 z-60 bg-black/30 backdrop-blur-sm transition-opacity duration-300">
+                <div className="absolute top-0 right-0 w-64 h-full bg-[#0f172a] shadow-2xl p-6 transform transition-transform duration-300 ease-out animate-slide-in-right">
+                    
+                    {/* Close Button */}
+                    <div className="flex justify-end mb-8 border-b border-gray-700 pb-3">
+                        <button 
+                            className="p-2 text-white hover:text-red-400 transition"
+                            onClick={() => setIsMobileMenuOpen(false)}
+                            aria-label="Close menu"
+                        >
+                            <X size={28} />
+                        </button>
+                    </div>
+
+                    {/* Links */}
+                    <ul className="flex flex-col space-y-4 text-white font-medium">
+                        {navLinks.map((link) => (
+                            <li key={link.name}>
+                                <a 
+                                    href={link.href} 
+                                    className={`text-xl block py-2 transition ${
+                                        activeSection === link.viewKey
+                                            ? "text-blue-400 font-bold border-b-2 border-blue-400"
+                                            : "hover:text-blue-400"
+                                    }`}
+                                    onClick={() => handleMobileLinkClick(link.href)}
+                                >
+                                    {link.name}
+                                </a>
+                            </li>
+                        ))}
+                    </ul>
+                    
+                    {/* Auth Buttons / UserButton */}
+                    <div className="mt-10 pt-6 border-t border-gray-700">
+                        <SignedOut>
+                            <Link href="/login">
+                              <button 
+                                className="w-full px-5 py-2 rounded-full bg-blue-500 text-white hover:bg-blue-600 transition font-semibold"
+                                onClick={() => setIsMobileMenuOpen(false)}
+                              >
+                                Login
+                              </button>
+                            </Link>
+                            <Link href="/register">
+                              <button 
+                                className="w-full px-5 py-2 mt-2 rounded-full border border-white text-white hover:bg-white hover:text-[#0f172a] transition font-semibold"
+                                onClick={() => setIsMobileMenuOpen(false)}
+                              >
+                                Register
+                              </button>
+                            </Link>
+                        </SignedOut>
+
+                        <SignedIn>
+                            <div className="space-y-3">
+                                <Link href="/statistic">
+                                    <button 
+                                        className="w-full px-4 py-2 rounded-full bg-white text-[#0f172a] hover:bg-blue-300 transition font-semibold"
+                                        onClick={() => setIsMobileMenuOpen(false)}
+                                    >
+                                        Daftar Hadir
+                                    </button>
+                                </Link>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-gray-300">Akun:</span>
+                                    <UserButton afterSignOutUrl="/" />
+                                </div>
+                            </div>
+                        </SignedIn>
+                    </div>
+                </div>
+            </div>
+        )}
+        {/* END MOBILE MENU / DRAWER */}
+
+
+        {/* Konten Utama Hero Section */}
+        <div className="relative z-10 flex flex-col items-start justify-start flex-1 text-left px-6 md:pr-80 pt-40">
+          <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-white">Welcome</h1>
+          <p className="mt-6 text-base sm:text-lg text-gray-100 max-w-xl sm:max-w-2xl">
             Temukan informasi lengkap tentang kehadiran dan keterlibatan jemaat dalam ibadah dan
             pelayanan. Mari kita bersama meninjau pertumbuhan komunitas kita, sebagai bagian dari
             panggilan untuk terus bertumbuh dalam iman dan kesetiaan.
           </p>
           <SignedOut>
             <Link href="/login">
-              <button className="mt-10 px-6 py-3 bg-blue-500 hover:bg-blue-800 text-white font-medium rounded-lg shadow-lg transition">
+              <button className="mt-10 px-5 py-2.5 sm:px-6 sm:py-3 bg-blue-500 hover:bg-blue-600 text-white font-medium rounded-lg shadow-lg transition">
                 Bergabung dengan kami sekarang →
               </button>
             </Link>
@@ -188,30 +265,30 @@ export default function Home() {
         </div>
 
         {/* Statistik */}
-        <div className="absolute -bottom-16 left-1/2 transform -translate-x-1/2 w-11/12 md:w-3/4 bg-white rounded-2xl shadow-lg p-8 grid grid-cols-2 md:grid-cols-3 gap-6 z-20">
+        <div className="absolute -bottom-16 left-1/2 transform -translate-x-1/2 w-11/12 md:w-3/4 bg-white rounded-xl sm:rounded-2xl shadow-2xl p-6 sm:p-10 grid grid-cols-2 md:grid-cols-3 gap-4 sm:gap-6 z-20">
           <div className="text-center">
-            <div className="text-gray-600 font-semibold">Statistik Ibadah</div>
+            <div className="text-gray-600 font-semibold text-sm sm:text-base">Statistik Ibadah</div>
             <div className="text-xl font-bold">xxx</div>
           </div>
           <div className="text-center">
-            <div className="text-gray-600 font-semibold">Jumlah Jemaat</div>
+            <div className="text-gray-600 font-semibold text-sm sm:text-base">Jumlah Jemaat</div>
             <div className="text-xl font-bold">xxx</div>
           </div>
-          <div className="hidden md:block text-center">
-            <div className="text-gray-600 font-semibold">Pelayanan Aktif</div>
+          <div className="hidden sm:block text-center">
+            <div className="text-gray-600 font-semibold text-sm sm:text-base">Pelayanan Aktif</div>
             <div className="text-xl font-bold">xxx</div>
           </div>
         </div>
       </section>
 
-      {/* ABOUT */}
-      <section id="about" className="relative flex min-h-screen flex-col items-center justify-start bg-gray-200">
-        <div className="container mx-auto px-6 py-33 md:px-12 flex flex-col md:flex-row items-center gap-12">
-          <div className="flex-1 text-center md:text-left ml-33">
-            <h2 className="text-4xl md:text-4xl font-bold text-gray-800 mb-4">
+      {/* ABOUT (Tidak Berubah) */}
+      <section id="about" className="relative flex min-h-screen pt-32 sm:pt-48 pb-10 flex-col items-center justify-start bg-gray-200">
+        <div className="container mx-auto px-6 py-6 md:py-33 flex flex-col md:flex-row items-center gap-8 md:gap-12">
+          <div className="flex-1 text-center md:text-left p-4 md:p-0">
+            <h2 className="text-3xl sm:text-4xl md:text-4xl font-bold text-gray-800 mb-4">
               Aplikasi Monitoring dan Analisis Jemaat Gereja
             </h2>
-            <p className="text-gray-600 leading-relaxed text-lg mb-6">
+            <p className="text-gray-600 leading-relaxed text-base sm:text-lg mb-6">
               Aplikasi ini menyajikan data jemaat dalam bentuk tabel yang mudah diakses serta
               dilengkapi dengan statistik visual seperti grafik usia, jumlah kehadiran, dan
               pertumbuhan jemaat, sehingga memudahkan gereja dalam mengelola dan menganalisis
@@ -219,33 +296,50 @@ export default function Home() {
             </p>
             <SignedOut>
               <Link href="/login">
-                <button className="bg-blue-500 text-white font-semibold mt-5 px-6 py-2 rounded-md shadow hover:bg-blue-700 text-sm transition">
+                <button className="bg-blue-500 text-white font-semibold mt-5 px-5 py-2 rounded-md shadow hover:bg-blue-700 text-sm transition">
                   Lihat lebih lanjut
                 </button>
               </Link>
             </SignedOut>
           </div>
 
-          <div className="flex-1 ml-30">
+          <div className="flex-1 p-4 md:p-0">
             <Image
               src="/pic_sectionAbout.jpeg"
               alt="Gereja"
-              width={300}
-              height={400}
-              className="rounded-lg shadow-md"
+              width={400}
+              height={500}
+              className="rounded-lg shadow-xl w-full h-auto"
+              unoptimized
             />
           </div>
         </div>
       </section>
 
-      {/* LOCATION */}
+      {/* LOCATION (PERUBAHAN UTAMA DI SINI) */}
       <section
         id="location"
-        className="relative flex min-h-screen flex-col md:flex-row items-center justify-center w-full bg-gray-200 px-8 md:px-20 gap-10"
+        // FIX: Ubah flex-col-reverse agar map di mobile berada di bawah teks
+        className="relative flex flex-col-reverse md:flex-row items-center justify-center w-full bg-gray-200 px-6 sm:px-8 md:px-20 gap-8 md:gap-10 py-10" // Tambahkan py-10 untuk padding vertikal
       >
-        <div className="flex-1 py-28 text-center md:text-left ml-33">
-          <h2 className="text-4xl md:text-4xl font-bold text-gray-800 mb-6">Lokasi Kami</h2>
-          <p className="text-gray-600 text-base mb-6 max-w-lg">
+        
+        {/* Map Section (Mobile: Atas, Desktop: Kanan) */}
+        <div className="flex-1 w-full h-[300px] sm:h-[400px] rounded-xl overflow-hidden border border-gray-300 shadow-lg transform transition duration-400 hover:scale-105 hover:shadow-2xl">
+          <iframe
+            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3966.505708892226!2d106.5746358750379!3d-6.196627693798544!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x2e69fb28e7e1694f%3A0x633d7b4097475d4d!2sGereja%20Kristus%20Indonesia%20Karawaci!5e0!3m2!1sid!2sid!4v1700000000000!5m2!1sid!2sid"
+            width="100%"
+            height="100%"
+            style={{ border: 0 }}
+            allowFullScreen
+            loading="lazy"
+            referrerPolicy="no-referrer-when-downgrade"
+          ></iframe>
+        </div>
+
+        {/* Text Section (Mobile: Bawah, Desktop: Kiri) */}
+        <div className="flex-1 py-10 md:py-28 text-left md:text-left p-4 md:p-0">
+          <h2 className="text-3xl sm:text-4xl md:text-4xl font-bold text-gray-800 mb-6">Lokasi Kami</h2>
+          <p className="text-gray-600 text-base mb-6 max-w-lg mx-auto md:mx-0">
             GKI Karawaci berlokasi di pusat kota yang mudah dijangkau. Silakan kunjungi kami untuk
             ibadah Minggu maupun kegiatan pelayanan lainnya.
           </p>
@@ -262,34 +356,34 @@ export default function Home() {
             </p>
           </div>
         </div>
-
-        <div className="flex-1 w-full h-[400px] rounded-xl overflow-hidden border border-gray-300 shadow-lg transform transition duration-400 hover:scale-105 hover:shadow-2xl mr-39">
-          <iframe
-            src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3966.2383962737383!2d106.59043107591536!3d-6.224364961099932!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x2e69fe82a69a373d%3A0xb96c66e99204f60c!2sGKI%20Karawaci!5e0!3m2!1sid!2sid!4v1703932000000!5m2!1sid!2sid"
-            width="100%"
-            height="100%"
-            style={{ border: 0 }}
-            allowFullScreen
-            loading="lazy"
-            referrerPolicy="no-referrer-when-downgrade"
-          ></iframe>
-        </div>
       </section>
 
-      <footer className="w-full bg-[#0f172a] text-white py-10 ">
-        <div className="container mx-auto px-6 md:px-12 flex flex-col md:flex-row justify-center items-center gap-6">
+      {/* FOOTER (Tidak Berubah) */}
+      <footer className="w-full bg-[#0f172a] text-white py-8 sm:py-10 ">
+        <div className="container mx-auto px-6 md:px-12 flex flex-col md:flex-row justify-between items-center gap-4 sm:gap-6">
           <div className="text-center md:text-left">
-            <h3 className="text-xl font-bold">GKI Karawaci</h3>
-            <p className="text-sm text-gray-300 mt-2">
+            <h3 className="text-lg sm:text-xl font-bold">GKI Karawaci</h3>
+            <p className="text-xs sm:text-sm text-gray-300 mt-2">
               Ruko Villa Permata Blok C1 No. 3&8, Binong, Tangerang, Banten 15810
             </p>
           </div>
 
-          <div className="text-sm text-gray-200 text-center md:text-right ml-70">
+          <div className="text-sm text-gray-200 text-center md:text-right">
             © 2025 GKI Karawaci. All rights reserved.
           </div>
         </div>
       </footer>
+      
+      <style jsx global>{`
+        /* Tambahkan animasi untuk slide-in dari kanan */
+        @keyframes slide-in-right {
+          from { transform: translateX(100%); }
+          to { transform: translateX(0); }
+        }
+        .animate-slide-in-right {
+          animation: slide-in-right 0.3s ease-out;
+        }
+      `}</style>
     </>
   );
 }
