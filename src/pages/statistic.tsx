@@ -186,7 +186,8 @@ const calculateDateStats = (fullAttendanceRecords: JemaatRow[], uniqueJemaatList
  * Menghitung status berdasarkan *status saat ini* dari jemaat yang hadir di bulan tersebut.
  */
 const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear: number, overallJemaatList: UniqueJemaat[]) => {
-    const monthlyStats: Record<string, { bulan: string; aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }> = {};
+    // PERUBAHAN: Mengubah tipe data 'total' menjadi 'totalUnique'
+    const monthlyStats: Record<string, { bulan: string; aktif: number, jarangHadirlah: number, tidakAktif: number, totalUnique: number }> = {};
     const today = new Date();
     const currentMonthIndex = today.getMonth();
     const currentYear = today.getFullYear();
@@ -226,7 +227,8 @@ const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear
              return acc;
         }, { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 } as Record<StatusKehadiran, number>);
         
-        const total = records.length; // Total records (not unique jemaat)
+        // PERUBAHAN UTAMA: Total adalah JUMLAH JEMAAT UNIK yang hadir di bulan ini
+        const totalUnique = uniqueJemaatInMonth.size; 
         
         // 6. Store the result
         const monthName = monthNames[monthIndex]?.substring(0, 3) ?? "";
@@ -234,25 +236,29 @@ const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear
             bulan: monthName,
             aktif: distribution.Aktif,
             jarangHadirlah: distribution['Jarang Hadir'],
+            tidakAktif: distribution.Ditolak, // Perlu di cek jika ada StatusKehadiran yang hilang di tipe
             tidakAktif: distribution['Tidak Aktif'],
-            total: total,
+            totalUnique: totalUnique, // Menggunakan totalUnique
         };
     });
     
     // 7. Ensure all months (up to current month for current year) are included
     const result = monthNames.map((name, index) => {
         const shortName = name.substring(0, 3);
-        const stat = monthlyStats[shortName] ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
+        // PERUBAHAN: Mengubah 'total' menjadi 'totalUnique'
+        const stat = monthlyStats[shortName] ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, totalUnique: 0 }; 
         
         // Filter out future months in the current year
         if (selectedYear === currentYear && index > currentMonthIndex) {
             return null;
         }
 
-        return { ...stat, bulan: shortName };
+        // PERUBAHAN: Mengembalikan objek dengan 'totalUnique'
+        return { ...stat, bulan: shortName, total: stat.totalUnique }; // Tambahkan 'total' alias agar LineChart tetap berfungsi
     }).filter(s => s !== null);
     
-    return result as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
+    // PERUBAHAN: Mengubah tipe kembalian
+    return result as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number; totalUnique: number }>;
 }
 
 /**
@@ -712,12 +718,6 @@ export default function StatisticPage() {
             return;
         }
 
-        // Hanya user biasa yang boleh akses /statistic, dan harus accepted
-        if (data.role === "admin") {
-            void router.push("/database"); // Admin harusnya ke /database
-            return;
-        }
-        
         // User yang masih pending atau rejected tidak boleh akses
         if (data.isVerified === "pending") {
             void router.push("/unauthorized"); // ✅ PERUBAHAN: Dialihkan ke /unauthorized jika status pending

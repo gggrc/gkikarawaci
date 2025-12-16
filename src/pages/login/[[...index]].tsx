@@ -31,7 +31,7 @@ export default function LoginPage() {
               path="/login"
               routing="path"
               signUpUrl="/register"
-              redirectUrl="/"
+              redirectUrl="/statistic"
             />
           </SignedOut>
         </div>
