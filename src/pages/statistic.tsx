@@ -186,85 +186,54 @@ const calculateDateStats = (fullAttendanceRecords: JemaatRow[], uniqueJemaatList
  * Menghitung status berdasarkan *status saat ini* dari jemaat yang hadir di bulan tersebut.
  */
 const calculateMonthlyTrends = (fullAttendanceRecords: JemaatRow[], selectedYear: number, overallJemaatList: UniqueJemaat[]) => {
-    // PERUBAHAN: Mengubah tipe data 'total' menjadi 'totalUnique'
-    const monthlyStats: Record<string, { bulan: string; aktif: number, jarangHadirlah: number, tidakAktif: number, totalUnique: number }> = {};
+    const monthlyStats: Record<string, { bulan: string; aktif: number, jarangHadirlah: number, tidakAktif: number, total: number }> = {};
     const today = new Date();
     const currentMonthIndex = today.getMonth();
     const currentYear = today.getFullYear();
     
-    // 1. Group records by month (YYYY-MM)
+    // 1. Kelompokkan records berdasarkan bulan (YYYY-MM)
     const recordsByMonth = fullAttendanceRecords.reduce((acc, record) => {
-        const monthKey = record.tanggalKehadiran.substring(0, 7); // YYYY-MM
+        const monthKey = record.tanggalKehadiran.substring(0, 7);
         acc[monthKey] ??= [];
         acc[monthKey].push(record);
         return acc;
     }, {} as Record<string, JemaatRow[]>);
     
-    // 2. Iterate through records for the selected year
     Object.entries(recordsByMonth).forEach(([monthKey, records]) => {
         const year = parseInt(monthKey.substring(0, 4));
-        const monthIndex = parseInt(monthKey.substring(5, 7)) - 1; // 0-11
+        const monthIndex = parseInt(monthKey.substring(5, 7)) - 1;
         
         if (year !== selectedYear) return;
         
-        // 3. For each month, find unique jemaat IDs
-        const uniqueJemaatInMonth = new Set<string>();
-          records.forEach(r => {
-              const cleanId = String(r.id ?? "").split("-")[0] ?? "";
-              if (cleanId) uniqueJemaatInMonth.add(cleanId);
-          });
-        
-        // 4. Map back to overallJemaatList to get their *current* status
-        // FIX: Menghapus spasi dari nama variabel
-        const uniqueJemaatListForMonth = overallJemaatList.filter(j => 
-            uniqueJemaatInMonth.has(j.id.toString())
-        );
-
-        // 5. Calculate distribution of current status for those who attended this month
-        // FIX: Menggunakan nama variabel yang sudah diperbaiki
-        const distribution = uniqueJemaatListForMonth.reduce((acc, j) => {
-             acc[j.statusKehadiran] = (acc[j.statusKehadiran] ?? 0) + 1;
-             return acc;
+        // 2. HITUNG STATUS DARI SEMUA RECORD (Kumulatif Record)
+        // Ini akan membuat: Total = Aktif + Jarang Hadir + Tidak Aktif
+        const distribution = records.reduce((acc, record) => {
+            const status = record.statusKehadiran;
+            // Gunakan status langsung dari record untuk akurasi per sesi
+            acc[status] = (acc[status] || 0) + 1;
+            return acc;
         }, { Aktif: 0, 'Jarang Hadir': 0, 'Tidak Aktif': 0 } as Record<StatusKehadiran, number>);
         
-        // PERUBAHAN UTAMA: Total adalah JUMLAH JEMAAT UNIK yang hadir di bulan ini
-        const totalUnique = uniqueJemaatInMonth.size; 
-        
-        // 6. Store the result
         const monthName = monthNames[monthIndex]?.substring(0, 3) ?? "";
         monthlyStats[monthName] = {
             bulan: monthName,
             aktif: distribution.Aktif,
             jarangHadirlah: distribution['Jarang Hadir'],
-            tidakAktif: distribution.Ditolak, // Perlu di cek jika ada StatusKehadiran yang hilang di tipe
             tidakAktif: distribution['Tidak Aktif'],
-            totalUnique: totalUnique, // Menggunakan totalUnique
+            total: records.length, // Total adalah jumlah semua record status
         };
     });
     
-    // 7. Ensure all months (up to current month for current year) are included
     const result = monthNames.map((name, index) => {
         const shortName = name.substring(0, 3);
-        // PERUBAHAN: Mengubah 'total' menjadi 'totalUnique'
-        const stat = monthlyStats[shortName] ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, totalUnique: 0 }; 
-        
-        // Filter out future months in the current year
-        if (selectedYear === currentYear && index > currentMonthIndex) {
-            return null;
-        }
-
-        // PERUBAHAN: Mengembalikan objek dengan 'totalUnique'
-        return { ...stat, bulan: shortName, total: stat.totalUnique }; // Tambahkan 'total' alias agar LineChart tetap berfungsi
+        const stat = monthlyStats[shortName] ?? { aktif: 0, jarangHadirlah: 0, tidakAktif: 0, total: 0 };
+        if (selectedYear === currentYear && index > currentMonthIndex) return null;
+        return { ...stat, bulan: shortName };
     }).filter(s => s !== null);
     
-    // PERUBAHAN: Mengubah tipe kembalian
-    return result as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number; totalUnique: number }>;
+    return result as Array<{ bulan: string; aktif: number; jarangHadirlah: number; tidakAktif: number; total: number }>;
 }
 
-/**
- * FUNGSI REAL: Menghitung tren harian untuk Line Chart Bulanan (MENGGANTIKAN MOCK)
- * Menghitung status berdasarkan *status saat ini* dari jemaat unik yang hadir di hari tersebut.
- */
 const calculateDailyTrends = (fullAttendanceRecords: JemaatRow[], selectedMonth: number, selectedYear: number) => {
     const daysInMonth = getDaysInMonth(selectedMonth, selectedYear);
     const today = new Date();
@@ -279,15 +248,11 @@ const calculateDailyTrends = (fullAttendanceRecords: JemaatRow[], selectedMonth:
 
     const data: Array<{ hari: number; aktif: number | null; jarangHadirlah: number | null; tidakAktif: number | null }> = [];
     
-    // 1. Group records by date (YYYY-MM-DD)
     const recordsByDay = fullAttendanceRecords.reduce((acc, record) => {
         const key = record.tanggalKehadiran ?? "";
-
-        if (!key) return acc; // skip jika invalid
-
+        if (!key) return acc;
         acc[key] ??= [];
         acc[key].push(record);
-
         return acc;
     }, {} as Record<string, JemaatRow[]>);
 
@@ -302,41 +267,20 @@ const calculateDailyTrends = (fullAttendanceRecords: JemaatRow[], selectedMonth:
         const recordsForDay = recordsByDay[dateKey];
         
         if (recordsForDay && recordsForDay.length > 0) {
-            // Calculate status distribution based on the *current* status of the unique attendees
-            interface DailyDistributionAccumulator {
-              counts: Record<StatusKehadiran, number>;
-              seen: Set<string>;
-            }
-
-            const distribution = recordsForDay.reduce<DailyDistributionAccumulator>(
-              (acc, record) => {
-                const jemaatId = String(record.id ?? "").split("-")[0] ?? "";
-
-                if (jemaatId && !acc.seen.has(jemaatId)) {
-                  acc.seen.add(jemaatId);
-
-                  const status: StatusKehadiran = record.statusKehadiran ?? "Tidak Aktif";
-
-                  acc.counts[status] = (acc.counts[status] ?? 0) + 1;
-                }
-
+            // Hitung distribusi status berdasarkan SETIAP record (bukan orang unik)
+            const counts = recordsForDay.reduce((acc, record) => {
+                const status: StatusKehadiran = record.statusKehadiran ?? "Tidak Aktif";
+                acc[status] = (acc[status] ?? 0) + 1;
                 return acc;
-              },
-              {
-                counts: { Aktif: 0, "Jarang Hadir": 0, "Tidak Aktif": 0 },
-                seen: new Set<string>(),
-              }
-            );
+            }, { Aktif: 0, "Jarang Hadir": 0, "Tidak Aktif": 0 } as Record<StatusKehadiran, number>);
 
             data.push({
               hari: day,
-              aktif: distribution.counts.Aktif,
-              jarangHadirlah: distribution.counts["Jarang Hadir"],
-              tidakAktif: distribution.counts["Tidak Aktif"],
+              aktif: counts.Aktif,
+              jarangHadirlah: counts["Jarang Hadir"],
+              tidakAktif: counts["Tidak Aktif"],
             });
-
         } else {
-            // Jika tidak ada data kehadiran tercatat di tanggal ini, tampilkan 0, bukan null
             data.push({ hari: day, aktif: 0, jarangHadirlah: 0, tidakAktif: 0 }); 
         }
     }
@@ -717,7 +661,7 @@ export default function StatisticPage() {
             void router.push("/login");
             return;
         }
-
+        
         // User yang masih pending atau rejected tidak boleh akses
         if (data.isVerified === "pending") {
             void router.push("/unauthorized"); // ✅ PERUBAHAN: Dialihkan ke /unauthorized jika status pending
@@ -1466,36 +1410,37 @@ const handleYearlyChartClick = (state: YearlyChartHandlerState | null) => {
                   {viewMode === 'monthly' && (
                     <>
                       {/* Summary Cards DENGAN TOTAL KEHADIRAN */}
-                      <div className="mb-8">
-                        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                          
-                          {/* NEW: 0. Total Kehadiran Records */}
-                          <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-4 sm:p-6 rounded-xl shadow-xl text-white">
-                              <p className="text-xs sm:text-sm opacity-90 mb-1">Total Records Kehadiran</p>
-                              <p className="text-3xl sm:text-4xl font-extrabold mt-1">{currentMonthStats.total}</p>
-                              <p className="text-xs opacity-80 mt-1">akumulasi presensi per bulan</p>
-                          </div>
+                      {/* Summary Cards DENGAN TOTAL KEHADIRAN */}
+<div className="mb-8">
+  <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+    
+    {/* 0. Total Kehadiran Records */}
+    <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+        <p className="text-xs sm:text-sm opacity-90 mb-1">Total Records Kehadiran</p>
+        <p className="text-3xl sm:text-4xl font-extrabold mt-1">{currentMonthStats.total}</p>
+        <p className="text-xs opacity-80 mt-1">total presensi terkumpul</p>
+    </div>
 
-                          {/* 1. Status Aktif */}
-                          <div className="bg-gradient-to-br from-green-500 to-green-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
-                            <p className="text-xs sm:text-sm opacity-90 mb-1">Status Aktif</p>
-                            <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.aktif}</p>
-                            <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
-                          </div>
-                          
-                          {/* 2. Status Jarang Hadir */}
-                          <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
-                            <p className="text-xs sm:text-sm opacity-90 mb-1">Status Jarang Hadir</p>
-                            <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.jarangHadirlah}</p>
-                            <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
-                          </div>
-                          
-                          {/* 3. Status Tidak Aktif */}
-                          <div className="bg-gradient-to-br from-red-500 to-red-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
-                            <p className="text-xs sm:text-sm opacity-90 mb-1">Status Tidak Aktif</p>
-                            <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.tidakAktif}</p>
-                            <p className="text-xs opacity-80 mt-1">jemaat per bulan</p>
-                          </div>
+    {/* 1. Status Aktif */}
+    <div className="bg-gradient-to-br from-green-500 to-green-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+      <p className="text-xs sm:text-sm opacity-90 mb-1">Presensi Status Aktif</p>
+      <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.aktif}</p>
+      <p className="text-xs opacity-80 mt-1">akumulasi dari semua sesi</p>
+    </div>
+    
+    {/* 2. Status Jarang Hadir */}
+    <div className="bg-gradient-to-br from-yellow-500 to-yellow-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+      <p className="text-xs sm:text-sm opacity-90 mb-1">Presensi Jarang Hadir</p>
+      <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.jarangHadirlah}</p>
+      <p className="text-xs opacity-80 mt-1">akumulasi dari semua sesi</p>
+    </div>
+    
+    {/* 3. Status Tidak Aktif */}
+    <div className="bg-gradient-to-br from-red-500 to-red-600 p-4 sm:p-6 rounded-xl shadow-xl text-white">
+      <p className="text-xs sm:text-sm opacity-90 mb-1">Presensi Tidak Aktif</p>
+      <p className="text-3xl sm:text-4xl font-extrabold">{currentMonthStats.tidakAktif}</p>
+      <p className="text-xs opacity-80 mt-1">akumulasi dari semua sesi</p>
+    </div>
                         </div>
 
                         {/* Grafik Statistik Bulanan (DIUBAH) */}
