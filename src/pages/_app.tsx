@@ -47,7 +47,6 @@ const MyApp: AppType = ({ Component, pageProps }) => {
         <SyncUser />
         <Component {...pageProps} />
       </ClerkProvider>
-      
     </div>
   );
 };
