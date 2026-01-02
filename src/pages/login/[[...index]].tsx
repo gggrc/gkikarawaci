@@ -1,40 +1,76 @@
-// src/pages/login/[[...index]].tsx
-import { SignIn, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
+import { useState } from "react";
+import { useRouter } from "next/router";
+import Link from "next/link";
+import { createSupabaseBrowser } from "@/lib/supabase/client"; // Sesuaikan path client Anda
 
 export default function LoginPage() {
+  const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
+  const supabase = createSupabaseBrowser();
+
+  const handleGoogleLogin = async () => {
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        // Mengarahkan user kembali ke halaman utama setelah login berhasil
+        redirectTo: `${window.location.origin}/auth/callback`,
+        queryParams: {
+          access_type: 'offline',
+          prompt: 'consent',
+        },
+      },
+    });
+
+    if (error) setError(error.message);
+  };
+
+  const handleEmailLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.currentTarget);
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+
+    if (error) {
+      setError(error.message);
+    } else {
+      router.push("/");
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[url('/backgroundLogin.jpg')] bg-cover bg-center p-4">
-      <div className="absolute inset-0 bg-black/30" />
-      {/* PERUBAHAN: max-w-4xl -> max-w-3xl & memastikan flex center untuk konten kiri */}
-      <div className="relative mx-auto flex flex-col md:flex-row w-full max-w-3xl rounded-xl overflow-hidden shadow-2xl bg-white/10 backdrop-blur-sm">
-        {/* Left text section - Added flex-col justify-center for vertical centering */}
-        <div className="flex-1 p-8 text-white hidden md:flex flex-col justify-center items-start"> 
-          <h1 className="mt-8 mb-6 text-4xl font-bold">
-            Selamat Datang Kembali
-          </h1>
-          <p className="text-lg italic">
-            “Percayalah kepada TUHAN dengan segenap hatimu, dan janganlah
-            bersandar kepada pengertianmu sendiri. Akuilah Dia dalam segala
-            lakumu, maka Ia akan meluruskan jalanmu.”
-          </p>
-          <h4 className="mt-3 text-xl font-bold italic">(Amsal 3:5-6)</h4>
+    <div className="flex min-h-screen items-center justify-center bg-gray-100">
+      <div className="w-full max-w-md space-y-8 rounded-xl bg-white p-10 shadow-lg">
+        <h2 className="text-center text-3xl font-extrabold text-gray-900">Masuk ke GKI</h2>
+        
+        {error && (
+          <div className="bg-red-100 text-red-700 p-3 rounded-md text-sm">{error}</div>
+        )}
+
+        {/* Tombol Login Google */}
+        <button
+          onClick={handleGoogleLogin}
+          className="w-full flex items-center justify-center gap-2 border border-gray-300 p-2 rounded-md hover:bg-gray-50 transition"
+        >
+          <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google" className="w-5 h-5" />
+          <span>Masuk dengan Google</span>
+        </button>
+
+        <div className="relative my-6">
+          <div className="absolute inset-0 flex items-center"><span className="w-full border-t"></span></div>
+          <div className="relative flex justify-center text-sm"><span className="bg-white px-2 text-gray-500">Atau menggunakan email</span></div>
         </div>
 
-        {/* Login form - Added flex justify-center items-center to center the Clerk component */}
-        <div className="flex-1 w-full bg-white p-6 sm:p-10 flex justify-center items-center">
-          <SignedIn>
-            <UserButton afterSignOutUrl="/" />
-          </SignedIn>
+        <form onSubmit={handleEmailLogin} className="space-y-4">
+          <input name="email" type="email" required placeholder="Email" className="w-full border p-2 rounded" />
+          <input name="password" type="password" required placeholder="Password" className="w-full border p-2 rounded" />
+          <button type="submit" className="w-full bg-blue-600 p-2 text-white rounded">Login</button>
+        </form>
 
-          <SignedOut>
-            <SignIn
-              path="/login"
-              routing="path"
-              signUpUrl="/register"
-              redirectUrl="/statistic"
-            />
-          </SignedOut>
-        </div>
+        <p className="text-center text-sm">
+          Belum punya akun? <Link href="/register" className="text-blue-600">Daftar</Link>
+        </p>
       </div>
     </div>
   );

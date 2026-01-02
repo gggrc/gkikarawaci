@@ -6,98 +6,62 @@ import Link from "next/link";
 
 type MeResponse = {
   isVerified: "pending" | "accepted" | "rejected" | null;
-  // ✅ PERBAIKAN: Menambahkan properti role untuk redirection
-  role: string | null; 
+  role: string | null;
 };
 
 export default function WaitingPage() {
-  const [status, setStatus] = useState<"pending" | "accepted" | "rejected" | null>(null);
-  
-  // 🔁 Cek status user setiap 3 detik
- useEffect(() => {
-  const checkStatus = async () => {
-  try {
-    // Selalu fetch dari server
-    const res = await fetch("/api/me"); 
+  const [status, setStatus] = useState<
+    "pending" | "accepted" | "rejected" | null
+  >(null);
 
-    // Menggunakan tipe MeResponse yang sudah diupdate
-    const data = (await res.json()) as MeResponse;
+  useEffect(() => {
+    const checkStatus = async () => {
+      try {
+        const res = await fetch("/api/me");
+        const data = (await res.json()) as MeResponse;
 
-    if (data.isVerified) {
-      setStatus(data.isVerified);
-
-      if (data.isVerified === "accepted") {
-        
-        let destination = "/statistic"; 
-        
-        // 🎯 PERBAIKAN: Logika Redirection Berdasarkan Role
-        if (data.role === "admin") {
-            destination = "/databaseUser"; // Arahkan admin ke halaman admin
-        } else if (data.role === "user") {
-            destination = "/statistic"; // Arahkan user biasa
+        if (data.isVerified) {
+          setStatus(data.isVerified);
+          if (data.isVerified === "accepted") {
+            window.location.href =
+              data.role === "admin" ? "/databaseUser" : "/statistic";
+            return true;
+          }
         }
-        
-        // Menggunakan window.location.href untuk hard redirect
-        window.location.href = destination;
-        
-        // Hentikan interval setelah berhasil redirect
-        return true; 
+        return false;
+      } catch (error) {
+        console.error("Gagal mengambil status user:", error);
+        return false;
       }
-    }
-    return false; // Tidak redirect
+    };
 
-  } catch (error) {
-    console.error("Gagal mengambil status user:", error);
-    return false;
-  }
-};
+    void checkStatus();
+    const interval = setInterval(() => {
+      void checkStatus().then((redirected) => {
+        if (redirected) clearInterval(interval);
+      });
+    }, 3000);
 
-  // Jalankan langsung saat pertama kali mount
-  void checkStatus();
-
-  // Lalu jalankan tiap 3 detik (3000 ms)
-  const interval = setInterval(() => {
-    // Mengecek apakah redirection sudah terjadi
-    void checkStatus().then((redirected) => {
-        if (redirected) {
-            clearInterval(interval);
-        }
-    });
-  }, 3000);
-
-  return () => clearInterval(interval);
-}, []);
-
+    return () => clearInterval(interval);
+  }, []);
 
   return (
-    <div className="min-h-screen relative flex items-center justify-center">
-      {/* 🖼️ Background */}
+    <div className="relative flex min-h-screen items-center justify-center">
       <div
         className="absolute inset-0 bg-cover bg-center"
         style={{ backgroundImage: "url('/waiting-bg.jpg')" }}
-        aria-hidden="true"
       />
-      <div className="absolute inset-0 bg-black/50" aria-hidden="true" />
+      <div className="absolute inset-0 bg-black/50" />
 
       <main className="relative z-10 w-full max-w-lg px-6">
-        <section
-          role="status"
-          className="mx-auto bg-white/80 backdrop-blur-sm rounded-2xl p-8 shadow-xl text-center"
-        >
-          {/* 🔵 Ikon status */}
-          <div className="flex items-center justify-center mb-4">
+        <section className="mx-auto rounded-2xl bg-white/80 p-8 text-center shadow-xl backdrop-blur-sm">
+          <div className="mb-4 flex items-center justify-center">
             <div
-              className={`w-20 h-20 rounded-full flex items-center justify-center ${
-                status === "rejected"
-                  ? "bg-red-50 text-red-600"
-                  : "bg-indigo-50 text-indigo-600"
-              }`}
+              className={`flex h-20 w-20 items-center justify-center rounded-full ${status === "rejected" ? "bg-red-50 text-red-600" : "bg-indigo-50 text-indigo-600"}`}
             >
               {status === "rejected" ? (
-                // ❌ icon cross
                 <svg
                   className="h-10 w-10"
-                  xmlns="http://www.w3.org/2000/svg"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
@@ -110,10 +74,8 @@ export default function WaitingPage() {
                   />
                 </svg>
               ) : (
-                // ⏳ icon spinner
                 <svg
                   className={`h-10 w-10 ${status === "pending" ? "animate-spin" : ""}`}
-                  xmlns="http://www.w3.org/2000/svg"
                   fill="none"
                   viewBox="0 0 24 24"
                 >
@@ -137,49 +99,32 @@ export default function WaitingPage() {
             </div>
           </div>
 
-          {/* 📝 Teks status */}
-          {status === "rejected" ? (
-            <>
-              <h1 className="text-2xl font-semibold mb-2 text-red-600">
-                Pendaftaran Ditolak
-              </h1>
-              <p className="text-gray-700 mb-6">
-                Mohon maaf, akun Anda belum dapat digunakan. <br />
-                Silakan hubungi admin untuk informasi lebih lanjut.
-              </p>
-            </>
-          ) : (
-            <>
-              <h1 className="text-2xl font-semibold mb-2">Menunggu Persetujuan Admin</h1>
-              <p className="text-gray-700 mb-6">
-                Akun Anda sedang diverifikasi oleh admin. <br />
-                Proses ini bisa memakan waktu beberapa jam. Anda akan diarahkan secara otomatis
-                setelah disetujui.
-              </p>
-            </>
-          )}
+          <h1 className="mb-2 text-2xl font-semibold">
+            {status === "rejected"
+              ? "Pendaftaran Ditolak"
+              : "Menunggu Persetujuan Admin"}
+          </h1>
+          <p className="mb-6 text-gray-700">
+            {status === "rejected"
+              ? "Mohon maaf, akun Anda belum dapat digunakan. Silakan hubungi admin."
+              : "Akun Anda sedang diverifikasi. Anda akan diarahkan otomatis setelah disetujui."}
+          </p>
 
-          {/* 🔘 Tombol */}
-          <div className="flex flex-col sm:flex-row justify-center gap-3">
+          <div className="flex flex-col justify-center gap-3 sm:flex-row">
+            {/* ARAHAN KE INDEX.TSX */}
             <Link
-  href="/"
-  className="w-full sm:w-auto px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 transition font-semibold"
->
-  Kembali ke Beranda
-</Link>
-
+              href="/"
+              className="w-full rounded-md bg-indigo-600 px-4 py-2 font-semibold text-white transition hover:bg-indigo-700 sm:w-auto"
+            >
+              Kembali ke Beranda
+            </Link>
             <a
               href="mailto:admin@example.com"
-              className="w-full sm:w-auto px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-100 transition font-semibold"
+              className="w-full rounded-md border border-gray-300 px-4 py-2 font-semibold text-gray-700 transition hover:bg-gray-100 sm:w-auto"
             >
               Hubungi Admin
             </a>
           </div>
-
-          {/* 📨 Bantuan */}
-          <p className="text-sm text-gray-500 mt-4">
-            Jika butuh bantuan segera, kirim email ke <b>admin@example.com</b>
-          </p>
         </section>
       </main>
     </div>
