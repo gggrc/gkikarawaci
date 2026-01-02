@@ -1392,13 +1392,14 @@ export default function DatabasePage() {
     const sesi_ibadah = 99; // Placeholder
 
     //const isMonthlyRepetition = periodicalPeriod && /^(\d+)m$/.test(periodicalPeriod);
-    const isMonthly = /^(\d+)m$/.test(periodicalPeriod);
+    // Jika user memilih "Per Tanggal" → monthly
+    const isMonthly = periodicalDayOfWeek === 'Per Tanggal';
 
     const repetitionType: 'Weekly' | 'Monthly' =
       isMonthly ? 'Monthly' : 'Weekly';
 
     const day_of_week =
-      repetitionType === 'Weekly' ? dayOfWeek : null;
+      isMonthly ? null : dayOfWeek;
 
     //const day_of_week = repetitionType === "Weekly" ? dayOfWeek : null;
     
