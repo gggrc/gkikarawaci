@@ -842,17 +842,55 @@ export default function DatabasePage() {
             }
         });
 
-        // 🟦 2. Convert weekly events → tiap Ibadah instance
-        fetchedWeeklyEvents.forEach((w) => {
-            (w.Ibadah ?? []).forEach((ib) => {
-                const key = getDayKey(new Date(ib.tanggal_ibadah));
+        // === helper weekly generator ===
+        function generateWeeklyOccurrences(startDate: Date, endDate: Date | null, dayOfWeek: number) {
+          const dates: string[] = [];
+          let cursor = new Date(startDate);
 
-                initialEvents[key] = initialEvents[key] ?? [];
+          while (cursor.getDay() !== dayOfWeek) {
+            cursor.setDate(cursor.getDate() + 1);
+          }
 
-                if (!initialEvents[key].includes(w.title)) {
-                    initialEvents[key].push(w.title);
-                }
+          while (!endDate || cursor <= endDate) {
+            dates.push(getDayKey(new Date(cursor)));
+            cursor.setDate(cursor.getDate() + 7);
+          }
+
+          return dates;
+        }
+
+        // 🟦 2. Integrasi event berkala dengan metode yang benar
+        fetchedWeeklyEvents.forEach((ev) => {
+          const start = new Date(ev.start_date);
+          const end = ev.end_date ? new Date(ev.end_date) : null;
+
+          if (ev.repetition_type === "Weekly") {
+            const weeklyDay = new Date(ev.start_date).getDay();
+            const occ = generateWeeklyOccurrences(start, end, weeklyDay);
+
+            occ.forEach((key) => {
+              initialEvents[key] = initialEvents[key] ?? [];
+              if (!initialEvents[key].includes(ev.title)) {
+                initialEvents[key].push(ev.title);
+              }
             });
+
+            return;
+          }
+
+          // Monthly event = berdasarkan tanggal start
+          if (ev.repetition_type === "Monthly") {
+            const cursor = new Date(start);
+
+            while (!end || cursor <= end) {
+              const key = getDayKey(cursor);
+              initialEvents[key] = initialEvents[key] ?? [];
+              if (!initialEvents[key].includes(ev.title)) {
+                initialEvents[key].push(ev.title);
+              }
+              cursor.setMonth(cursor.getMonth() + 1);
+            }
+          }
         });
 
         // 🟩 3. Set final events
@@ -1460,7 +1498,7 @@ export default function DatabasePage() {
     }
   }, [eventModalData, showAlert, attendanceRecords, weeklyEvents]);
 
-  const handleEventAction = useCallback(() => {
+  const handleEventAction = useCallback(async () => {
     switch(eventModalData.type) {
         case 'add-single':
             void handleSingleAddEvent();
@@ -1469,39 +1507,62 @@ export default function DatabasePage() {
             // Panggil async handler di sini
             void handlePeriodicalAddEvent();
             break;
-        case 'edit-single':
-            const { dateKey: key, oldName, newName: newN } = eventModalData;
-            const newNameTrim = newN?.trim();
-            if (!key || !oldName || !newNameTrim || oldName === newNameTrim) {
-                setShowEventModal(false);
-                return;
-            }
-            
-            setEvents(prevEvents => {
-                const currentEvents = prevEvents[key] ?? [];
-                const oldIndex = currentEvents.findIndex(e => e.toLowerCase() === oldName.toLowerCase());
-                
-                if (oldIndex === -1) return prevEvents; 
-                
-                const updatedEvents = [...currentEvents];
-                updatedEvents[oldIndex] = newNameTrim;
-                
-                memoryStorage.events = { ...prevEvents, [key]: updatedEvents };
-                return { ...prevEvents, [key]: updatedEvents };
-            });
-            
-            setSelectedEventsByDate(prevSelected => {
-                const currentSelected = prevSelected[key] ?? [];
-                const updatedSelected = currentSelected.map(e => (e === oldName ? newNameTrim : e));
-                
-                saveSelection(selectedDates, { ...prevSelected, [key]: updatedSelected });
-                return { ...prevSelected, [key]: updatedSelected };
-            });
-            
+
+        case 'edit-single': {
+          const { dateKey, oldName, newName } = eventModalData;
+          const newNameTrim = newName?.trim();
+
+          if (!dateKey || !oldName || !newNameTrim) {
             setShowEventModal(false);
-            setEventModalData({});
-            showAlert("Sukses Edit Satuan", `Event berhasil diubah dari "${oldName}" menjadi "${newNameTrim}" pada tanggal ${new Date(key).toLocaleDateString("id-ID")}.`);
-            break;
+            return;
+          }
+
+          // 🔥 UPDATE DATABASE
+          await fetch("/api/weekly-events", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              type: "single",
+              dateKey,
+              oldTitle: oldName,
+              newTitle: newNameTrim,
+            }),
+          });
+
+          // ✅ UPDATE UI
+          setEvents(prev => {
+            const updated = {
+              ...prev,
+              [dateKey]: (prev[dateKey] ?? []).map(e =>
+                e === oldName ? newNameTrim : e
+              ),
+            };
+
+            memoryStorage.events = updated;
+            return updated;
+          });
+
+          setSelectedEventsByDate(prev => {
+            const updated = {
+              ...prev,
+              [dateKey]: (prev[dateKey] ?? []).map(e =>
+                e === oldName ? newNameTrim : e
+              ),
+            };
+
+            saveSelection(selectedDates, updated);
+            return updated;
+          });
+
+          setShowEventModal(false);
+          setEventModalData({});
+          showAlert(
+            "Sukses",
+            `Event berhasil diubah dari "${oldName}" menjadi "${newNameTrim}".`
+          );
+          break;
+        }
+
         case 'edit-periodical-confirm':
             const { dateKey: startKey, oldName: nameToChange, newName: newNPeriodic } = eventModalData;
             const isDeletion = !newNPeriodic || newNPeriodic.trim() === ''; 
@@ -1514,6 +1575,23 @@ export default function DatabasePage() {
 
             const lowerNameChange = nameToChange.toLowerCase();
             let totalPeriodicAffected = 0;
+
+            const targetEvent = weeklyEvents.find(e => e.title === nameToChange);
+
+            if (!targetEvent) {
+              showAlert("Error", "Event berkala tidak ditemukan");
+              return;
+            }
+
+            await fetch("/api/weekly-events", {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                type: "periodical",
+                weeklyEventId: targetEvent.id,
+                newTitle: newNamePeriodic,
+              }),
+            });
 
             setEvents(prevEvents => {
                 const updatedEvents = { ...prevEvents };
