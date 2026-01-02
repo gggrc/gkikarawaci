@@ -52,15 +52,21 @@ export default function Home() {
       if (!user) return;
 
       try {
-        const res = await fetch("/api/me");
-        const data = (await res.json()) as UserData;
+        const res = await fetch("/api/me", {
+          credentials: "include", // ⬅️ WAJIB
+        });
 
+        if (!res.ok) return;
+
+        const text = await res.text();
+        if (!text) return;
+
+        const data = JSON.parse(text) as UserData;
         if (!data) return;
 
         // admin langsung ke /statistic
         if (data.role === "admin") {
           await router.push("/statistic");
-
           return;
         }
 
@@ -70,7 +76,7 @@ export default function Home() {
         } else if (data.isVerified === "accepted") {
           await router.push("/statistic");
         } else if (data.isVerified === "rejected") {
-          await router.push("/rejected"); // kalau ada halaman rejected
+          await router.push("/rejected");
         }
       } catch (err) {
         console.error("Error fetching user data:", err);

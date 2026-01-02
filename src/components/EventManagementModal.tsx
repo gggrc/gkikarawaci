@@ -2,8 +2,7 @@
 import { X } from 'lucide-react';
 
 // --- Tipe Data ---
-
-export type EventModalType = 'add-single' | 'add-periodical' | 'edit-single' | 'edit-periodical-confirm' | 'flow-select';
+export type EventModalType = "add-single" | "add-periodical" | "edit-single" | "edit-periodical-confirm" | "flow-select";
 
 export interface EventModalData {
     type: EventModalType;
@@ -18,7 +17,13 @@ interface EventManagementModalProps {
     data: Partial<EventModalData>;
     onUpdateData: (newData: Partial<EventModalData>) => void;
     onClose: () => void;
-    onAction: () => void;
+    onAction: (payload: {
+    type: 'single' | 'weekly' | 'monthly';
+    title: string;
+    startDateKey: string;
+    repeatDay?: number;
+    period: string;
+    }) => void;
     generateDatesForPeriod?: (startDayKey: string, dayOfWeek: number, period: string) => string[];
 }
 
@@ -47,11 +52,11 @@ export default function EventManagementModal({
     
     // Defaulting state to avoid undefined issues
     const { 
-        type = 'flow-select', 
+        type = 'add-single', 
         dateKey = null, 
         oldName = null, 
         newName = '', 
-        periodicalDayOfWeek = new Date(dateKey ?? '').getDay(), 
+        periodicalDayOfWeek = dateKey ? new Date(dateKey).getDay() : null,
         periodicalPeriod = '2m' 
     } = data;
     
@@ -60,160 +65,148 @@ export default function EventManagementModal({
     let content;
 
     const isEdit = type === 'edit-single';
-    const isAdd = type === 'add-single' || type === 'add-periodical' || type === 'flow-select';
+    const isAdd = type === 'add-single' || type === 'add-periodical';
     const isPeriodicalAdd = type === 'add-periodical';
     const isPeriodicalConfirm = type === 'edit-periodical-confirm';
     const isDeletion = isPeriodicalConfirm && newName === ''; // Logic untuk menghapus event berkala
 
     const dateDisplay = dateKey ? new Date(dateKey).toLocaleDateString("id-ID") : 'N/A';
     const dayOptions = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Per Tanggal'];
-
-    if (type === 'flow-select') {
-        title = 'Pilih Mode Penambahan Event';
-        actionButtonText = 'Lanjut ke Mode Satuan';
-        
-        content = (
-            <div className="space-y-6">
-                <p className="text-lg text-gray-700">Event akan ditambahkan untuk tanggal: <span className="font-bold text-indigo-600">{dateDisplay}</span></p>
-                <div className="flex flex-col gap-3">
-                    <button 
-                        type="button"
-                        onClick={() => onUpdateData({ type: 'add-single', periodicalDayOfWeek: null, periodicalPeriod: '2m' })}
-                        className="px-6 py-3 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition shadow-md"
-                    >
-                        <span className="font-bold">Mode Satuan:</span> Hanya untuk tanggal ini
-                    </button>
-                    <button 
-                        type="button"
-                        onClick={() => onUpdateData({ type: 'add-periodical', periodicalDayOfWeek: new Date(dateKey ?? '').getDay(), newName: newName ?? '' })}
-                        className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700 transition shadow-md"
-                    >
-                        <span className="font-bold">Mode Berkala:</span> Ulangi di masa depan
-                    </button>
-                </div>
-            </div>
-        );
-    } else if (isPeriodicalConfirm) {
-        title = oldName ? (newName ? `Edit Berkala: ${oldName}` : `Hapus Berkala: ${oldName}`) : 'Konfirmasi Aksi Berkala';
-        actionButtonText = newName ? 'Simpan Perubahan Berkala' : 'Hapus Semua Kejadian';
-        const actionText = newName ? `mengubah nama event dari "${oldName}" menjadi "${newName}"` : `menghapus event "${oldName}"`;
-
-        content = (
-            <div className="space-y-4 p-2">
-                <p className={`text-lg font-medium ${newName ? 'text-blue-700' : 'text-red-700'}`}>
-                    PERINGATAN! Aksi ini akan berlaku untuk <strong>SEMUA</strong> event bernama <strong>&quot;{oldName}&quot;</strong> pada tanggal <strong>{dateDisplay}</strong> dan <strong>semua tanggal setelahnya</strong>.
-                </p>
-                <p className="text-gray-700">Anda akan {actionText} mulai dari {dateDisplay} dan ke depannya (hingga 10 tahun simulasi).</p>
-                {/* Input hanya muncul saat mode EDIT (newName ada isinya dan bukan mode deletion) */}
-                {!isDeletion && (
-                    <input
-                        type="text"
-                        value={newName}
-                        onChange={(e) => onUpdateData({ newName: e.target.value })}
-                        className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                        placeholder="Nama Event Baru"
-                        autoFocus
-                    />
-                )}
-            </div>
-        );
-    } else if (isEdit) {
-        title = `Edit Event: ${oldName}`;
-        actionButtonText = 'Simpan Perubahan';
-        
-        content = (
-            <div className="space-y-4">
-                <p className="text-sm text-gray-500">Tanggal: <span className="font-semibold">{dateDisplay}</span></p>
-                <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => onUpdateData({ newName: e.target.value })}
-                    className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                    placeholder="Nama Event Baru"
-                    autoFocus
-                />
-            </div>
-        );
-    } else if (isAdd) {
-        title = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
-        actionButtonText = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
-        
-        content = (
-            <div className="space-y-4">
-                <div className="flex justify-between">
-                    <button 
-                        type="button"
-                        onClick={() => onUpdateData({ type: 'add-single', periodicalDayOfWeek: null, periodicalPeriod: '2m' })}
-                        className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${!isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                        Mode Satuan
-                    </button>
-                    <button 
-                        type="button"
-                        onClick={() => onUpdateData({ type: 'add-periodical', periodicalDayOfWeek: new Date(dateKey ?? '').getDay() })}
-                        className={`px-4 py-2 text-sm rounded-lg font-semibold transition ${isPeriodicalAdd ? 'bg-indigo-600 text-white' : 'bg-gray-200 text-gray-700'}`}
-                    >
-                        Mode Berkala
-                    </button>
-                </div>
-
-                <p className="text-sm text-gray-500 bg-indigo-50 p-2 rounded">
-                    Tanggal: <span className="font-semibold">{dateDisplay}</span>
-                </p>
-                
-                <input
-                    type="text"
-                    value={newName}
-                    onChange={(e) => onUpdateData({ newName: e.target.value })}
-                    className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                    placeholder="Nama Event (Contoh: Kebaktian I : 07:00)"
-                    autoFocus
-                />
-                
-                {isPeriodicalAdd && (
-                    <div className="grid grid-cols-2 gap-3">
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Hari Perulangan</label>
-                            <select
-                            value={periodicalDayOfWeek ?? 0}
-                            onChange={(e) => {
-                                const value =
-                                e.target.value === 'Per Tanggal'
-                                    ? 'Per Tanggal'
-                                    : Number(e.target.value);
-
-                                onUpdateData({ periodicalDayOfWeek: value });
-                            }}
-                            >
-
-                            {dayOptions.map((day, index) => (
-                                <option key={day} value={day === 'Per Tanggal' ? 'Per Tanggal' : index}>
-                                {day}
-                                </option>
-                            ))}
-                            </select>
-                        </div>
-                        <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-1">Periode Hingga</label>
-                            <select
-                                value={periodicalPeriod}
-                                onChange={(e) => onUpdateData({ periodicalPeriod: e.target.value })}
-                                className="w-full border-2 border-gray-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-                            >
-                                {PERIOD_OPTIONS.map((opt) => (
-                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                ))}
-                            </select>
-                            <p className="text-xs text-gray-400 mt-1">*Berlaku mulai hari setelah tanggal ini</p>
-                        </div>
-                    </div>
-                )}
-            </div>
-        );
-    } else {
-        return null; 
-    }
     
+    // ================= ADD / EDIT CONTENT =================
+
+    if (isEdit) {
+    title = `Edit Event: ${oldName}`;
+    actionButtonText = 'Simpan Perubahan';
+
+    content = (
+        <div className="space-y-4">
+        <p className="text-sm text-gray-500">
+            Tanggal: <span className="font-semibold">{dateDisplay}</span>
+        </p>
+        <input
+            type="text"
+            value={newName}
+            onChange={(e) => onUpdateData({ newName: e.target.value })}
+            className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+            placeholder="Nama Event Baru"
+            autoFocus
+        />
+        </div>
+    );
+    }
+
+    else if (isAdd) {
+    title = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
+    actionButtonText = isPeriodicalAdd ? 'Tambah Event Berkala' : 'Tambah Event Satuan';
+
+    content = (
+        <div className="space-y-4">
+        {/* MODE SWITCH */}
+        <div className="flex justify-between">
+            <button
+            type="button"
+            onClick={() =>
+                onUpdateData({
+                type: 'add-single',
+                periodicalDayOfWeek: null,
+                periodicalPeriod: '2m',
+                })
+            }
+            className={`px-4 py-2 text-sm rounded-lg font-semibold ${
+                !isPeriodicalAdd
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-200 text-gray-700'
+            }`}
+            >
+            Mode Satuan
+            </button>
+
+            <button
+            type="button"
+            onClick={() =>
+                onUpdateData({
+                type: 'add-periodical',
+                periodicalDayOfWeek: dateKey ? new Date(dateKey).getDay() : null,
+                })
+            }
+            className={`px-4 py-2 text-sm rounded-lg font-semibold ${
+                isPeriodicalAdd
+                ? 'bg-indigo-600 text-white'
+                : 'bg-gray-200 text-gray-700'
+            }`}
+            >
+            Mode Berkala
+            </button>
+        </div>
+
+        <p className="text-sm text-gray-500 bg-indigo-50 p-2 rounded">
+            Tanggal: <span className="font-semibold">{dateDisplay}</span>
+        </p>
+
+        <input
+            type="text"
+            value={newName}
+            onChange={(e) => onUpdateData({ newName: e.target.value })}
+            className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
+            placeholder="Nama Event (Contoh: Kebaktian I : 07:00)"
+            autoFocus
+        />
+
+        {isPeriodicalAdd && (
+            <div className="grid grid-cols-2 gap-3">
+            <div>
+                <label className="block text-sm font-medium mb-1">
+                Hari Perulangan
+                </label>
+                <select
+                value={periodicalDayOfWeek ?? ''}
+                onChange={(e) =>
+                    onUpdateData({
+                    periodicalDayOfWeek:
+                        e.target.value === 'Per Tanggal'
+                        ? 'Per Tanggal'
+                        : Number(e.target.value),
+                    })
+                }
+                className="w-full border-2 rounded-lg px-3 py-2"
+                >
+                {dayOptions.map((day, i) => (
+                    <option
+                    key={day}
+                    value={day === 'Per Tanggal' ? 'Per Tanggal' : i}
+                    >
+                    {day}
+                    </option>
+                ))}
+                </select>
+            </div>
+
+            <div>
+                <label className="block text-sm font-medium mb-1">
+                Periode Hingga
+                </label>
+                <select
+                value={periodicalPeriod}
+                onChange={(e) =>
+                    onUpdateData({ periodicalPeriod: e.target.value })
+                }
+                className="w-full border-2 rounded-lg px-3 py-2"
+                >
+                {PERIOD_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                    </option>
+                ))}
+                </select>
+            </div>
+            </div>
+        )}
+        </div>
+    );
+    }
+
+
     // FIX: NewName check for periodical confirm should only check if deletion is not intended
     const isActionDisabled = isPeriodicalConfirm 
         ? (!newName && !isDeletion)
@@ -240,9 +233,40 @@ export default function EventManagementModal({
                         Batal
                     </button>
                     <button
-                        type="button"
-                        onClick={onAction}
-                        disabled={isActionDisabled}
+                    type="button"
+                    disabled={isActionDisabled}
+                    onClick={() => {
+                        // MODE SATUAN
+                        if (!isPeriodicalAdd) {
+                        onAction({
+                            type: 'single',
+                            title: newName,
+                            startDateKey: dateKey!,
+                            period: 'once',
+                        });
+                        return;
+                        }
+
+                        // MODE BERKALA - PER TANGGAL (MONTHLY)
+                        if (periodicalDayOfWeek === 'Per Tanggal') {
+                        onAction({
+                            type: 'monthly',
+                            title: newName,
+                            startDateKey: dateKey!,
+                            period: periodicalPeriod,
+                        });
+                        return;
+                        }
+
+                        // MODE BERKALA - WEEKLY
+                        onAction({
+                        type: 'weekly',
+                        title: newName,
+                        startDateKey: dateKey!,
+                        repeatDay: periodicalDayOfWeek!,
+                        period: periodicalPeriod,
+                        });
+                    }}
                         className={`px-6 py-2 ${isActionDisabled ? 'bg-gray-400 cursor-not-allowed' : (isPeriodicalConfirm && isDeletion ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700')} text-white rounded-lg transition`} 
                     >
                         {actionButtonText}

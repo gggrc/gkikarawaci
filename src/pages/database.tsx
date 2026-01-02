@@ -936,49 +936,12 @@ export default function DatabasePage() {
             
             // Gunakan sesi unik sebagai base event list jika belum di-cache atau kosong
             // PERUBAHAN KRITIS 1: Hanya isi event jika ada data kehadiran aktual
-            if (!currentEvents || currentEvents.length === 0) {
-                if (actualAttendanceDates.includes(dateKey)) { 
-                    currentEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
-                } else {
-                    currentEvents = []; // Biarkan kosong jika tidak ada data kehadiran aktual
-                }
+            if (!currentEvents) {
+              currentEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
             }
-            
             const dayOfWeek = date.getDay();
 
             // Integrate Weekly Events for the currently viewed month
-            weeklyEvents.forEach(event => {
-                const startDate = new Date(event.start_date).setHours(0, 0, 0, 0);
-                const endDate = event.end_date ? new Date(event.end_date).setHours(0, 0, 0, 0) : Infinity;
-                const currentDateTimestamp = date.setHours(0, 0, 0, 0);
-
-                if (currentDateTimestamp >= startDate && currentDateTimestamp <= endDate) {
-                    if (event.repetition_type === 'Monthly' || dayOfWeek === event.day_of_week || event.repetition_type === 'Once') {
-                        const eventName = event.title;
-                        const lowerEventName = eventName.toLowerCase();
-                        const safeCurrentEvents = currentEvents ?? [];
-
-                          if (!safeCurrentEvents.some(e => e.toLowerCase() === lowerEventName)) {
-                            const listWithoutOverall = safeCurrentEvents.filter(
-                              e => e !== "KESELURUHAN DATA HARI INI"
-                            );
-
-                            const hasOverall = safeCurrentEvents.includes("KESELURUHAN DATA HARI INI");
-
-                            let updatedList = [...listWithoutOverall, eventName];
-                            updatedList = [...new Set(updatedList)].filter(v => v.trim() !== "");
-
-
-                            if (hasOverall) {
-                                updatedList.unshift("KESELURUHAN DATA HARI INI");
-                            }
-                            
-                            currentEvents = updatedList;
-                            
-                        }
-                    }
-                }
-            });
             
             if (currentEvents.length > 0 && JSON.stringify(currentEvents) !== JSON.stringify(memoryStorage.events[d.key])) {
                newEvents[d.key] = currentEvents;
@@ -990,7 +953,7 @@ export default function DatabasePage() {
       setEvents(prev => ({ ...prev, ...newEvents }));
       memoryStorage.events = { ...memoryStorage.events, ...newEvents };
     }
-  }, [startMonth, year, attendanceRecords, weeklyEvents, actualAttendanceDates]); // actualAttendanceDates DITAMBAHKAN
+  }, [startMonth, year, attendanceRecords]); // actualAttendanceDates DITAMBAHKAN
 
   useEffect(() => {
     memoryStorage.events = events;
@@ -1060,8 +1023,11 @@ export default function DatabasePage() {
 
    useEffect(() => {
     // FIX: Gunakan attendanceRecords
-    if (!router.isReady || isLoading || uniqueJemaatList.length === 0 || attendanceRecords.length === 0 || actualAttendanceDates.length === 0) return; 
-
+    if (
+      !router.isReady ||
+      isLoading ||
+      uniqueJemaatList.length === 0
+    ) return;
     const { dates, date, mode, event: eventQuery } = router.query;
     
     const currentEventsCache = memoryStorage.events;
@@ -1160,7 +1126,7 @@ export default function DatabasePage() {
         return;
     }
     
-  }, [router, isLoading, uniqueJemaatList.length, handleSelectMonth, actualAttendanceDates, attendanceRecords]); 
+  }, [router, isLoading, uniqueJemaatList.length, handleSelectMonth, attendanceRecords]); 
 
   // 💡 LOGIC UTAMA: Menghandle klik di kalender (DIBUAT AGAR SEMUA TANGGAL DAPAT DIKLIK)
   const handleSelectDate = useCallback((day: number, month: number) => {
@@ -1178,18 +1144,9 @@ export default function DatabasePage() {
     // Handle Event Caching/Generation for ANY selected date (past/present/future)
     let currentEvents = events[key];
     const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
-    
-    // 💡 FIX: Populasikan event jika belum ada di cache, HANYA JIKA ada data kehadiran aktual
-    if (!currentEvents || currentEvents.length === 0) {
-        if (actualAttendanceDates.includes(key)) { // <-- PERUBAHAN KRITIS 2: Cek attendance sebelum mengisi
-            currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
-        } else {
-            currentEvents = []; // <-- Jika tidak ada data kehadiran, biarkan kosong
-        }
-        
-        // Update cache
-        setEvents(prev => ({ ...prev, [key]: currentEvents ?? [] }));
-        memoryStorage.events[key] = currentEvents;
+
+    if (!currentEvents) {
+      currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
     }
 
     let newDates: Date[];
@@ -1226,12 +1183,14 @@ export default function DatabasePage() {
   const handleSelectEvent = useCallback((dateKey: string, eventName: string) => {
       setViewMode('event_per_table'); 
       
-      const isPeriodicalEvent = weeklyEvents.find(e => e.title === eventName);
+      const isPeriodicalEvent = weeklyEvents.find(
+        e => e.title === eventName && e.repetition_type !== 'Once'
+      );
       
       if (isPeriodicalEvent) {
           // --- LOGIKA SELEKSI EVENT BERKALA ---
           
-          const startDate = new Date(isPeriodicalEvent.start_date);
+          const startDate = new Date(dateKey);
           const endDate = isPeriodicalEvent.end_date 
               ? new Date(isPeriodicalEvent.end_date) 
               : new Date(today.getFullYear() + 10, 0, 1); 
@@ -1243,25 +1202,23 @@ export default function DatabasePage() {
           
           // Iterasi hari demi hari dari start_date hingga end_date (atau hari ini, mana yang lebih dulu)
           // HILANGKAN BATAS TODAYSTART AGAR BISA MEMILIH EVENT BERKALA DI MASA DEPAN
-          while (currentDate.getTime() <= endDate.getTime()) { 
-              const currentKey = getDayKey(currentDate);
-              const dayOfWeek = currentDate.getDay(); 
+          while (currentDate.getTime() <= endDate.getTime()) {
+            const currentKey = getDayKey(currentDate);
+            const availableEvents = events[currentKey] ?? [];
 
-              // Filter ketat: tanggal harus match hari repetisi ATAU event sekali jalan/bulanan
-              const isCorrectDay = isPeriodicalEvent.repetition_type === 'Once' 
-                || isPeriodicalEvent.repetition_type === 'Monthly' // Tambahkan cek bulanan
-                || dayOfWeek === isPeriodicalEvent.day_of_week;
+            if (availableEvents.includes(eventName)) {
+              newDates.push(new Date(currentKey));
+              newEventsByDate[currentKey] = [eventName];
+            }
 
-              if (isCorrectDay) {
-                  
-                  const availableEvents = events[currentKey] ?? [];
-                  if (availableEvents.includes(eventName)) {
-                      newDates.push(new Date(currentKey));
-                      newEventsByDate[currentKey] = [eventName]; 
-                  }
-              }
-              
-              currentDate.setDate(currentDate.getDate() + 1);
+            // 🔑 LOMPAT SESUAI TIPE EVENT
+            if (isPeriodicalEvent.repetition_type === "Weekly") {
+              currentDate.setDate(currentDate.getDate() + 7);
+            } else if (isPeriodicalEvent.repetition_type === "Monthly") {
+              currentDate.setMonth(currentDate.getMonth() + 1);
+            } else {
+              break;
+            }
           }
           
           // Atur state
@@ -1309,7 +1266,7 @@ export default function DatabasePage() {
     // }
 
       setEventModalData({
-          type: 'flow-select', // Memastikan tampilan flow-select muncul
+          type: 'add-single', 
           dateKey,
           newName: '',
           oldName: null,
@@ -1320,7 +1277,7 @@ export default function DatabasePage() {
       setShowEventModal(true);
   }, []);
 
-  const handleSingleAddEvent = useCallback(() => {
+  const handleSingleAddEvent = useCallback(async () => {
     const key = eventModalData.dateKey;
     const newName = eventModalData.newName?.trim();
 
@@ -1342,6 +1299,34 @@ export default function DatabasePage() {
         newName
     ].filter((v, i, a) => a.indexOf(v) === i);
     
+    try {
+      const res = await fetch("/api/weekly-events", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newName,
+          description: `Event satuan ${new Date(key).toLocaleDateString("id-ID")}`,
+          jenis_kebaktian: newName,
+          sesi_ibadah: 1,
+          start_date: key,
+          repetition_type: "Once",
+          day_of_week: null,
+          end_date: null,
+        }),
+      });
+
+      if (!res.ok) {
+        // Define the expected structure of your error JSON
+        const err = (await res.json().catch(() => ({}))) as { error?: string };
+        
+        throw new Error(err.error ?? "Gagal menyimpan event satuan");
+      }
+
+    } catch (err) {
+      showAlert("Gagal Menyimpan Event", (err as Error).message);
+      return;
+    }
+
     setEvents(prevEvents => {
       const updatedEvents = { ...prevEvents, [key]: newEvents };
       memoryStorage.events = updatedEvents;
@@ -1362,6 +1347,12 @@ export default function DatabasePage() {
     
     setShowEventModal(false);
     setEventModalData({}); 
+    const weeklyEventsRes = await fetch("/api/weekly-events");
+    if (weeklyEventsRes.ok) {
+      // Use 'as' to cast the response to your WeeklyEvent array type
+      const updatedWeekly = (await weeklyEventsRes.json()) as WeeklyEvent[];
+      setWeeklyEvents(updatedWeekly);
+    }
     showAlert("Sukses", `Event "${newName}" berhasil ditambahkan.`);
   }, [eventModalData, events, selectedDates, showAlert]);
 
@@ -1400,18 +1391,26 @@ export default function DatabasePage() {
     const jenis_kebaktian = eventName; // Gunakan nama event sebagai jenis_kebaktian
     const sesi_ibadah = 99; // Placeholder
 
-    const isMonthlyRepetition = periodicalPeriod && /^(\d+)m$/.test(periodicalPeriod);
-    const repetitionType = isMonthlyRepetition ? 'Monthly' : 'Weekly';
+    //const isMonthlyRepetition = periodicalPeriod && /^(\d+)m$/.test(periodicalPeriod);
+    const isMonthly = /^(\d+)m$/.test(periodicalPeriod);
+
+    const repetitionType: 'Weekly' | 'Monthly' =
+      isMonthly ? 'Monthly' : 'Weekly';
+
+    const day_of_week =
+      repetitionType === 'Weekly' ? dayOfWeek : null;
+
+    //const day_of_week = repetitionType === "Weekly" ? dayOfWeek : null;
     
     const payload = {
-      title: title,
-      description: `Event berkala dimulai ${new Date(dateKey).toLocaleDateString()} (${periodicalPeriod})`,
-      jenis_kebaktian: jenis_kebaktian,
-      sesi_ibadah: sesi_ibadah,
+      title,
+      description: `Event berkala dimulai ${new Date(dateKey).toLocaleDateString("id-ID")} (${periodicalPeriod})`,
+      jenis_kebaktian,
+      sesi_ibadah,
       start_date: dateKey,
-      day_of_week: isMonthlyRepetition ? null : dayOfWeek,
       repetition_type: repetitionType,
-      end_date: end_date,
+      day_of_week,
+      end_date,
     };
     
     // --- API CALL FOR PERSISTENCE ---
@@ -1446,24 +1445,28 @@ export default function DatabasePage() {
         
         const newPeriodicalEvent = updatedWeeklyEvents.find(e => e.title === eventName);
         if (newPeriodicalEvent) {
-            const currentDate = new Date(newPeriodicalEvent.start_date);
-            const loopEndDate = newPeriodicalEvent.end_date 
-                ? new Date(newPeriodicalEvent.end_date) 
-                : new Date(today.getFullYear() + 10, 0, 1);
-            
-            while (currentDate <= loopEndDate) {
-                const currentKey = getDayKey(currentDate);
-                const availableEvents = newEventsCache[currentKey] ?? [];
+          const currentDate = new Date(newPeriodicalEvent.start_date);
+          const loopEndDate = newPeriodicalEvent.end_date
+            ? new Date(newPeriodicalEvent.end_date)
+            : new Date(today.getFullYear() + 10, 0, 1);
 
-                // Match event title regardless of day_of_week
-                if (availableEvents.includes(eventName)) {
-                    newDates.push(new Date(currentKey));
-                    newEventsByDate[currentKey] = [eventName];
-                }
+          while (currentDate <= loopEndDate) {
+            const currentKey = getDayKey(currentDate);
+            const availableEvents = newEventsCache[currentKey] ?? [];
 
-                // Move to next day to check
-                currentDate.setDate(currentDate.getDate() + 1);
+            if (availableEvents.includes(eventName)) {
+              newDates.push(new Date(currentKey));
+              newEventsByDate[currentKey] = [eventName];
             }
+
+            if (newPeriodicalEvent.repetition_type === "Weekly") {
+              currentDate.setDate(currentDate.getDate() + 7);
+            } else if (newPeriodicalEvent.repetition_type === "Monthly") {
+              currentDate.setMonth(currentDate.getMonth() + 1);
+            } else {
+              break;
+            }
+          }
         }
         
         setSelectedDates(newDates.sort((a, b) => a.getTime() - b.getTime()));
@@ -1488,7 +1491,7 @@ export default function DatabasePage() {
   const handleEventAction = useCallback(() => {
     switch(eventModalData.type) {
         case 'add-single':
-            handleSingleAddEvent();
+            void handleSingleAddEvent();
             break;
         case 'add-periodical':
             // Panggil async handler di sini
@@ -1618,7 +1621,10 @@ export default function DatabasePage() {
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
       
-      const isPeriodicalEvent = weeklyEvents.find(e => e.title === eventName);
+      const isPeriodicalEvent = weeklyEvents.find(
+        e => e.title === eventName &&
+            (e.repetition_type === "Weekly" || e.repetition_type === "Monthly")
+      );
 
       const onConfirm = () => {
           setEvents(prevEvents => {
@@ -1678,7 +1684,10 @@ export default function DatabasePage() {
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return;
       
-      const isPeriodicalEvent = weeklyEvents.find(e => e.title === eventName);
+      const isPeriodicalEvent = weeklyEvents.find(
+        e => e.title === eventName &&
+            (e.repetition_type === "Weekly" || e.repetition_type === "Monthly")
+      );
       
       if (!isPeriodicalEvent) {
           setEventModalData({ 

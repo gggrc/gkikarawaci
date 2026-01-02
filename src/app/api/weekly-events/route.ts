@@ -1,5 +1,3 @@
-// src/app/api/weekly-events/route.ts
-
 export const runtime = "nodejs";
 
 import { NextResponse } from "next/server";
@@ -8,14 +6,9 @@ import crypto from "crypto";
 
 const prisma = new PrismaClient();
 
-// ==============================
-// CONSTANTS
-// ==============================
-const MAX_RECURRENCE_DAYS = 365;
+const MAX_MONTHLY = 120;
+const MAX_WEEKLY = 520;
 
-// ==============================
-// TYPES
-// ==============================
 type WeeklyEventRequestBody = {
   title: string;
   description?: string;
@@ -26,41 +19,35 @@ type WeeklyEventRequestBody = {
   end_date?: string | null;
 };
 
-// ==============================
-// TYPE GUARD (ANTI any ✅)
-// ==============================
-function isWeeklyEventRequestBody(data: unknown): data is WeeklyEventRequestBody {
-  if (typeof data !== "object" || data === null) return false;
+type IbadahCreateInput = {
+  id_ibadah: string;
+  jenis_kebaktian: string;
+  sesi_ibadah: number;
+  tanggal_ibadah: Date;
+  weeklyEventId: string;
+};
 
-  const obj = data as Record<string, unknown>;
+function isValidBody(data: unknown): data is WeeklyEventRequestBody {
+  if (typeof data !== "object" || !data) return false;
+  const d = data as Record<string, unknown>;
 
   return (
-    typeof obj.title === "string" &&
-    typeof obj.jenis_kebaktian === "string" &&
-    typeof obj.sesi_ibadah === "number" &&
-    typeof obj.start_date === "string" &&
-    (obj.repetition_type === "Once" ||
-      obj.repetition_type === "Weekly" ||
-      obj.repetition_type === "Monthly") &&
-    (obj.description === undefined || typeof obj.description === "string") &&
-    (obj.end_date === undefined ||
-      typeof obj.end_date === "string" ||
-      obj.end_date === null)
+    typeof d.title === "string" &&
+    typeof d.jenis_kebaktian === "string" &&
+    typeof d.sesi_ibadah === "number" &&
+    typeof d.start_date === "string" &&
+    (d.repetition_type === "Once" ||
+      d.repetition_type === "Weekly" ||
+      d.repetition_type === "Monthly")
   );
 }
 
-// ==============================
-// POST HANDLER
-// ==============================
 export async function POST(req: Request) {
   try {
-    const rawBody: unknown = await req.json();
+    const body: unknown = await req.json();
 
-    if (!isWeeklyEventRequestBody(rawBody)) {
-      return NextResponse.json(
-        { error: "Invalid request body" },
-        { status: 400 }
-      );
+    if (!isValidBody(body)) {
+      return NextResponse.json({ error: "Invalid body" }, { status: 400 });
     }
 
     const {
@@ -71,161 +58,124 @@ export async function POST(req: Request) {
       start_date,
       repetition_type,
       end_date,
-    } = rawBody;
+    } = body;
 
-    if (!title || !start_date || !jenis_kebaktian || !sesi_ibadah) {
+    const startDate = new Date(start_date);
+    const endDate = end_date ? new Date(end_date) : null;
+
+    // ======================
+    // ONCE
+    // ======================
+    if (repetition_type === "Once") {
+      const ibadah = await prisma.ibadah.create({
+        data: {
+          id_ibadah: crypto.randomUUID(),
+          jenis_kebaktian,
+          sesi_ibadah,
+          tanggal_ibadah: startDate,
+          weeklyEventId: null, // ⬅️ PENTING
+        },
+      });
+
       return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 }
+        { message: "Single event created", ibadah },
+        { status: 201 }
       );
     }
 
-    const parsedStartDate = new Date(start_date);
-    const parsedEndDate = end_date ? new Date(end_date) : null;
-
-    if (parsedEndDate && parsedEndDate <= parsedStartDate) {
-      return NextResponse.json(
-        { error: "End date must be after start date." },
-        { status: 400 }
-      );
-    }
-
-    // ✅ CREATE PARENT EVENT
-    const newWeeklyEvent = await prisma.weeklyEvent.create({
+    // ======================
+    // WEEKLY / MONTHLY (PARENT)
+    // ======================
+    const weeklyEvent = await prisma.weeklyEvent.create({
       data: {
         title,
         description,
         jenis_kebaktian,
         sesi_ibadah,
-        start_date: parsedStartDate,
+        start_date: startDate,
+        end_date: endDate,
         repetition_type,
-        end_date: parsedEndDate,
       },
     });
 
-    const ibadahInstances: {
-      id_ibadah: string;
-      jenis_kebaktian: string;
-      sesi_ibadah: number;
-      tanggal_ibadah: Date;
-      weeklyEventId: string;
-    }[] = [];
+    const ibadahList: IbadahCreateInput[] = [];
+    let cursor = new Date(startDate);
 
-    const loopDate = new Date(parsedStartDate);
-    let counter = 0;
-
-    const maxDate = new Date();
-    maxDate.setDate(maxDate.getDate() + MAX_RECURRENCE_DAYS);
-
-    // ==============================
-    // ONCE
-    // ==============================
-    if (repetition_type === "Once") {
-      ibadahInstances.push({
-        id_ibadah: crypto.randomUUID(),
-        jenis_kebaktian,
-        sesi_ibadah,
-        tanggal_ibadah: loopDate,
-        weeklyEventId: newWeeklyEvent.id,
-      });
-    }
-
-    // ==============================
+    // ======================
     // WEEKLY
-    // ==============================
-    else if (repetition_type === "Weekly") {
-      while (
-        (!parsedEndDate || loopDate <= parsedEndDate) &&
-        loopDate <= maxDate &&
-        counter < 52
-      ) {
-        ibadahInstances.push({
+    // ======================
+    if (repetition_type === "Weekly") {
+      let count = 0;
+
+      while ((!endDate || cursor <= endDate) && count < MAX_WEEKLY) {
+        ibadahList.push({
           id_ibadah: crypto.randomUUID(),
           jenis_kebaktian,
           sesi_ibadah,
-          tanggal_ibadah: new Date(loopDate),
-          weeklyEventId: newWeeklyEvent.id,
+          tanggal_ibadah: new Date(cursor),
+          weeklyEventId: weeklyEvent.id,
         });
 
-        loopDate.setDate(loopDate.getDate() + 7);
-        counter++;
+        cursor = new Date(cursor);
+        cursor.setDate(cursor.getDate() + 7);
+        count++;
       }
     }
 
-    // ==============================
+    // ======================
     // MONTHLY
-    // ==============================
-    else if (repetition_type === "Monthly") {
-      while (
-        (!parsedEndDate || loopDate <= parsedEndDate) &&
-        loopDate <= maxDate &&
-        counter < 12
-      ) {
-        ibadahInstances.push({
+    // ======================
+    if (repetition_type === "Monthly") {
+      let count = 0;
+      const targetDay = startDate.getDate();
+
+      while ((!endDate || cursor <= endDate) && count < MAX_MONTHLY) {
+        const date = new Date(cursor);
+        date.setDate(targetDay);
+
+        ibadahList.push({
           id_ibadah: crypto.randomUUID(),
           jenis_kebaktian,
           sesi_ibadah,
-          tanggal_ibadah: new Date(loopDate),
-          weeklyEventId: newWeeklyEvent.id,
+          tanggal_ibadah: date,
+          weeklyEventId: weeklyEvent.id,
         });
 
-        loopDate.setMonth(loopDate.getMonth() + 1);
-        counter++;
+        cursor = new Date(cursor);
+        cursor.setMonth(cursor.getMonth() + 1);
+        count++;
       }
     }
 
-    if (ibadahInstances.length > 0) {
-      await prisma.ibadah.createMany({
-        data: ibadahInstances,
-      });
-    }
+    await prisma.ibadah.createMany({ data: ibadahList });
 
     return NextResponse.json(
       {
-        message: `${repetition_type} Event created successfully`,
-        weeklyEvent: newWeeklyEvent,
+        message: `${repetition_type} event created`,
+        total: ibadahList.length,
       },
       { status: 201 }
     );
-  } catch (error: unknown) {
-    console.error("❌ Error in POST /api/weekly-events:", error);
-
-    const message =
-      error instanceof Error ? error.message : "Unknown server error";
-
-    return NextResponse.json({ error: message }, { status: 500 });
+  } catch (err) {
+    console.error("❌ weekly-events POST error:", err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
 
-// ==============================
-// GET HANDLER
-// ==============================
 export async function GET() {
-  try {
-    const weeklyEvents = await prisma.weeklyEvent.findMany({
-      include: {
-        Ibadah: {
-          select: {
-            id_ibadah: true,
-            tanggal_ibadah: true,
-          },
-          orderBy: {
-            tanggal_ibadah: "asc",
-          },
-        },
+  const events = await prisma.weeklyEvent.findMany({
+    where: {
+      repetition_type: {
+        not: "Once",
       },
-      orderBy: {
-        start_date: "asc",
+    },
+    include: {
+      Ibadah: {
+        orderBy: { tanggal_ibadah: "asc" },
       },
-    });
+    },
+    orderBy: { start_date: "asc" },
+  });
 
-    return NextResponse.json(weeklyEvents);
-  } catch (error: unknown) {
-    console.error("❌ Error in GET /api/weekly-events:", error);
-
-    return NextResponse.json(
-      { error: "Internal Server Error" },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(events);
 }
