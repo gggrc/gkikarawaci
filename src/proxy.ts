@@ -23,7 +23,7 @@ export default clerkMiddleware(async (auth, req) => {
       // Kita panggil API /api/me untuk tahu status user dari database Prisma
       const baseUrl = req.nextUrl.origin;
       const res = await fetch(`${baseUrl}/api/me`, {
-        headers: { Cookie: req.headers.get("cookie") || "" },
+        headers: { Cookie: req.headers.get("cookie")?? "" },
       });
 
       if (res.ok) {

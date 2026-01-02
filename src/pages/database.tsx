@@ -24,6 +24,14 @@ interface WeeklyEvent {
   Ibadah?: { tanggal_ibadah: string }[]; // Tambahkan properti Ibadah sesuai penggunaan
 }
 
+interface SingleEvent {
+  id_ibadah: string;
+  jenis_kebaktian: string;
+  sesi_ibadah: number;
+  tanggal_ibadah: string;
+  weeklyEventId: string | null;
+}
+
 
 // --- Tipe Data Lainnya ---
 
@@ -56,6 +64,11 @@ export interface PreviewModalData {
 type ViewMode = 'event_per_table' | 'monthly_summary';
 type SelectedEventsByDate = Record<string, string[]>;
 type EventsCache = Record<string, string[]>;
+
+type WeeklyEventAPIResponse = {
+  weeklyEvents: WeeklyEvent[];
+  singleEvents: SingleEvent[];
+};
 
 interface CustomConfirmation {
     isOpen: boolean;
@@ -250,92 +263,6 @@ const getNextDayOfWeek = (fromDate: Date, targetDayOfWeek: number): Date => {
     
     result.setDate(result.getDate() + daysToAdd);
     return result;
-};
-
-/**
- * FIX: Fungsi untuk generate tanggal berulang berdasarkan periode
- * Perbaikan utama: Logika perhitungan end date dan iterasi mingguan/bulanan
- */
-const generateDatesForPeriod = (startDayKey: string, dayOfWeek: number | 'Per Tanggal', period: string): string[] => {
-    const dates: string[] = [];
-    const baseDate = new Date(startDayKey);
-    
-    if (isNaN(baseDate.getTime())) {
-        console.error("Invalid startDayKey:", startDayKey);
-        return [];
-    }
-    
-    // 1. Hitung tanggal akhir berdasarkan periode
-    const endDate = new Date(baseDate.getTime());
-    
-    if (period === '10y') {
-        endDate.setFullYear(endDate.getFullYear() + 10);
-    } else {
-        const match = /^(\d+)([my])$/.exec(period);
-        if (!match) {
-            console.error("Invalid period format:", period);
-            return [];
-        }
-        
-        const duration = parseInt(match[1]!, 10);
-        const unit = match[2];
-        
-        if (unit === 'm') {
-            endDate.setMonth(endDate.getMonth() + duration);
-        } else if (unit === 'y') {
-            endDate.setFullYear(endDate.getFullYear() + duration);
-        }
-    }
-    
-    // Safety: maksimal 10 tahun ke depan
-    const maxDate = new Date();
-    maxDate.setFullYear(maxDate.getFullYear() + 10);
-    if (endDate.getTime() > maxDate.getTime()) {
-        endDate.setTime(maxDate.getTime());
-    }
-    
-    // 2. Mulai dari hari setelah baseDate
-    let currentDate = new Date(baseDate.getTime());
-    currentDate.setDate(currentDate.getDate() + 1);
-    
-    // const todayTime = new Date().setHours(0, 0, 0, 0); // Logic ini dihapus karena user ingin semua tanggal ke depan di-generate
-
-    if (dayOfWeek === 'Per Tanggal') { // Monthly Repetition Logic
-        currentDate.setDate(1); // Set ke tanggal 1
-        currentDate.setMonth(currentDate.getMonth() + 1); // Pindah ke bulan berikutnya
-
-        const targetDay = baseDate.getDate(); // Tanggal perulangan (misal: tgl 15)
-        
-        while (currentDate.getTime() <= endDate.getTime()) {
-            currentDate.setDate(targetDay); // Set ke tanggal target
-            
-            // Cek jika tanggal yang dihasilkan valid
-            if (currentDate.getMonth() === currentDate.getMonth()) {
-                const dayKey = getDayKey(currentDate);
-                dates.push(dayKey);
-            }
-            
-            // Pindah ke bulan berikutnya
-            currentDate.setMonth(currentDate.getMonth() + 1);
-        }
-
-    } else { // Weekly Repetition Logic
-        
-        // 3. Cari kemunculan pertama dari dayOfWeek yang diminta
-        currentDate = getNextDayOfWeek(currentDate, dayOfWeek);
-        
-        // 4. Loop untuk mengumpulkan semua tanggal yang valid
-        while (currentDate.getTime() <= endDate.getTime()) {
-            // Hanya tambahkan tanggal (tanpa mempedulikan masa depan/sekarang/lalu)
-            const dayKey = getDayKey(currentDate);
-            dates.push(dayKey);
-            
-            // Pindah ke minggu berikutnya (7 hari)
-            currentDate.setDate(currentDate.getDate() + 7);
-        }
-    }
-    
-    return dates;
 };
 
 // --- Helper untuk in-memory storage ---
@@ -866,9 +793,20 @@ export default function DatabasePage() {
 
         // --- 2. PROSES DATA WEEKLY EVENTS ---
         let fetchedWeeklyEvents: WeeklyEvent[] = [];
+        let fetchedSingleEvents: SingleEvent[] = [];
+
         if (weeklyEventsRes.ok) {
-            fetchedWeeklyEvents = await weeklyEventsRes.json() as WeeklyEvent[];
-            setWeeklyEvents(fetchedWeeklyEvents);
+          const weeklyData = (await weeklyEventsRes.json()) as WeeklyEventAPIResponse;
+
+          fetchedWeeklyEvents = Array.isArray(weeklyData.weeklyEvents)
+            ? weeklyData.weeklyEvents
+            : [];
+
+          fetchedSingleEvents = Array.isArray(weeklyData.singleEvents)
+            ? weeklyData.singleEvents
+            : [];
+
+          setWeeklyEvents(fetchedWeeklyEvents);
         } else {
           const errorData = (await weeklyEventsRes.json().catch(() => ({
             error: "Unknown weekly-events API error."
@@ -892,10 +830,35 @@ export default function DatabasePage() {
         });
         
         // **Menggunakan Logika Integrasi yang Benar**
-        const mergedEvents = integrateWeeklyEvents(fetchedWeeklyEvents, initialEvents, allUniqueSessions);
-        
-        setEvents(mergedEvents);
-        memoryStorage.events = mergedEvents;
+        // 🟧 1. Convert single events → calendar mapping
+        fetchedSingleEvents.forEach((item) => {
+            const key = getDayKey(new Date(item.tanggal_ibadah));
+
+            initialEvents[key] = initialEvents[key] ?? [];
+
+            // hindari duplikasi
+            if (!initialEvents[key].includes(item.jenis_kebaktian)) {
+                initialEvents[key].push(item.jenis_kebaktian);
+            }
+        });
+
+        // 🟦 2. Convert weekly events → tiap Ibadah instance
+        fetchedWeeklyEvents.forEach((w) => {
+            (w.Ibadah ?? []).forEach((ib) => {
+                const key = getDayKey(new Date(ib.tanggal_ibadah));
+
+                initialEvents[key] = initialEvents[key] ?? [];
+
+                if (!initialEvents[key].includes(w.title)) {
+                    initialEvents[key].push(w.title);
+                }
+            });
+        });
+
+        // 🟩 3. Set final events
+        setEvents(initialEvents);
+        memoryStorage.events = initialEvents;
+
         
       } catch (err) {
         const errorMessage = err instanceof Error ? err.message : "Terjadi kesalahan saat mengambil data (unknown error).";
@@ -936,10 +899,8 @@ export default function DatabasePage() {
             
             // Gunakan sesi unik sebagai base event list jika belum di-cache atau kosong
             // PERUBAHAN KRITIS 1: Hanya isi event jika ada data kehadiran aktual
-            if (!currentEvents) {
-              currentEvents = populateEventsForDate(dateKey, date, allUniqueSessions);
-            }
-            const dayOfWeek = date.getDay();
+            currentEvents ??= populateEventsForDate(dateKey, date, allUniqueSessions);
+            //const dayOfWeek = date.getDay();
 
             // Integrate Weekly Events for the currently viewed month
             
@@ -1145,9 +1106,7 @@ export default function DatabasePage() {
     let currentEvents = events[key];
     const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
 
-    if (!currentEvents) {
-      currentEvents = populateEventsForDate(key, clickedDate, allUniqueSessions);
-    }
+    currentEvents ??= populateEventsForDate(key, clickedDate, allUniqueSessions);
 
     let newDates: Date[];
     const newEventsByDate = { ...selectedEventsByDate };
@@ -1347,11 +1306,19 @@ export default function DatabasePage() {
     
     setShowEventModal(false);
     setEventModalData({}); 
+    let newFetchedWeeklyEvents: WeeklyEvent[] = [];
     const weeklyEventsRes = await fetch("/api/weekly-events");
+
     if (weeklyEventsRes.ok) {
-      // Use 'as' to cast the response to your WeeklyEvent array type
-      const updatedWeekly = (await weeklyEventsRes.json()) as WeeklyEvent[];
-      setWeeklyEvents(updatedWeekly);
+        const weeklyData = (await weeklyEventsRes.json()) as WeeklyEventAPIResponse;
+
+        newFetchedWeeklyEvents = Array.isArray(weeklyData.weeklyEvents)
+            ? weeklyData.weeklyEvents
+            : [];
+
+        setWeeklyEvents(newFetchedWeeklyEvents);
+    } else {
+        newFetchedWeeklyEvents = [];
     }
     showAlert("Sukses", `Event "${newName}" berhasil ditambahkan.`);
   }, [eventModalData, events, selectedDates, showAlert]);
@@ -1413,7 +1380,7 @@ export default function DatabasePage() {
       day_of_week,
       end_date,
     };
-    
+    const fetchedWeeklyEvents: WeeklyEvent[] = [];
     // --- API CALL FOR PERSISTENCE ---
     try {
         const res = await fetch("/api/weekly-events", {
@@ -1429,14 +1396,18 @@ export default function DatabasePage() {
         
         // 3. Update State (Refresh data event dari API)
         const weeklyEventsRes = await fetch("/api/weekly-events");
-        let updatedWeeklyEvents = weeklyEvents;
+
         if (weeklyEventsRes.ok) {
-             updatedWeeklyEvents = await weeklyEventsRes.json() as WeeklyEvent[];
-             setWeeklyEvents(updatedWeeklyEvents);
+            const weeklyData = (await weeklyEventsRes.json()) as WeeklyEventAPIResponse;
+
+            const fetchedWeeklyEvents: WeeklyEvent[] = Array.isArray(weeklyData.weeklyEvents)
+                ? weeklyData.weeklyEvents
+                : [];
+            setWeeklyEvents(fetchedWeeklyEvents);
         }
 
         const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
-        const newEventsCache = integrateWeeklyEvents(updatedWeeklyEvents, memoryStorage.events, allUniqueSessions);
+        const newEventsCache = integrateWeeklyEvents(fetchedWeeklyEvents, memoryStorage.events, allUniqueSessions);
         setEvents(newEventsCache);
         memoryStorage.events = newEventsCache;
         
@@ -1444,7 +1415,7 @@ export default function DatabasePage() {
         const newDates: Date[] = [];
         const newEventsByDate: SelectedEventsByDate = {};
         
-        const newPeriodicalEvent = updatedWeeklyEvents.find(e => e.title === eventName);
+        const newPeriodicalEvent = fetchedWeeklyEvents.find(e => e.title === eventName);
         if (newPeriodicalEvent) {
           const currentDate = new Date(newPeriodicalEvent.start_date);
           const loopEndDate = newPeriodicalEvent.end_date
@@ -2989,8 +2960,6 @@ export default function DatabasePage() {
                 onUpdateData={updateEventModalData}
                 onClose={() => setShowEventModal(false)}
                 onAction={handleEventAction}
-                // Jika ingin menggunakan logika periodik bawaan dari modal:
-                generateDatesForPeriod={generateDatesForPeriod}
             />
         )}
         

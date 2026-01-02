@@ -162,15 +162,29 @@ export async function POST(req: Request) {
   }
 }
 
+// ======================
+// PUT (Update Event)
+// ======================
+
 export async function PUT(req: Request) {
   try {
-    const body = await req.json();
+    // Tentukan tipe data PUT
+    interface UpdateWeeklyEventBody {
+      id: string;
+      title: string;
+      description?: string | null;
+      start_date: string;
+      end_date?: string | null;
+      repetition_type: "Once" | "Weekly" | "Monthly";
+    }
+
+    const body = (await req.json()) as UpdateWeeklyEventBody;
 
     const updated = await prisma.weeklyEvent.update({
       where: { id: body.id },
       data: {
         title: body.title,
-        description: body.description,
+        description: body.description ?? null,
         start_date: new Date(body.start_date),
         end_date: body.end_date ? new Date(body.end_date) : null,
         repetition_type: body.repetition_type,
@@ -178,11 +192,16 @@ export async function PUT(req: Request) {
     });
 
     return NextResponse.json(updated, { status: 200 });
+
   } catch (err) {
     console.error("❌ weekly-events PUT error:", err);
-    return NextResponse.json({ error: "Failed to update event" }, { status: 500 });
+    return NextResponse.json(
+      { error: "Failed to update event" }, 
+      { status: 500 }
+    );
   }
 }
+
 
 export async function DELETE(req: Request) {
   try {
