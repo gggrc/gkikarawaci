@@ -76,27 +76,6 @@ export default function Home() {
             </Link>
           </SignedOut>
         </div>
-
-        <div className="absolute -bottom-16 left-1/2 z-20 grid w-11/12 -translate-x-1/2 transform grid-cols-2 gap-4 rounded-xl bg-white p-6 shadow-2xl sm:gap-6 sm:rounded-2xl sm:p-10 md:w-3/4 md:grid-cols-3">
-          <div className="text-center">
-            <div className="text-sm font-semibold text-gray-600 sm:text-base">
-              Statistik Ibadah
-            </div>
-            <div className="text-xl font-bold">xxx</div>
-          </div>
-          <div className="text-center">
-            <div className="text-sm font-semibold text-gray-600 sm:text-base">
-              Jumlah Jemaat
-            </div>
-            <div className="text-xl font-bold">xxx</div>
-          </div>
-          <div className="hidden text-center sm:block">
-            <div className="text-sm font-semibold text-gray-600 sm:text-base">
-              Pelayanan Aktif
-            </div>
-            <div className="text-xl font-bold">xxx</div>
-          </div>
-        </div>
       </section>
 
       <section

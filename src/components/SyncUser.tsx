@@ -1,19 +1,31 @@
-// src/pages/api/syncUser.ts
-import type { NextApiRequest, NextApiResponse } from "next";
-import { getAuth } from "@clerk/nextjs/server";
+import { useUser } from "@clerk/nextjs";
+import { useEffect } from "react";
 
-export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  // Logic sinkronisasi (upsert ke Prisma) telah dihapus dari sini.
-  // Sinkronisasi kini sepenuhnya ditangani oleh CLERK WEBHOOK.
+export function SyncUser() {
+  const { user } = useUser();
 
-  try {
-    const { userId } = getAuth(req);
-    if (!userId) return res.status(401).json({ message: "Unauthorized" });
+  useEffect(() => {
+    if (!user) return;
 
-    // Cukup kembalikan sukses, mengindikasikan bahwa user telah terotentikasi.
-    res.status(200).json({ message: "User sync process initiated (delegated to Webhook)" });
-  } catch (error) {
-    console.error("syncUser error:", error);
-    res.status(500).json({ message: "Internal server error" });
-  }
+    // Gunakan localStorage untuk mencegah double-sync di halaman yang berbeda
+    const lastSync = localStorage.getItem(`sync_${user.id}`);
+    const now = Date.now();
+
+    // Hanya sync jika belum pernah sync atau sudah lewat 1 jam
+    if (!lastSync || now - parseInt(lastSync) > 3600000) {
+      void fetch("/api/syncUser", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: user.id,
+          name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
+          email: user.primaryEmailAddress?.emailAddress,
+        }),
+      }).then(() => {
+        localStorage.setItem(`sync_${user.id}`, now.toString());
+      });
+    }
+  }, [user]);
+
+  return null;
 }

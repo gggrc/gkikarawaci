@@ -1,50 +1,27 @@
 import { type AppType } from "next/app";
 import { Geist } from "next/font/google";
 import { api } from "~/utils/api";
-import { ClerkProvider, useUser } from "@clerk/nextjs";
-import { useEffect } from "react";
-
+import { ClerkProvider } from "@clerk/nextjs";
+import dynamic from "next/dynamic";
 import "~/styles/globals.css";
 
 const geist = Geist({
   subsets: ["latin"],
+  display: 'swap', // Optimasi font display
 });
 
-function SyncUser() {
-  const { user } = useUser();
-
-  useEffect(() => {
-    if (!user) return;
-
-    const syncUser = async () => {
-      try {
-        await fetch("/api/syncUser", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            id: user.id,
-            name: `${user.firstName ?? ""} ${user.lastName ?? ""}`.trim(),
-            email: user.primaryEmailAddress?.emailAddress,
-          }),
-        });
-        console.log("✅ Synced user globally:", user.id);
-      } catch (err) {
-        console.error("❌ Failed to sync user:", err);
-      }
-    };
-
-    void syncUser();
-  }, [user]);
-
-  return null;
-}
+// Lazy Load SyncUser agar tidak menambah beban bundle awal
+const LazySyncUser = dynamic(() => import("~/components/SyncUser").then(mod => mod.SyncUser), {
+  ssr: false,
+});
 
 const MyApp: AppType = ({ Component, pageProps }) => {
   return (
     <div className={geist.className}>
       <ClerkProvider {...pageProps}>
-        {/* 👇 Syncs the user globally on login */}
-        <SyncUser />
+        {/* Hanya dipanggil di client-side */}
+        <LazySyncUser />
+        {/* Next.js secara otomatis melakukan code-splitting pada Component */}
         <Component {...pageProps} />
       </ClerkProvider>
     </div>
