@@ -1,18 +1,36 @@
-import { createClient } from "@/lib/supabase/server";
-import { db } from "@/server/db";
+export const runtime = "nodejs";
+
+import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
 
 export async function GET() {
-  const supabase = await createClient();
-  const { data: { user } } = await supabase.auth.getUser();
+  const { userId } = await auth();  // ⬅️ FIX: harus await
 
-  if (!user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  // Belum login
+  if (!userId) {
+    return NextResponse.json({
+      role: null,
+      isVerified: "pending",
+    });
   }
 
-  const dbUser = await db.user.findUnique({
-    where: { id: user.id }
-  });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { clerkId: userId },
+      select: { role: true, isVerified: true },
+    });
 
-  return NextResponse.json(dbUser);
+    return NextResponse.json({
+      role: user?.role ?? "user",
+      isVerified: user?.isVerified ?? "pending",
+    });
+
+  } catch (error) {
+    console.error("❌ Error in /api/me:", error);
+    return NextResponse.json({
+      role: null,
+      isVerified: "pending",
+    });
+  }
 }
