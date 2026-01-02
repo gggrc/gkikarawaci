@@ -162,13 +162,49 @@ export async function POST(req: Request) {
   }
 }
 
-export async function GET() {
-  const events = await prisma.weeklyEvent.findMany({
-    where: {
-      repetition_type: {
-        not: "Once",
+export async function PUT(req: Request) {
+  try {
+    const body = await req.json();
+
+    const updated = await prisma.weeklyEvent.update({
+      where: { id: body.id },
+      data: {
+        title: body.title,
+        description: body.description,
+        start_date: new Date(body.start_date),
+        end_date: body.end_date ? new Date(body.end_date) : null,
+        repetition_type: body.repetition_type,
       },
-    },
+    });
+
+    return NextResponse.json(updated, { status: 200 });
+  } catch (err) {
+    console.error("❌ weekly-events PUT error:", err);
+    return NextResponse.json({ error: "Failed to update event" }, { status: 500 });
+  }
+}
+
+export async function DELETE(req: Request) {
+  try {
+    const { searchParams } = new URL(req.url);
+    const id = searchParams.get("id");
+
+    await prisma.weeklyEvent.delete({
+      where: { id: id! },
+    });
+
+    return NextResponse.json({ success: true });
+  } catch (err) {
+    console.error("❌ weekly-events DELETE error:", err);
+    return NextResponse.json(
+      { error: "Failed to delete event" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function GET() {
+  const weekly = await prisma.weeklyEvent.findMany({
     include: {
       Ibadah: {
         orderBy: { tanggal_ibadah: "asc" },
@@ -177,5 +213,13 @@ export async function GET() {
     orderBy: { start_date: "asc" },
   });
 
-  return NextResponse.json(events);
+  const singleEvents = await prisma.ibadah.findMany({
+    where: { weeklyEventId: null },
+    orderBy: { tanggal_ibadah: "asc" },
+  });
+
+  return NextResponse.json({
+    weeklyEvents: weekly,
+    singleEvents: singleEvents,
+  });
 }
