@@ -110,20 +110,13 @@ export default function WaitingPage() {
               : "Akun Anda sedang diverifikasi. Anda akan diarahkan otomatis setelah disetujui."}
           </p>
 
-          <div className="flex flex-col justify-center gap-3 sm:flex-row">
-            {/* ARAHAN KE INDEX.TSX */}
+          <div className="flex flex-col justify-center">
             <Link
               href="/"
-              className="w-full rounded-md bg-indigo-600 px-4 py-2 font-semibold text-white transition hover:bg-indigo-700 sm:w-auto"
+              className="w-full rounded-md bg-indigo-600 px-4 py-2 font-semibold text-white transition hover:bg-indigo-700"
             >
               Kembali ke Beranda
             </Link>
-            <a
-              href="mailto:admin@example.com"
-              className="w-full rounded-md border border-gray-300 px-4 py-2 font-semibold text-gray-700 transition hover:bg-gray-100 sm:w-auto"
-            >
-              Hubungi Admin
-            </a>
           </div>
         </section>
       </main>

@@ -26,28 +26,40 @@ export default function MainLayout({ children, activeSection }: Props) {
         <link rel="icon" href="/LOGOGKI.png" />
       </Head>
 
-      <nav className="fixed top-0 left-0 z-50 flex w-full items-center justify-between px-4 sm:px-8 py-4 sm:py-6 bg-black/80 backdrop-blur-sm transition-none">
+      <nav className="fixed top-0 left-0 z-50 flex w-full items-center justify-between px-4 sm:px-8 py-4 bg-black/80 backdrop-blur-sm">
         <div className="flex items-center space-x-4">
-          <Image src="/LOGOGKI.png" alt="Logo" width={36} height={36} className="h-9 w-9 sm:h-12 sm:w-12" unoptimized />
-          <span className="text-white font-semibold text-lg sm:text-xl">GKI Karawaci</span>
+          <Image 
+            src="/LOGOGKI.png" 
+            alt="Logo" 
+            width={40} 
+            height={40} 
+            priority // Memuat logo lebih cepat (LCP optimization)
+            unoptimized 
+          />
+          <span className="text-white font-semibold text-lg">GKI Karawaci</span>
         </div>
         
-        <ul className="hidden md:flex items-center space-x-4 sm:space-x-8 text-white font-medium ml-auto">
+        <ul className="hidden md:flex items-center space-x-8 text-white font-medium">
           {navLinks.map((link) => (
-            <li key={link.name} className={`cursor-pointer transition ${activeSection === link.viewKey ? "text-blue-400 font-bold underline underline-offset-4" : "hover:text-blue-400"}`}>
-              <a href={link.href}>{link.name}</a>
+            <li key={link.name}>
+              <Link 
+                href={link.href}
+                className={`transition-colors ${activeSection === link.viewKey ? "text-blue-400 font-bold" : "hover:text-blue-400"}`}
+              >
+                {link.name}
+              </Link>
             </li>
           ))}
           <li>
             <SignedOut>
-              <Link href="/login">
-                <button className="px-5 py-2 rounded-full border border-white text-white hover:bg-white hover:text-[#0f172a] transition">Login</button>
+              <Link href="/login" className="px-5 py-2 rounded-full border border-white hover:bg-white hover:text-black transition">
+                Login
               </Link>
             </SignedOut>
             <SignedIn>
               <div className="flex items-center gap-3">
-                <Link href="/statistic">
-                  <button className="px-4 py-2 rounded-full border border-white text-white hover:bg-blue-300 hover:text-[#0f172a] transition">Daftar Hadir</button>
+                <Link href="/statistic" className="px-4 py-2 rounded-full bg-blue-600 hover:bg-blue-700 transition">
+                  Daftar Hadir
                 </Link>
                 <UserButton afterSignOutUrl="/" />
               </div>
@@ -55,26 +67,24 @@ export default function MainLayout({ children, activeSection }: Props) {
           </li>
         </ul>
 
-        <button className="md:hidden p-2 text-white hover:text-blue-400 transition" onClick={() => setIsMobileMenuOpen(true)}>
+        <button className="md:hidden p-2 text-white" onClick={() => setIsMobileMenuOpen(true)}>
           <Menu size={28} />
         </button>
       </nav>
 
       {/* Mobile Drawer */}
       {isMobileMenuOpen && (
-        <div className="fixed inset-0 z-60 bg-black/30 backdrop-blur-sm transition-opacity duration-300">
-          <div className="absolute top-0 right-0 w-64 h-full bg-[#0f172a] shadow-2xl p-6 animate-slide-in-right">
-            <div className="flex justify-end mb-8 border-b border-gray-700 pb-3">
-              <button className="p-2 text-white hover:text-red-400 transition" onClick={() => setIsMobileMenuOpen(false)}>
-                <X size={28} />
-              </button>
+        <div className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm" onClick={() => setIsMobileMenuOpen(false)}>
+          <div className="absolute top-0 right-0 w-64 h-full bg-[#0f172a] p-6" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-end mb-8">
+              <button onClick={() => setIsMobileMenuOpen(false)} className="text-white"><X size={28} /></button>
             </div>
-            <ul className="flex flex-col space-y-4 text-white font-medium">
+            <ul className="flex flex-col space-y-4">
               {navLinks.map((link) => (
                 <li key={link.name}>
-                  <a href={link.href} className={`text-xl block py-2 ${activeSection === link.viewKey ? "text-blue-400 font-bold border-b-2 border-blue-400" : ""}`} onClick={() => setIsMobileMenuOpen(false)}>
+                  <Link href={link.href} onClick={() => setIsMobileMenuOpen(false)} className="text-white text-xl block">
                     {link.name}
-                  </a>
+                  </Link>
                 </li>
               ))}
             </ul>
@@ -82,15 +92,12 @@ export default function MainLayout({ children, activeSection }: Props) {
         </div>
       )}
 
-      <main>{children}</main>
+      {/* Main Content: Next.js hanya akan merender konten halaman yang aktif di sini */}
+      <main className="min-h-screen">{children}</main>
 
-      <footer className="w-full bg-[#0f172a] text-white py-8 sm:py-10">
-        <div className="container mx-auto px-6 md:px-12 flex flex-col md:flex-row justify-between items-center gap-4 sm:gap-6">
-          <div className="text-center md:text-left">
-            <h3 className="text-lg sm:text-xl font-bold">GKI Karawaci</h3>
-            <p className="text-xs sm:text-sm text-gray-300 mt-2">Ruko Villa Permata Blok C1 No. 3&8, Binong, Tangerang, Banten 15810</p>
-          </div>
-          <div className="text-sm text-gray-200 text-center md:text-right">© 2025 GKI Karawaci. All rights reserved.</div>
+      <footer className="bg-[#0f172a] text-white py-8">
+        <div className="container mx-auto px-6 text-center md:text-left">
+          <p>© 2025 GKI Karawaci</p>
         </div>
       </footer>
     </>
