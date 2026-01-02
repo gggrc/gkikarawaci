@@ -165,42 +165,65 @@ export async function POST(req: Request) {
 // ======================
 // PUT (Update Event)
 // ======================
-
 export async function PUT(req: Request) {
   try {
-    // Tentukan tipe data PUT
-    interface UpdateWeeklyEventBody {
-      id: string;
-      title: string;
-      description?: string | null;
-      start_date: string;
-      end_date?: string | null;
-      repetition_type: "Once" | "Weekly" | "Monthly";
+    const body = await req.json();
+
+    // ======================
+    // SINGLE EVENT (Once)
+    // ======================
+    if (body.type === "single") {
+      const { dateKey, oldTitle, newTitle } = body;
+
+      await prisma.ibadah.updateMany({
+        where: {
+          tanggal_ibadah: new Date(dateKey),
+          jenis_kebaktian: oldTitle,
+          weeklyEventId: null,
+        },
+        data: {
+          jenis_kebaktian: newTitle,
+        },
+      });
+
+      return NextResponse.json({ success: true });
     }
 
-    const body = (await req.json()) as UpdateWeeklyEventBody;
+    // ======================
+    // PERIODICAL EVENT
+    // ======================
+    if (body.type === "periodical") {
+      const { weeklyEventId, newTitle } = body;
 
-    const updated = await prisma.weeklyEvent.update({
-      where: { id: body.id },
-      data: {
-        title: body.title,
-        description: body.description ?? null,
-        start_date: new Date(body.start_date),
-        end_date: body.end_date ? new Date(body.end_date) : null,
-        repetition_type: body.repetition_type,
-      },
-    });
+      const weekly = await prisma.weeklyEvent.findUnique({
+        where: { id: weeklyEventId },
+      });
 
-    return NextResponse.json(updated, { status: 200 });
+      if (!weekly) {
+        return NextResponse.json({ error: "Event not found" }, { status: 404 });
+      }
+
+      await prisma.weeklyEvent.update({
+        where: { id: weeklyEventId },
+        data: { title: newTitle },
+      });
+
+      await prisma.ibadah.updateMany({
+        where: { weeklyEventId },
+        data: { jenis_kebaktian: newTitle },
+      });
+
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Invalid PUT type" }, { status: 400 });
 
   } catch (err) {
     console.error("❌ weekly-events PUT error:", err);
-    return NextResponse.json(
-      { error: "Failed to update event" }, 
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "PUT failed" }, { status: 500 });
   }
 }
+
 
 
 export async function DELETE(req: Request) {

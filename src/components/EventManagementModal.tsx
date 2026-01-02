@@ -303,7 +303,8 @@ export default function EventManagementModal({
                 type: "weekly",
                 title: newName,
                 startDateKey: dateKey!,
-                repeatDay: Number(periodicalDayOfWeek),
+                repeatDay: Number(periodicalDayOfWeek), // ok
+                day_of_week: Number(periodicalDayOfWeek),
                 endDate: endDate?.toISOString() ?? null,
               });
             }}
