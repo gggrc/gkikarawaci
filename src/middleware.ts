@@ -1,73 +1,58 @@
-import { createServerClient, type CookieOptions } from '@supabase/ssr'
-import { NextResponse, type NextRequest } from 'next/server'
+// src/middleware.ts
+import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
-export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({
-    request: { headers: request.headers },
-  })
+// Tentukan route mana saja yang butuh login (proteksi umum)
+const isProtectedRoute = createRouteMatcher([
+  "/statistic(.*)",
+  "/databaseUser(.*)",
+  "/user(.*)",
+]);
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        get(name: string) { return request.cookies.get(name)?.value },
-        set(name: string, value: string, options: CookieOptions) {
-          request.cookies.set({ name, value, ...options })
-          response = NextResponse.next({ request: { headers: request.headers } })
-          response.cookies.set({ name, value, ...options })
-        },
-        remove(name: string, options: CookieOptions) {
-          request.cookies.set({ name, value: '', ...options })
-          response = NextResponse.next({ request: { headers: request.headers } })
-          response.cookies.set({ name, value: '', ...options })
-        },
-      },
-    }
-  )
+export default clerkMiddleware(async (auth, req) => {
+  const { userId } = await auth();
 
-  // Cek Session
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const isProtectedRoute = request.nextUrl.pathname.startsWith('/statistic') || 
-                           request.nextUrl.pathname.startsWith('/databaseUser') ||
-                           request.nextUrl.pathname.startsWith('/user');
-
-  // 1. Belum Login
-  if (isProtectedRoute && !user) {
-    return NextResponse.redirect(new URL('/login', request.url))
+  // 1. Jika mencoba akses route yang diproteksi tapi belum login
+  if (isProtectedRoute(req) && !userId) {
+    return (await auth()).redirectToSignIn();
   }
 
-  // 2. Sudah Login, Cek Status via API Internal (Prisma)
-  if (user && isProtectedRoute) {
+  // 2. Jika sudah login, cek status verifikasi via API internal
+  if (userId && isProtectedRoute(req)) {
     try {
-      const baseUrl = request.nextUrl.origin;
+      // Kita panggil API /api/me untuk tahu status user dari database Prisma
+      const baseUrl = req.nextUrl.origin;
       const res = await fetch(`${baseUrl}/api/me`, {
-        headers: { Cookie: request.headers.get("cookie") || "" },
+        headers: { Cookie: req.headers.get("cookie") || "" },
       });
 
       if (res.ok) {
         const userData = await res.json();
 
-        if (userData.isVerified === "pending" || userData.isVerified === "rejected") {
-          if (request.nextUrl.pathname !== "/waiting") {
-            return NextResponse.redirect(new URL("/waiting", request.url));
-          }
+        // LOGIKA: Belum diverifikasi -> Arahkan ke Waiting
+        if (userData.isVerified === "pending") {
+          return NextResponse.redirect(new URL("/waiting", req.url));
         }
 
-        const isAdminRoute = request.nextUrl.pathname.startsWith("/databaseUser");
+        // LOGIKA: Ditolak -> Arahkan ke Rejected (atau tetap di waiting dengan status error)
+        if (userData.isVerified === "rejected") {
+          return NextResponse.redirect(new URL("/waiting", req.url));
+        }
+
+        // LOGIKA: Unauthorized (User biasa mencoba masuk ke halaman admin)
+        const isAdminRoute = req.nextUrl.pathname.startsWith("/databaseUser");
         if (isAdminRoute && userData.role !== "admin") {
-          return NextResponse.redirect(new URL("/unauthorized", request.url));
+          return NextResponse.redirect(new URL("/unauthorized", req.url));
         }
       }
-    } catch (e) {
-      console.error("Middleware Error:", e);
+    } catch (error) {
+      console.error("Middleware Auth Error:", error);
     }
   }
 
-  return response
-}
+  return NextResponse.next();
+});
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp)$).*)'],
-}
+  matcher: ["/((?!.*\\..*|_next).*)", "/", "/(api|trpc)(.*)"],
+};

@@ -1,12 +1,10 @@
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["multiSchema"] 
+  provider = "prisma-client-js"
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DIRECT_URL")
-  schemas  = ["public"] 
 }
 
 model Ibadah {
@@ -17,8 +15,6 @@ model Ibadah {
   weeklyEventId   String?
   weeklyEvent     WeeklyEvent? @relation(fields: [weeklyEventId], references: [id])
   Kehadiran       Kehadiran[]
-
-  @@schema("public") 
 }
 
 model Kehadiran {
@@ -30,8 +26,6 @@ model Kehadiran {
   name           String?
   ibadah         Ibadah    @relation(fields: [id_ibadah], references: [id_ibadah])
   jemaat         Jemaat    @relation(fields: [id_jemaat], references: [id_jemaat])
-
-  @@schema("public")
 }
 
 model Jemaat {
@@ -46,27 +40,21 @@ model Jemaat {
   age           Int
   handphone     String
   kehadiran     Kehadiran[]
-
-  @@schema("public")
 }
 
 model Statistics {
   stat_id String @id
   title   String
   text    String
-
-  @@schema("public")
 }
 
 model User {
-  id         String   @id 
+  user_id    Int    @id @default(autoincrement())
+  clerkId    String @unique
   nama       String
-  email      String   @unique
-  isVerified String   @default("pending")
-  role       String   @default("user")
-  createdAt  DateTime @default(now())
-
-  @@schema("public")
+  email      String
+  isVerified String @default("pending")
+  role       String
 }
 
 model WeeklyEvent {
@@ -79,6 +67,4 @@ model WeeklyEvent {
   repetition_type String    @default("Once")
   title           String
   Ibadah          Ibadah[]
-
-  @@schema("public")
 }
