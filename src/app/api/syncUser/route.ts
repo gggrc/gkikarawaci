@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
 import { supabase } from "@/lib/supabase-server"; 
-import type { Database } from "@/types/database.types"; 
 
 type IncomingUser = {
   id: string;

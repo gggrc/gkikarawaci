@@ -13,15 +13,19 @@ import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo 
 
 // --- Tipe Data Weekly Event (DITAMBAHKAN) ---
 interface WeeklyEvent {
-  id: string; // ID unik dari event berkala
-  title: string; // Nama event yang ditampilkan
-  day_of_week: number; // Hari (0=Minggu, 1=Senin, dst)
-  start_date: string; // Tanggal mulai (YYYY-MM-DD)
-  end_date: string | null; // Tanggal selesai (YYYY-MM-DD) atau null jika selamanya
+  id: string;
+  title: string;
+  day_of_week: number;
+  start_date: string;
+  end_date: string | null;
   repetition_type: 'Once' | 'Weekly' | 'Monthly';
   jenis_kebaktian: string;
   sesi_ibadah: number;
-  Ibadah?: { tanggal_ibadah: string }[]; // Tambahkan properti Ibadah sesuai penggunaan
+  // Update this part:
+  Ibadah?: { 
+    tanggal_ibadah: string; 
+    jenis_kebaktian: string; // Add this line
+  }[]; 
 }
 
 // List Jemaat Unik (untuk status overall, edit form, dan draft)
@@ -34,6 +38,19 @@ interface JemaatRow extends JemaatWithAttendanceInfo {
   id: string; // id_jemaat-tanggal (ID unik per record kehadiran)
   // Semua properti dari JemaatClient juga ada di sini
 }
+
+interface SingleEvent {
+  id_ibadah: string;
+  jenis_kebaktian: string;
+  sesi_ibadah: number;
+  tanggal_ibadah: string;
+  weeklyEventId: string | null;
+}
+
+type WeeklyEventAPIResponse = {
+  weeklyEvents: WeeklyEvent[];
+  singleEvents: SingleEvent[];
+};
 
 // Tipe Response dari API (Disesuaikan dari database.tsx)
 interface JemaatAPIResponse {
@@ -120,46 +137,6 @@ const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: S
     // Kembalikan event yang ada (minimal event keseluruhan)
     return finalEvents.length > 0 ? finalEvents : ["KESELURUHAN DATA HARI INI"];
 };
-
-// **Logika Integrasi Event Berkala (Caching)**
-const integrateWeeklyEvents = (
-  weeklyEvents: WeeklyEvent[], 
-  existingEvents: EventsCache, 
-  allUniqueSessions: Set<string>
-): EventsCache => {
-    const updatedEvents = { ...existingEvents };
-
-    for (const event of weeklyEvents) {
-        const eventName = event.title;
-        const lowerEventName = eventName.toLowerCase();
-
-        // Loop lewat semua tanggal Ibadah yang dikembalikan dari API
-        for (const ibadah of event.Ibadah ?? []) {
-            const ibadahDate = new Date(ibadah.tanggal_ibadah);
-            const dayKey = getDayKey(ibadahDate);
-
-            // Gunakan `populateEventsForDate` untuk mendapatkan list awal (termasuk sesi unik dari data kehadiran)
-            const initialEvents = updatedEvents[dayKey] ?? populateEventsForDate(dayKey, ibadahDate, allUniqueSessions);
-            const eventExists = initialEvents.some(e => e.toLowerCase() === lowerEventName);
-
-            if (!eventExists) {
-                updatedEvents[dayKey] = [
-                    "KESELURUHAN DATA HARI INI",
-                    ...initialEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"),
-                    eventName
-                ].filter((v, i, a) => a.indexOf(v) === i);
-            } else {
-                // perbaiki capitalization
-                updatedEvents[dayKey] = initialEvents.map(e =>
-                    e.toLowerCase() === lowerEventName ? eventName : e
-                );
-            }
-        }
-    }
-
-    return updatedEvents;
-};
-
 
 const getDatesWithEventsInMonth = (
   month: number, 
@@ -477,7 +454,7 @@ const SelectedEventsSection = ({
                                     >
                                         {ev}
                                         {isPeriodical && (
-                                            <span className="absolute top-[-4px] right-[-4px] text-[8px] bg-purple-600 text-white px-1 rounded-full font-bold">R</span>
+                                            <span className="absolute -top-1 -right-1 text-[8px] bg-purple-600 text-white px-1 rounded-full font-bold">R</span>
                                         )}
                                     </button>
                                     
@@ -563,81 +540,106 @@ export default function DatabasePage() {
   }, []);
 
   useEffect(() => {
-    // 💡 FUNGSI INI MENGAMBIL DATA UTAMA DARI TABEL KEHADIRAN & JEMAAT + WEEKLY EVENTS
     const fetchData = async () => {
       setIsLoading(true);
+
       try {
-        // Fetch both necessary data sources
         const [jemaatRes, weeklyEventsRes] = await Promise.all([
-          fetch("/api/jemaat"), // Data Jemaat dan Kehadiran (full)
-          fetch("/api/weekly-events"), // Data Event Berkala
+          fetch("/api/jemaat"),
+          fetch("/api/weekly-events"),
         ]);
 
-        // --- 1. PROSES DATA JEMAAT/KEHADIRAN ---
-        const data: unknown = await jemaatRes.json();
-        const apiResponse = data as JemaatAPIResponse;
-        
-        if (apiResponse.error) {
-          console.error("API Jemaat Error Body:", apiResponse.error);
-          throw new Error(apiResponse.error);
-        }
-        if (!jemaatRes.ok) {
-          throw new Error(`Gagal fetch data jemaat. Status: ${jemaatRes.status}`);
+        // ===============================
+        // 1. DATA JEMAAT & KEHADIRAN
+        // ===============================
+        const jemaatJson = (await jemaatRes.json()) as JemaatAPIResponse;
+
+        if (!jemaatRes.ok || jemaatJson.error) {
+          throw new Error(jemaatJson.error ?? "Gagal mengambil data jemaat");
         }
 
-        const fetchedUniqueJemaat = apiResponse.jemaatData ?? [];
-        setUniqueJemaatList(fetchedUniqueJemaat);
+        const attendanceRecords = jemaatJson.fullAttendanceRecords ?? [];
+        const attendanceDates = jemaatJson.attendanceDates || [];
 
-        setAttendanceRecords(apiResponse.fullAttendanceRecords ?? []);
+        setAttendanceRecords(attendanceRecords);
+        setActualAttendanceDates(attendanceDates);
+        setUniqueJemaatList(jemaatJson.jemaatData ?? []);
 
-        const fetchedAttendanceDates = apiResponse.attendanceDates || [];
+        // Sesi unik dari data kehadiran untuk default populate
+        const allUniqueSessions = new Set<string>(
+          attendanceRecords.map((j) => j.kehadiranSesi).filter(Boolean)
+        );
 
-        setActualAttendanceDates(fetchedAttendanceDates); 
-        
-        // Ambil semua sesi unik dari data kehadiran 
-        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) ?? []);
+        // ===============================
+        // 2. DATA EVENT (SINGLE & WEEKLY)
+        // ===============================
+        let weeklyEvents: WeeklyEvent[] = [];
+        let singleEvents: SingleEvent[] = [];
 
-        // --- 2. PROSES DATA WEEKLY EVENTS ---
-        let fetchedWeeklyEvents: WeeklyEvent[] = [];
         if (weeklyEventsRes.ok) {
-            fetchedWeeklyEvents = await weeklyEventsRes.json() as WeeklyEvent[];
-            setWeeklyEvents(fetchedWeeklyEvents);
-        } else {
-          const errorData = (await weeklyEventsRes.json().catch(() => ({
-            error: "Unknown weekly-events API error."
-          }))) as { error?: string };
-            console.error("API Weekly Events Error:", errorData);
+          const weeklyJson = (await weeklyEventsRes.json()) as WeeklyEventAPIResponse;
+          weeklyEvents = weeklyJson.weeklyEvents ?? [];
+          singleEvents = weeklyJson.singleEvents ?? [];
+          setWeeklyEvents(weeklyEvents);
         }
 
-        // --- 3. INTEGRASI DAN CACHE EVENT ---
-        const initialEvents: EventsCache = {};
+        // ===============================
+        // 3. INISIALISASI EVENTS CACHE (Source of Truth dari DB)
+        // ===============================
+        const eventsCache: EventsCache = {};
 
-        fetchedAttendanceDates.forEach(dateKey => {
-            const date = new Date(dateKey);
-            // Gunakan sesi unik sebagai base event list
-            initialEvents[dateKey] = populateEventsForDate(dateKey, date, allUniqueSessions); 
+        // Inisialisasi tanggal yang memiliki data kehadiran
+        attendanceDates.forEach((dateKey) => {
+          const date = new Date(dateKey);
+          eventsCache[dateKey] = populateEventsForDate(
+            dateKey,
+            date,
+            allUniqueSessions
+          );
         });
-        
-        // Menggunakan Logika Integrasi yang Benar
-        const mergedEvents = integrateWeeklyEvents(fetchedWeeklyEvents, initialEvents, allUniqueSessions);
-        
-        setEvents(mergedEvents);
-        memoryStorage.events = mergedEvents;
-        
+
+        // A. Masukkan Single Events (Ibadah lepas)
+        singleEvents.forEach((item) => {
+          const key = getDayKey(new Date(item.tanggal_ibadah));
+          eventsCache[key] = eventsCache[key] ?? ["KESELURUHAN DATA HARI INI"];
+          if (!eventsCache[key].includes(item.jenis_kebaktian)) {
+            eventsCache[key].push(item.jenis_kebaktian);
+          }
+        });
+
+        // B. Masukkan Weekly Events berdasarkan data baris Ibadah aktual
+        weeklyEvents.forEach((ev) => {
+          (ev.Ibadah ?? []).forEach((ibadah) => {
+            const key = getDayKey(new Date(ibadah.tanggal_ibadah));
+            eventsCache[key] = eventsCache[key] ?? ["KESELURUHAN DATA HARI INI"];
+            if (!eventsCache[key].includes(ibadah.jenis_kebaktian)) {
+              eventsCache[key].push(ibadah.jenis_kebaktian);
+            }
+          });
+        });
+
+        // ===============================
+        // 4. FINAL SET STATE + CACHE
+        // ===============================
+        setEvents(eventsCache);
+        memoryStorage.events = eventsCache;
+
       } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Terjadi kesalahan saat mengambil data (unknown error).";
-        console.error("Error fetch data:", errorMessage);
-        setUniqueJemaatList([]);
+        console.error("Fetch Data Error:", err);
+        // Karena ini databaseUser (read-only), kita gunakan alert biasa jika tidak ada custom modal
+        alert(err instanceof Error ? err.message : "Gagal memuat data");
+
         setAttendanceRecords([]);
-        setActualAttendanceDates([]); 
-        setWeeklyEvents([]); 
+        setActualAttendanceDates([]);
+        setWeeklyEvents([]);
+        setEvents({});
       } finally {
         setIsLoading(false);
       }
     };
 
     void fetchData();
-  }, []); 
+  }, []);
 
   // Perbarui useEffect untuk Caching/Integrating Events yang tampil di kalender
   useEffect(() => {
@@ -1407,7 +1409,7 @@ export default function DatabasePage() {
   if (isLoading) {
     return (
       <div className="flex min-h-screen bg-gray-50">
-        <main className="flex-grow p-8 max-w-7xl mx-auto w-full flex justify-center items-center">
+        <main className="grow p-8 max-w-7xl mx-auto w-full flex justify-center items-center">
           <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
           <p className="text-xl text-indigo-600">Memuat data jemaat...</p>
         </main>
@@ -1504,7 +1506,7 @@ export default function DatabasePage() {
                 <select 
                   value={filterStatusKehadiran} 
                   onChange={e => setFilterStatusKehadiran(e.target.value as StatusKehadiran | "")}
-                  className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                  className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none grow sm:grow-0 min-w-[150px]"
                 >
                   <option value="">Semua Status Kehadiran</option>
                   <option value="Aktif">Aktif</option>
@@ -1515,7 +1517,7 @@ export default function DatabasePage() {
                 <select 
                   value={filterJabatan} 
                   onChange={e => setFilterJabatan(e.target.value)}
-                  className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                  className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none grow sm:grow-0 min-w-[150px]"
                 >
                   <option value="">Semua Jabatan</option>
                   {uniqueJabatan.map((jab) => (
@@ -1527,7 +1529,7 @@ export default function DatabasePage() {
                     <select 
                       value={filterKehadiranSesi} 
                       onChange={e => setFilterKehadiranSesi(e.target.value)}
-                      className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                      className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none grow sm:grow-0 min-w-[150px]"
                     >
                       <option value="">Semua Jenis Ibadah</option>
                       {uniqueKehadiranSesiByDate.map((sesi) => (
@@ -1570,15 +1572,15 @@ export default function DatabasePage() {
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-indigo-50"> 
                                 <tr>
-                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[40px]">No</th>
-                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[80px]">ID</th>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-10">No</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-20">ID</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[60px]">Foto</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
                                 
-                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-20">Aksi</th>
                                 </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
