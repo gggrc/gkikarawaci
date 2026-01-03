@@ -1266,15 +1266,12 @@ export default function StatisticPage() {
   const handleSelectDate = (day: number, month: number) => {
     const clickedDate = new Date(detailYear, month, day);
     const key = getDayKey(clickedDate);
-    const isFuture = clickedDate.setHours(0, 0, 0, 0) > todayStart;
-
-    if (isFuture) return;
 
     setSelectedDatesKeys((prevKeys) => {
       if (prevKeys.includes(key)) {
-        return prevKeys.filter((k) => k !== key); // Deselect
+        return prevKeys.filter((k) => k !== key);
       } else {
-        return [...prevKeys, key].sort(); // Select and Sort
+        return [...prevKeys, key].sort();
       }
     });
   };
@@ -1422,14 +1419,14 @@ export default function StatisticPage() {
       const date = new Date(year, month, day);
       const dayKey = getDayKey(date);
 
-      // Filter hanya hari yang ADA di data kehadiran yang sudah lewat
-      if (actualAttendanceSet.has(dayKey) && date.getTime() <= todayStart) {
+      // Sekarang hanya mengecek apakah 'dayKey' ada di dalam set data, 
+      // tanpa peduli apakah itu hari ini, kemarin, atau esok hari.
+      if (actualAttendanceSet.has(dayKey)) {
         dates.add(dayKey);
       }
     }
     return dates;
   };
-
   // Handler untuk LineChart Tahunan (Navigasi ke database bulan itu)
   const handleYearlyChartClick = (state: YearlyChartHandlerState | null) => {
     if (state?.activeLabel) {
@@ -2146,8 +2143,7 @@ export default function StatisticPage() {
                                 return <div key={i} className="p-2"></div>;
                               const thisDate = new Date(year, monthIndex, day);
                               const dayKey = getDayKey(thisDate);
-                              const isSelected =
-                                selectedDatesKeys.includes(dayKey);
+                              const isSelected = selectedDatesKeys.includes(dayKey);
                               const dateTimestamp = new Date(thisDate).setHours(
                                 0,
                                 0,
@@ -2159,31 +2155,30 @@ export default function StatisticPage() {
                               const hasStats = datesWithStats.has(dayKey);
 
                               const handleClick = () => {
-                                // MODIFIED: Izinkan klik untuk semua tanggal di masa lalu/sekarang
-                                if (!isFuture) {
-                                  handleSelectDate(day, monthIndex);
-                                }
-                              };
+  // UBAH: Izinkan klik tanpa mempedulikan isFuture
+  handleSelectDate(day, monthIndex);
+};
 
                               return (
                                 <div
-                                  key={i}
-                                  className={`relative rounded-lg p-2.5 font-medium transition-all duration-200 ${
-                                    isSelected
-                                      ? "scale-110 cursor-pointer bg-red-500 font-bold text-white shadow-lg ring-2 ring-red-300"
-                                      : !isFuture
-                                        ? "cursor-pointer text-gray-800 hover:scale-105 hover:bg-indigo-100" // Boleh diklik, warna normal
-                                        : "cursor-not-allowed text-gray-300" // Tanggal masa depan
-                                  }`}
-                                  onClick={handleClick}
-                                >
-                                  {day}
-                                  {/* Titik hanya muncul jika ada data (hasStats) DAN TIDAK terpilih */}
-                                  {hasStats && !isSelected && (
-                                    <div className="absolute bottom-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 transform rounded-full bg-indigo-500"></div>
-                                  )}
-                                </div>
-                              );
+    key={i}
+    className={`relative rounded-lg p-2.5 font-medium transition-all duration-200 cursor-pointer ${
+      isSelected
+        ? "scale-110 bg-red-500 font-bold text-white shadow-lg ring-2 ring-red-300"
+        : "text-gray-800 hover:scale-105 hover:bg-indigo-100"
+        // Hapus pengecekan isFuture agar warna tidak abu-abu dan tetap aktif
+    }`}
+    onClick={() => handleSelectDate(day, monthIndex)}
+  >
+    {day}
+    
+    {/* Titik indikator akan muncul di tanggal MANA PUN (masa lalu/depan) 
+        asalkan data (hasStats) ditemukan dan tanggal sedang tidak terpilih */}
+    {hasStats && !isSelected && (
+      <div className="absolute bottom-0.5 left-1/2 h-1.5 w-1.5 -translate-x-1/2 transform rounded-full bg-indigo-500"></div>
+    )}
+  </div>
+);
                             })}
                           </div>
                         </div>
