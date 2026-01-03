@@ -114,8 +114,10 @@ function isPutBody(data: unknown): data is PutBody {
 export async function POST(req: Request) {
   try {
     const body: unknown = await req.json();
+    
+    // Validasi body menggunakan type guard yang sudah Anda buat
     if (!isPostBody(body)) {
-      return NextResponse.json({ error: "Invalid body" }, { status: 400 });
+      return NextResponse.json({ error: "Data input tidak valid" }, { status: 400 });
     }
 
     const {
@@ -131,27 +133,29 @@ export async function POST(req: Request) {
     const startDate = new Date(start_date);
     const endDate = end_date ? new Date(end_date) : null;
 
-    // ===== SINGLE =====
+    // 1. PENAMBAHAN EVENT SATUAN (Once)
     if (repetition_type === "Once") {
       const ibadah = await prisma.ibadah.create({
         data: {
           id_ibadah: crypto.randomUUID(),
-          jenis_kebaktian,
+          // Pastikan menggunakan title jika jenis_kebaktian kosong
+          jenis_kebaktian: jenis_kebaktian || title, 
           sesi_ibadah,
           tanggal_ibadah: startDate,
           weeklyEventId: null,
         },
       });
 
-      return NextResponse.json({ success: true, ibadah });
+      return NextResponse.json({ success: true, data: ibadah });
     }
 
-    // ===== PERIODICAL PARENT =====
+    // 2. PENAMBAHAN EVENT PERIODIK (Weekly / Monthly)
+    // Buat Parent Event di tabel WeeklyEvent
     const weeklyEvent = await prisma.weeklyEvent.create({
       data: {
         title,
         description,
-        jenis_kebaktian,
+        jenis_kebaktian: jenis_kebaktian || title,
         sesi_ibadah,
         start_date: startDate,
         end_date: endDate,
@@ -162,12 +166,13 @@ export async function POST(req: Request) {
     const ibadahList: IbadahCreateInput[] = [];
     const cursor = new Date(startDate);
 
+    // Logika Pengulangan Mingguan
     if (repetition_type === "Weekly") {
       let count = 0;
       while ((!endDate || cursor <= endDate) && count < MAX_WEEKLY) {
         ibadahList.push({
           id_ibadah: crypto.randomUUID(),
-          jenis_kebaktian,
+          jenis_kebaktian: jenis_kebaktian || title,
           sesi_ibadah,
           tanggal_ibadah: new Date(cursor),
           weeklyEventId: weeklyEvent.id,
@@ -177,33 +182,45 @@ export async function POST(req: Request) {
       }
     }
 
+    // Logika Pengulangan Bulanan
     if (repetition_type === "Monthly") {
       let count = 0;
       const targetDay = startDate.getDate();
-
       while ((!endDate || cursor <= endDate) && count < MAX_MONTHLY) {
         const date = new Date(cursor);
         date.setDate(targetDay);
-
-        ibadahList.push({
-          id_ibadah: crypto.randomUUID(),
-          jenis_kebaktian,
-          sesi_ibadah,
-          tanggal_ibadah: date,
-          weeklyEventId: weeklyEvent.id,
-        });
-
+        
+        // Validasi agar tidak lompat bulan jika tanggal > 28
+        if (date.getDate() === targetDay) {
+          ibadahList.push({
+            id_ibadah: crypto.randomUUID(),
+            jenis_kebaktian: jenis_kebaktian || title,
+            sesi_ibadah,
+            tanggal_ibadah: date,
+            weeklyEventId: weeklyEvent.id,
+          });
+        }
         cursor.setMonth(cursor.getMonth() + 1);
         count++;
       }
     }
 
-    await prisma.ibadah.createMany({ data: ibadahList });
+    // Eksekusi createMany untuk performa
+    if (ibadahList.length > 0) {
+      await prisma.ibadah.createMany({ data: ibadahList });
+    }
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ 
+      success: true, 
+      message: `${ibadahList.length} jadwal berhasil ditambahkan` 
+    });
+
   } catch (err) {
-    console.error("POST error:", err);
-    return NextResponse.json({ error: "Server error" }, { status: 500 });
+    console.error("POST error detail:", err);
+    return NextResponse.json(
+      { error: "Gagal menyimpan data ke database", detail: err instanceof Error ? err.message : String(err) }, 
+      { status: 500 }
+    );
   }
 }
 

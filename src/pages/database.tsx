@@ -1442,7 +1442,21 @@ export default function DatabasePage() {
   }, [eventModalData, showAlert, attendanceRecords]);
 
  const handleEventAction = useCallback(async () => {
-  const { type, dateKey, oldName, newName, weeklyEventId } = eventModalData;
+  const { type } = eventModalData;
+
+  // 1. Logika untuk MENAMBAH (POST)
+  if (type === 'add-single') {
+    await handleSingleAddEvent();
+    return;
+  }
+  
+  if (type === 'add-periodical' && !eventModalData.oldName) {
+    await handlePeriodicalAddEvent();
+    return;
+  }
+
+  // 2. Logika untuk MENGUBAH / EDIT (PUT)
+  const { dateKey, oldName, newName, weeklyEventId } = eventModalData;
   const newNameTrim = newName?.trim();
   
   if (!newNameTrim || !oldName) return;
@@ -1450,12 +1464,14 @@ export default function DatabasePage() {
   try {
     let bodyData: any = { newTitle: newNameTrim };
 
-    // Identifikasi scope pengeditan
     if (type === 'add-periodical' && weeklyEventId) {
+      // Edit seluruh jadwal rutin
       bodyData = { ...bodyData, type: "periodical", weeklyEventId };
     } else if (type === 'edit-periodical-confirm' && dateKey && weeklyEventId) {
+      // Edit satu tanggal dari jadwal rutin
       bodyData = { ...bodyData, type: "single-periodical", weeklyEventId, dateKey };
     } else if (type === 'edit-single' && dateKey) {
+      // Edit event satuan (Once)
       bodyData = { ...bodyData, type: "single", dateKey, oldTitle: oldName };
     }
 
@@ -1465,25 +1481,20 @@ export default function DatabasePage() {
       body: JSON.stringify(bodyData),
     });
 
-    if (!res.ok) throw new Error("Gagal menyimpan ke database");
+    if (!res.ok) throw new Error("Gagal menyimpan perubahan ke database");
 
-    // 1. Reset state modal agar bersih untuk pengeditan berikutnya
     setShowEventModal(false);
     setEventModalData({});
-
-    // 2. Paksa refresh router agar data terbaru ditarik dari server (GET /api/weekly-events)
-    // Ini memastikan source of truth kembali ke database
     await router.replace(router.asPath);
-    
-    // 3. Bersihkan cache manual agar tidak terjadi tabrakan data lama saat klik edit lagi
     memoryStorage.events = {}; 
     
-    showAlert("Sukses", "Perubahan berhasil disimpan permanen.");
+    showAlert("Sukses", "Perubahan berhasil disimpan.");
   } catch (err) {
     console.error("Update Error:", err);
     showAlert("Error", "Gagal memperbarui data.");
   }
-}, [eventModalData, router, showAlert]);
+}, [eventModalData, handleSingleAddEvent, handlePeriodicalAddEvent, router, showAlert]);
+
 const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
   if (eventName === "KESELURUHAN DATA HARI INI") return;
 
@@ -2836,12 +2847,12 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
         
         {/* MODAL EVENT MANAGEMENT */}
         {showEventModal && (
-            <DynamicEventManagementModal
-                data={eventModalData}
-                onUpdateData={updateEventModalData}
-                onClose={() => setShowEventModal(false)}
-                onAction={handleEventAction}
-            />
+    <DynamicEventManagementModal
+        data={eventModalData}
+        onUpdateData={updateEventModalData}
+        onClose={() => setShowEventModal(false)}
+        onAction={handleEventAction} // Fungsi ini sekarang sudah bisa menangani POST dan PUT
+    />
         )}
         
         {/* MODAL PREVIEW DOKUMEN */}
