@@ -595,34 +595,56 @@ const SelectedEventsSection = ({
 };
 
 // Komponen Modal Kustom untuk Konfirmasi/Alert
-const ConfirmationModal = ({ data }: { data: CustomConfirmation | null }) => {
+// Komponen Modal Kustom untuk Konfirmasi/Alert
+const ConfirmationModal = ({ data }: { data: any | null }) => {
     if (!data?.isOpen) return null;
 
+    // Memanggil fungsi penutup yang dikirim dari DatabasePage
+    const closeDialog = () => {
+        if (data.onDismiss) {
+            data.onDismiss();
+        }
+    };
+
     return (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4">
-            <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm">
+        <div 
+            className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4"
+            onClick={closeDialog} // Klik area luar (overlay) untuk menutup
+        >
+            <div 
+                className="bg-white rounded-xl shadow-2xl w-full max-w-md relative"
+                onClick={(e) => e.stopPropagation()} // Mencegah tutup saat klik area putih dialog
+            >
+                {/* Tombol X di pojok kanan atas */}
+                <button 
+                    onClick={closeDialog}
+                    className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 transition p-1 hover:bg-gray-100 rounded-full"
+                >
+                    <X size={20} />
+                </button>
+
                 <div className="p-6">
-                    <h3 className={`text-xl font-bold mb-4 ${data.showCancelButton ? 'text-red-700' : 'text-indigo-700'}`}>
+                    <h3 className="text-xl font-bold mb-4 text-indigo-700 pr-8">
                         {data.title}
                     </h3>
                     <p className="text-gray-700 mb-6">{data.message}</p>
-                    <div className="flex justify-end gap-3">
+                    
+                    <div className="flex flex-col gap-3">
+                        <button
+                            onClick={data.onConfirm}
+                            className="w-full px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold shadow-md"
+                        >
+                            {data.confirmLabel || "Oke"}
+                        </button>
+                        
                         {data.showCancelButton && (
                             <button
                                 onClick={data.onCancel}
-                                className="px-4 py-2 border-2 border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+                                className="w-full px-4 py-3 border-2 border-indigo-600 text-indigo-600 rounded-lg hover:bg-indigo-50 transition font-semibold"
                             >
-                                Batal
+                                {data.cancelLabel || "Batal"}
                             </button>
                         )}
-                        <button
-                            onClick={data.onConfirm}
-                            className={`px-4 py-2 text-white rounded-lg transition ${
-                                data.showCancelButton ? 'bg-red-600 hover:bg-red-700' : 'bg-indigo-600 hover:bg-indigo-700'
-                            }`}
-                        >
-                            Oke
-                        </button>
                     </div>
                 </div>
             </div>
@@ -1484,132 +1506,74 @@ export default function DatabasePage() {
   }, [eventModalData, showAlert, attendanceRecords]);
 
   const handleEventAction = useCallback(async () => {
-    switch(eventModalData.type) {
-        case 'add-single':
-            void handleSingleAddEvent();
-            break;
-        case 'add-periodical':
-            // Panggil async handler di sini
-            void handlePeriodicalAddEvent();
-            break;
+  const { type, dateKey, oldName, newName, weeklyEventId } = eventModalData;
+  const newNameTrim = newName?.trim();
+  
+  if (!newNameTrim || !oldName) return;
 
-        case 'edit-single': {
-          const { dateKey, oldName, newName } = eventModalData;
-          const newNameTrim = newName?.trim();
+  try {
+    // 1. UPDATE DATABASE VIA API
+    let endpoint = "/api/weekly-events";
+    let method = "PUT";
+    let bodyData: any = { newTitle: newNameTrim };
 
-          if (!dateKey || !oldName || !newNameTrim) {
-            setShowEventModal(false);
-            return;
-          }
-
-          // 🔥 UPDATE DATABASE
-          await fetch("/api/weekly-events", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "single",
-              dateKey,
-              oldTitle: oldName,
-              newTitle: newNameTrim,
-            }),
-          });
-
-          // ✅ UPDATE UI
-          setEvents(prev => {
-            const updated = {
-              ...prev,
-              [dateKey]: (prev[dateKey] ?? []).map(e =>
-                e === oldName ? newNameTrim : e
-              ),
-            };
-
-            memoryStorage.events = updated;
-            return updated;
-          });
-
-          setSelectedEventsByDate(prev => {
-            const updated = {
-              ...prev,
-              [dateKey]: (prev[dateKey] ?? []).map(e =>
-                e === oldName ? newNameTrim : e
-              ),
-            };
-
-            saveSelection(selectedDates, updated);
-            return updated;
-          });
-
-          setShowEventModal(false);
-          setEventModalData({});
-          showAlert(
-            "Sukses",
-            `Event berhasil diubah dari "${oldName}" menjadi "${newNameTrim}".`
-          );
-          break;
-        }
-
-        case 'edit-periodical-confirm': {
-          const { dateKey, oldName, newName } = eventModalData;
-          const newNameTrim = newName?.trim();
-
-          if (!dateKey || !oldName || !newNameTrim) {
-            setShowEventModal(false);
-            return;
-          }
-
-          const targetEvent = weeklyEvents.find(e => e.title === oldName);
-          if (!targetEvent) {
-            showAlert("Error", "Event berkala tidak ditemukan.");
-            return;
-          }
-
-          // 🔥 UPDATE DATABASE — SINGLE DATE OF PERIODICAL
-          await fetch("/api/weekly-events", {
-            method: "PUT",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              type: "single-periodical",
-              weeklyEventId: targetEvent.id,
-              dateKey,
-              newTitle: newNameTrim,
-            }),
-          });
-
-          // 🔁 UPDATE LOCAL STATE (UI)
-          setSelectedEventsByDate(prev => {
-            const updated = {
-              ...prev,
-              [dateKey]: (prev[dateKey] ?? []).map(e =>
-                e === oldName ? newNameTrim : e
-              ),
-            };
-
-            saveSelection(selectedDates, updated);
-            return updated;
-          });
-
-          showAlert(
-            "Sukses",
-            `Event "${oldName}" berhasil diubah menjadi "${newNameTrim}" hanya untuk tanggal ${new Date(dateKey).toLocaleDateString("id-ID")}.`
-          );
-
-          setShowEventModal(false);
-          setEventModalData({});
-          break;
-        }
-        case 'flow-select':
-            break;
-        default:
-            break;
+    if (type === 'add-periodical' && oldName) {
+      bodyData = { ...bodyData, type: "periodical", weeklyEventId };
+    } else if (type === 'edit-periodical-confirm' && dateKey) {
+      const targetEvent = weeklyEvents.find(e => e.title === oldName);
+      if (!targetEvent) return;
+      bodyData = { ...bodyData, type: "single-periodical", weeklyEventId: targetEvent.id, dateKey };
+    } else if (type === 'edit-single' && dateKey) {
+      bodyData = { ...bodyData, type: "single", dateKey, oldTitle: oldName };
     }
-  }, [
-      eventModalData,
-      handleSingleAddEvent,
-      handlePeriodicalAddEvent,
-      selectedDates,
-      showAlert,
-      weeklyEvents
-    ]);
+
+    const res = await fetch(endpoint, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyData),
+    });
+
+    if (!res.ok) throw new Error("Gagal menyimpan ke database");
+
+    // 2. UPDATE STATE LOKAL (Agar tidak berubah kembali saat navigasi)
+    // Update cache event (digunakan oleh kalender dan daftar event)
+    if (dateKey) {
+      setEvents(prev => {
+        const updated = { ...prev };
+        if (updated[dateKey]) {
+          updated[dateKey] = updated[dateKey].map(ev => ev === oldName ? newNameTrim : ev);
+        }
+        memoryStorage.events = updated; // Update memoryStorage agar persisten selama sesi
+        return updated;
+      });
+
+      // Update event yang sedang dipilih (digunakan oleh tabel jemaat)
+      setSelectedEventsByDate(prev => {
+        const updated = { ...prev };
+        if (updated[dateKey]) {
+          updated[dateKey] = updated[dateKey].map(ev => ev === oldName ? newNameTrim : ev);
+        }
+        saveSelection(selectedDates, updated); // Simpan ke memoryStorage
+        return updated;
+      });
+    }
+
+    // 3. PAKSA REFRESH DATA DARI SERVER (PENTING!)
+    // Memanggil router.replace atau reload memastikan data ditarik ulang dari Supabase
+    // Jika Anda ingin lebih halus, panggil ulang fungsi fetchData() yang ada di useEffect utama.
+    showAlert("Sukses", "Perubahan berhasil disimpan.");
+    
+    // Gunakan router.replace untuk memicu re-render halaman dengan data terbaru
+    router.replace(router.asPath); 
+
+  } catch (err) {
+    console.error("Update Error:", err);
+    showAlert("Error", "Gagal memperbarui data. Silakan coba lagi.");
+  } finally {
+    setShowEventModal(false);
+    setEventModalData({});
+  }
+}, [eventModalData, weeklyEvents, router, showAlert, selectedDates]);
 
   const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
@@ -1675,61 +1639,64 @@ export default function DatabasePage() {
   }, [selectedDates, showConfirmation, showAlert, weeklyEvents]);
 
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
-      if (eventName === "KESELURUHAN DATA HARI INI") return;
-      
-      const isPeriodicalEvent = weeklyEvents.find(
-        e => e.title === eventName &&
-            (e.repetition_type === "Weekly" || e.repetition_type === "Monthly")
-      );
-      
-      if (!isPeriodicalEvent) {
-          setEventModalData({ 
-            type: 'edit-single', 
-            dateKey, 
-            oldName: eventName, 
-            newName: eventName,
-            periodicalDayOfWeek: null,
-            periodicalPeriod: '2m',
-          });
-          setShowEventModal(true);
-          return;
-      }
+  if (eventName === "KESELURUHAN DATA HARI INI") return;
+  
+  const isPeriodicalEvent = weeklyEvents.find(
+    e => e.title === eventName && (e.repetition_type === "Weekly" || e.repetition_type === "Monthly")
+  );
+  
+  // Jika Event Satuan Biasa
+  if (!isPeriodicalEvent) {
+    setEventModalData({ 
+      type: 'edit-single', 
+      dateKey, 
+      oldName: eventName, 
+      newName: eventName,
+    });
+    setShowEventModal(true);
+    return;
+  }
 
-      const onConfirm = () => {
-          setEventModalData({
-              type: 'edit-periodical-confirm',
-              dateKey,
-              oldName: eventName,
-              newName: eventName, 
-              periodicalDayOfWeek: null,
-              periodicalPeriod: '',
-          });
-          setShowEventModal(true);
-          setConfirmationModal(null);
-      }
-      
-      const onCancel = () => {
-          setEventModalData({ 
-            type: 'edit-single', 
-            dateKey, 
-            oldName: eventName, 
-            newName: eventName,
-            periodicalDayOfWeek: null,
-            periodicalPeriod: '2m',
-          });
-          setShowEventModal(true);
-          setConfirmationModal(null);
-      }
+  // Jika Event Berkala
+  const onEditAll = () => {
+    setEventModalData({
+      type: 'add-periodical', 
+      dateKey,
+      oldName: eventName,
+      newName: eventName, 
+      periodicalDayOfWeek: isPeriodicalEvent.repetition_type === "Monthly" ? "Per Tanggal" : new Date(isPeriodicalEvent.start_date).getDay(),
+      periodicalPeriod: '10y',
+      weeklyEventId: isPeriodicalEvent.id
+    } as any);
+    setShowEventModal(true);
+    setConfirmationModal(null);
+  };
+  
+  const onEditOnlyThisDate = () => {
+    setEventModalData({ 
+      type: 'edit-periodical-confirm', 
+      dateKey, 
+      oldName: eventName, 
+      newName: eventName,
+    });
+    setShowEventModal(true);
+    setConfirmationModal(null);
+  };
 
-      showConfirmation(
-          "Konfirmasi Pengeditan Event Berkala",
-          `Event "${eventName}" adalah event berkala. Apakah Anda ingin mengedit nama event ini untuk SEMUA tanggal yang akan datang? (Pilih 'Batal' untuk mengedit HANYA tanggal ini).`,
-          onConfirm,
-          true,
-          onCancel
-      );
-      
-  }, [showConfirmation, weeklyEvents]);
+  setConfirmationModal({
+    isOpen: true,
+    title: "Edit Event Rutin",
+    message: `Event "${eventName}" adalah bagian dari jadwal rutin. Pilih cakupan pengeditan:`,
+    onConfirm: onEditAll, 
+    onCancel: onEditOnlyThisDate,
+    showCancelButton: true,
+    confirmLabel: "Ubah Semua Jadwal", 
+    cancelLabel: "Ubah Tanggal Ini Saja",
+    onDismiss: () => setConfirmationModal(null)
+  } as any);
+  
+}, [weeklyEvents, setConfirmationModal]);
+
 
   const handleSaveEdit = useCallback(() => {
     setEditMode(false);
