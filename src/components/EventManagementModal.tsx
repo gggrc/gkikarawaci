@@ -58,9 +58,12 @@ export default function EventManagementModal({
     periodicalPeriod = "2m",
   } = data;
 
-  const isEdit =
-    type === "edit-single" ||
-    type === "edit-periodical-confirm";
+  const isEdit = 
+    type === "edit-single" || 
+    type === "edit-periodical-confirm" || 
+    (type === "add-periodical" && oldName !== null);
+
+  
   const isAdd = type === "add-single" || type === "add-periodical";
   const isPeriodicalAdd = type === "add-periodical";
   const isPeriodicalConfirm = type === "edit-periodical-confirm";
@@ -107,23 +110,30 @@ export default function EventManagementModal({
   // ================= ADD / EDIT CONTENT =================
 
   if (isEdit) {
-    title = `Edit Event: ${oldName}`;
+    title = oldName ? `Edit Event: ${oldName}` : "Edit Event";
     actionButtonText = "Simpan Perubahan";
 
     content = (
       <div className="space-y-4">
-        <p className="text-sm text-gray-500">
+        <p className="text-sm text-gray-500 bg-indigo-50 p-2 rounded">
           Tanggal: <span className="font-semibold">{dateDisplay}</span>
+          {type === "add-periodical" && <span className="ml-2 text-xs text-indigo-600">(Mode Seluruh Jadwal)</span>}
         </p>
 
+        <label className="block text-sm font-medium text-gray-700">Nama Event</label>
         <input
           type="text"
           value={newName}
           onChange={(e) => onUpdateData({ newName: e.target.value })}
           className="w-full border-2 border-indigo-300 rounded-lg px-4 py-3 focus:border-indigo-500 focus:outline-none"
-          placeholder="Nama Event Baru"
+          placeholder="Masukkan nama event baru"
           autoFocus
         />
+        {/* Jika mengedit seluruh jadwal, tampilkan info tambahan jika perlu */}
+        {type === "add-periodical" && (
+           <p className="text-xs text-orange-600 italic">*Perubahan nama akan diterapkan pada semua tanggal di jadwal ini.</p>
+        )}
+        
       </div>
     );
   } else if (isAdd) {

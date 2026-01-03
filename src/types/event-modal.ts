@@ -14,4 +14,5 @@ export interface EventModalData {
 
   periodicalDayOfWeek: PeriodicalDayOfWeek; // ✅ SATU SUMBER KEBENARAN
   periodicalPeriod: string;
+  weeklyEventId?: string; // ✅ FIX
 }
