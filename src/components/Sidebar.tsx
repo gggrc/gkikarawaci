@@ -1,4 +1,4 @@
-// src/components/Sidebar.tsx - Full Code Updated
+// src/components/Sidebar.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -25,7 +25,8 @@ export default function Sidebar({ activeView, isOpen, onClose }: SidebarProps) {
         const res = await fetch("/api/me");
         if (res.ok) {
           const data = await res.json();
-          setRole(data.role ?? "user"); // Default ke user jika tidak ada
+          // Mengambil role dari API /api/me yang terhubung ke database
+          setRole(data.role ?? "user"); 
         }
       } catch (err) {
         console.error("Failed to fetch role:", err);
@@ -38,19 +39,29 @@ export default function Sidebar({ activeView, isOpen, onClose }: SidebarProps) {
 
   // Menu dinamis berdasarkan role
   const menuItems = [
-    { name: "Statistik Jemaat", icon: BarChart3, href: "/statistic", viewKey: "statistic" },
+    { 
+      name: "Statistik Jemaat", 
+      icon: BarChart3, 
+      href: "/statistic", // Mengarah ke statistic.tsx
+      viewKey: "statistic" 
+    },
     { 
       name: "Data & Kehadiran", 
       icon: ListChecks, 
-      // User biasa diarahkan ke /databaseUser, Admin ke /database
+      // PERBAIKAN: Jika role admin ke /database, jika user ke /databaseUser
       href: role === "admin" ? "/database" : "/databaseUser", 
       viewKey: "database" 
     },
   ];
 
-  // Hanya tambahkan menu Users jika role adalah admin
+  // Tambahkan menu "Users" hanya untuk admin
   if (role === "admin") {
-    menuItems.push({ name: "Users", icon: Users, href: "/user", viewKey: "user" });
+    menuItems.push({ 
+      name: "Users", 
+      icon: Users, 
+      href: "/user", // Mengarah ke user.tsx
+      viewKey: "user" 
+    });
   }
 
   const handleNav = (href: string) => {
@@ -68,7 +79,7 @@ export default function Sidebar({ activeView, isOpen, onClose }: SidebarProps) {
       )}
       
       <aside className={`
-        fixed inset-y-0 left-0 z-50 w-65 bg-indigo-900 text-white shadow-2xl
+        fixed inset-y-0 left-0 z-50 w-64 bg-indigo-900 text-white shadow-2xl
         transform transition-transform duration-300 ease-in-out
         ${isOpen ? "translate-x-0" : "-translate-x-full"}
         md:translate-x-0 md:static md:h-screen
