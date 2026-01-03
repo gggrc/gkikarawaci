@@ -58,7 +58,9 @@ export default function EventManagementModal({
     periodicalPeriod = "2m",
   } = data;
 
-  const isEdit = type === "edit-single";
+  const isEdit =
+    type === "edit-single" ||
+    type === "edit-periodical-confirm";
   const isAdd = type === "add-single" || type === "add-periodical";
   const isPeriodicalAdd = type === "add-periodical";
   const isPeriodicalConfirm = type === "edit-periodical-confirm";
@@ -303,8 +305,7 @@ export default function EventManagementModal({
                 type: "weekly",
                 title: newName,
                 startDateKey: dateKey!,
-                repeatDay: Number(periodicalDayOfWeek), // ok
-                day_of_week: Number(periodicalDayOfWeek),
+                repeatDay: Number(periodicalDayOfWeek),
                 endDate: endDate?.toISOString() ?? null,
               });
             }}
