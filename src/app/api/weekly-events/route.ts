@@ -239,29 +239,46 @@ export async function PUT(req: Request) {
       );
     }
 
+<<<<<<< HEAD
+=======
+    // Update satu hari pada jadwal rutin
+>>>>>>> cd45f755e4884bcaf210cf6d76274a2ce6f8a33b
     if (body.type === "single-periodical") {
       await prisma.ibadah.updateMany({
         where: {
           weeklyEventId: body.weeklyEventId,
-          tanggal_ibadah: new Date(body.dateKey),
+          tanggal_ibadah: {
+            gte: new Date(`${body.dateKey}T00:00:00Z`),
+            lte: new Date(`${body.dateKey}T23:59:59Z`),
+          }
         },
         data: { jenis_kebaktian: body.newTitle },
       });
       return NextResponse.json({ success: true });
     }
 
+<<<<<<< HEAD
+=======
+    // Update event satuan (Fleksibel untuk data SQL)
+>>>>>>> cd45f755e4884bcaf210cf6d76274a2ce6f8a33b
     if (body.type === "single") {
       await prisma.ibadah.updateMany({
         where: {
-          tanggal_ibadah: new Date(body.dateKey),
           jenis_kebaktian: body.oldTitle,
-          weeklyEventId: null,
+          tanggal_ibadah: {
+            gte: new Date(`${body.dateKey}T00:00:00Z`),
+            lte: new Date(`${body.dateKey}T23:59:59Z`),
+          }
         },
         data: { jenis_kebaktian: body.newTitle },
       });
       return NextResponse.json({ success: true });
     }
 
+<<<<<<< HEAD
+=======
+    // Update induk (Diterapkan ke semua anak)
+>>>>>>> cd45f755e4884bcaf210cf6d76274a2ce6f8a33b
     if (body.type === "periodical") {
       await prisma.weeklyEvent.update({
         where: { id: body.weeklyEventId },
@@ -270,16 +287,19 @@ export async function PUT(req: Request) {
           jenis_kebaktian: body.newTitle,
         },
       });
-
+      // Sinkronkan semua nama di tabel Ibadah
       await prisma.ibadah.updateMany({
         where: { weeklyEventId: body.weeklyEventId },
         data: { jenis_kebaktian: body.newTitle },
       });
-
       return NextResponse.json({ success: true });
     }
 
+<<<<<<< HEAD
     return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
+=======
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+>>>>>>> cd45f755e4884bcaf210cf6d76274a2ce6f8a33b
   } catch (err) {
     console.error(err);
     return NextResponse.json(
@@ -295,13 +315,13 @@ export async function PUT(req: Request) {
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const type = searchParams.get("type"); // "single-periodical" atau "all-periodical"
-    const id = searchParams.get("id"); // weeklyEventId
+    const type = searchParams.get("type"); 
+    const id = searchParams.get("id"); // Bisa berupa ID atau Nama
     const dateKey = searchParams.get("dateKey");
 
     if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
 
-    // HAPUS SELURUH RANGKAIAN JADWAL
+    // 1. Hapus Seluruh Rangkaian (Induk + Semua Anak)
     if (type === "all-periodical") {
       await prisma.weeklyEvent.delete({ 
         where: { id: id } 
@@ -309,24 +329,30 @@ export async function DELETE(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    // HAPUS HANYA DI TANGGAL TERTENTU
+    // 2. Hapus Satu Tanggal dari Event Rutin
     if (type === "single-periodical" && dateKey) {
       await prisma.ibadah.deleteMany({
         where: {
           weeklyEventId: id,
-          tanggal_ibadah: new Date(dateKey),
+          tanggal_ibadah: {
+            gte: new Date(`${dateKey}T00:00:00Z`),
+            lte: new Date(`${dateKey}T23:59:59Z`),
+          }
         },
       });
       return NextResponse.json({ success: true });
     }
 
-    // HAPUS EVENT SATUAN (ONCE)
+    // 3. Hapus Event Satuan (Dibuat fleksibel untuk data SQL)
     if (type === "once") {
       await prisma.ibadah.deleteMany({
         where: {
           jenis_kebaktian: decodeURIComponent(id),
-          tanggal_ibadah: dateKey ? new Date(dateKey) : undefined,
-          weeklyEventId: null,
+          tanggal_ibadah: dateKey ? {
+            gte: new Date(`${dateKey}T00:00:00Z`),
+            lte: new Date(`${dateKey}T23:59:59Z`),
+          } : undefined,
+          // Jika ditambahkan via SQL, weeklyEventId biasanya NULL
         },
       });
       return NextResponse.json({ success: true });
@@ -338,7 +364,6 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ error: "Gagal menghapus data" }, { status: 500 });
   }
 }
-
 /* =======================
    GET
 ======================= */

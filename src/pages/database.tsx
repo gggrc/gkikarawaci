@@ -1585,22 +1585,39 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
   if (eventName === "KESELURUHAN DATA HARI INI") return;
   
-  // Cari data event di state weeklyEvents untuk mendapatkan ID dan tipe aslinya
-  const targetWeekly = weeklyEvents.find(e => 
-    e.Ibadah?.some(i => i.jenis_kebaktian === eventName && getDayKey(new Date(i.tanggal_ibadah)) === dateKey)
-  );
+  // 1. Cari record Ibadah yang spesifik di tanggal dan nama tersebut
+  // Kita mencari di semua weeklyEvents maupun singleEvents
+  let targetIbadah: any = null;
+  let parentWeeklyId: string | null = null;
 
-  if (!targetWeekly) {
-    // Jika tidak ditemukan di weekly, anggap sebagai event satuan (Once)
+  // Cari di dalam weekly events
+  weeklyEvents.forEach(we => {
+    const match = we.Ibadah?.find(i => 
+      i.jenis_kebaktian === eventName && 
+      getDayKey(new Date(i.tanggal_ibadah)) === dateKey
+    );
+    if (match) {
+      targetIbadah = match;
+      parentWeeklyId = we.id;
+    }
+  });
+
+  // Jika tidak ketemu di weekly, cari di single events (untuk backup)
+  // Anda mungkin perlu menyimpan singleEvents di state jika ingin lebih akurat
+  
+  if (!parentWeeklyId) {
+    // Anggap sebagai event satuan (Once)
     setEventModalData({ 
       type: 'edit-single', 
       dateKey, 
       oldName: eventName, 
-      newName: eventName // Selalu inisialisasi dengan nama saat ini
+      newName: eventName,
+      // Penting: backend butuh ID ini jika tersedia
+      weeklyEventId: targetIbadah?.id_ibadah || null 
     });
     setShowEventModal(true);
   } else {
-    // Jika bagian dari event rutin, tawarkan scope
+    // Bagian dari event rutin
     setConfirmationModal({
       isOpen: true,
       title: "Edit Event Rutin",
@@ -1610,22 +1627,22 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       showCancelButton: true,
       onConfirm: () => {
         setEventModalData({
-          type: 'add-periodical',
+          type: 'add-periodical', // Mode edit induk
           dateKey,
           oldName: eventName,
           newName: eventName,
-          weeklyEventId: targetWeekly.id
+          weeklyEventId: parentWeeklyId
         });
         setShowEventModal(true);
         setConfirmationModal(null);
       },
       onCancel: () => {
         setEventModalData({ 
-          type: 'edit-periodical-confirm', 
+          type: 'edit-periodical-confirm', // Mode edit satu tanggal
           dateKey, 
           oldName: eventName, 
           newName: eventName,
-          weeklyEventId: targetWeekly.id
+          weeklyEventId: parentWeeklyId
         });
         setShowEventModal(true);
         setConfirmationModal(null);
