@@ -119,7 +119,6 @@ const monthNames = [
 const today = new Date();
 const currentMonth = today.getMonth();
 const currentYear = today.getFullYear();
-const todayStart = new Date(today).setHours(0, 0, 0, 0);
 
 const getDayKey = (date: Date): string => {
   const year = date.getFullYear();
@@ -263,7 +262,7 @@ const calculateDateStats = (
 const calculateMonthlyTrends = (
   fullAttendanceRecords: JemaatRow[],
   selectedYear: number,
-  overallJemaatList: UniqueJemaat[],
+ 
 ) => {
   const monthlyStats: Record<
     string,
@@ -1191,8 +1190,8 @@ export default function StatisticPage() {
 
   // FIX 6: Gunakan fungsi kalkulasi nyata untuk data Tahunan
   const yearlyStats = useMemo(
-    () => calculateMonthlyTrends(fullAttendanceRecords, year, uniqueJemaatList),
-    [fullAttendanceRecords, year, uniqueJemaatList],
+    () => calculateMonthlyTrends(fullAttendanceRecords, year), // Hapus argumen ke-3 di sini
+    [fullAttendanceRecords, year], // Dependency array
   );
 
   const currentMonthStats = useMemo(() => {
@@ -1776,7 +1775,7 @@ export default function StatisticPage() {
                       <div className="mb-8">
                         <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
                           {/* 0. Total Kehadiran Records */}
-                          <div className="rounded-xl bg-gradient-to-br from-indigo-600 to-blue-700 p-4 text-white shadow-xl sm:p-6">
+                          <div className="rounded-xl bg-linear-to-br from-indigo-600 to-blue-700 p-4 text-white shadow-xl sm:p-6">
                             <p className="mb-1 text-xs opacity-90 sm:text-sm">
                               Total Records Kehadiran
                             </p>
@@ -1789,7 +1788,7 @@ export default function StatisticPage() {
                           </div>
 
                           {/* 1. Status Aktif */}
-                          <div className="rounded-xl bg-gradient-to-br from-green-500 to-green-600 p-4 text-white shadow-xl sm:p-6">
+                          <div className="rounded-xl bg-linear-to-br from-green-500 to-green-600 p-4 text-white shadow-xl sm:p-6">
                             <p className="mb-1 text-xs opacity-90 sm:text-sm">
                               Presensi Status Aktif
                             </p>
@@ -1802,7 +1801,7 @@ export default function StatisticPage() {
                           </div>
 
                           {/* 2. Status Jarang Hadir */}
-                          <div className="rounded-xl bg-gradient-to-br from-yellow-500 to-yellow-600 p-4 text-white shadow-xl sm:p-6">
+                          <div className="rounded-xl bg-linear-to-br from-yellow-500 to-yellow-600 p-4 text-white shadow-xl sm:p-6">
                             <p className="mb-1 text-xs opacity-90 sm:text-sm">
                               Presensi Jarang Hadir
                             </p>
@@ -1815,7 +1814,7 @@ export default function StatisticPage() {
                           </div>
 
                           {/* 3. Status Tidak Aktif */}
-                          <div className="rounded-xl bg-gradient-to-br from-red-500 to-red-600 p-4 text-white shadow-xl sm:p-6">
+                          <div className="rounded-xl bg-linear-to-br from-red-500 to-red-600 p-4 text-white shadow-xl sm:p-6">
                             <p className="mb-1 text-xs opacity-90 sm:text-sm">
                               Presensi Tidak Aktif
                             </p>
@@ -2144,20 +2143,11 @@ export default function StatisticPage() {
                               const thisDate = new Date(year, monthIndex, day);
                               const dayKey = getDayKey(thisDate);
                               const isSelected = selectedDatesKeys.includes(dayKey);
-                              const dateTimestamp = new Date(thisDate).setHours(
-                                0,
-                                0,
-                                0,
-                                0,
-                              );
-                              const isFuture = dateTimestamp > todayStart;
+                              
 
                               const hasStats = datesWithStats.has(dayKey);
 
-                              const handleClick = () => {
-  // UBAH: Izinkan klik tanpa mempedulikan isFuture
-  handleSelectDate(day, monthIndex);
-};
+                              
 
                               return (
                                 <div
@@ -2587,7 +2577,7 @@ export default function StatisticPage() {
 
             {/* LOADING DOWNLOAD */}
             {isDownloading && (
-              <div className="fixed inset-0 z-[999] flex items-center justify-center bg-black/50">
+              <div className="fixed inset-0 z-999 flex items-center justify-center bg-black/50">
                 <div className="rounded-xl bg-white p-6 shadow-2xl">
                   <div className="flex items-center gap-3">
                     <Loader2

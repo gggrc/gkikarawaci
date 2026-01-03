@@ -1,4 +1,3 @@
-// src/components/Sidebar.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -24,9 +23,8 @@ export default function Sidebar({ activeView, isOpen, onClose }: SidebarProps) {
       try {
         const res = await fetch("/api/me");
         if (res.ok) {
-          const data = await res.json();
-          // Mengambil role dari API /api/me yang terhubung ke database
-          setRole(data.role ?? "user"); 
+          const data = await res.json() as { role?: string | null };
+          setRole(data.role ?? "user");
         }
       } catch (err) {
         console.error("Failed to fetch role:", err);
@@ -37,29 +35,26 @@ export default function Sidebar({ activeView, isOpen, onClose }: SidebarProps) {
     void fetchRole();
   }, []);
 
-  // Menu dinamis berdasarkan role
   const menuItems = [
     { 
       name: "Statistik Jemaat", 
       icon: BarChart3, 
-      href: "/statistic", // Mengarah ke statistic.tsx
+      href: "/statistic", 
       viewKey: "statistic" 
     },
     { 
       name: "Data & Kehadiran", 
       icon: ListChecks, 
-      // PERBAIKAN: Jika role admin ke /database, jika user ke /databaseUser
       href: role === "admin" ? "/database" : "/databaseUser", 
       viewKey: "database" 
     },
   ];
 
-  // Tambahkan menu "Users" hanya untuk admin
   if (role === "admin") {
     menuItems.push({ 
       name: "Users", 
       icon: Users, 
-      href: "/user", // Mengarah ke user.tsx
+      href: "/user", 
       viewKey: "user" 
     });
   }
@@ -95,7 +90,7 @@ export default function Sidebar({ activeView, isOpen, onClose }: SidebarProps) {
             </button>
           </div>
 
-          <nav className="flex-grow p-4 space-y-2 overflow-y-auto">
+          <nav className="grow p-4 space-y-2 overflow-y-auto">
             {isLoading ? (
               <div className="flex flex-col items-center py-10 opacity-50">
                 <div className="animate-spin h-6 w-6 border-2 border-white border-t-transparent rounded-full mb-2" />

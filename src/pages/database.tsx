@@ -8,16 +8,15 @@ import { jsPDF } from 'jspdf';
 import autoTable from "jspdf-autotable";
 import type { UserOptions } from "jspdf-autotable";
 import dynamic from 'next/dynamic'; 
-// FIX 1: Import tipe data yang lebih lengkap dari API route
 import { type JemaatClient, type StatusKehadiran, type JemaatWithAttendanceInfo, type JemaatAPIResponse as FullJemaatAPIResponse } from "~/app/api/jemaat/route"; 
 import type { EventModalData } from "@/types/event-modal";
-// --- Tipe Data Weekly Event (DITAMBAHKAN) ---
+
 interface WeeklyEvent {
-  id: string; // ID unik dari event berkala
-  title: string; // Nama event yang ditampilkan
-  day_of_week: number; // Hari (0=Minggu, 1=Senin, dst)
-  start_date: string; // Tanggal mulai (YYYY-MM-DD)
-  end_date: string | null; // Tanggal selesai (YYYY-MM-DD) atau null jika selamanya
+  id: string; 
+  title: string; 
+  day_of_week: number; 
+  start_date: string;
+  end_date: string | null; 
   repetition_type: 'Once' | 'Weekly' | 'Monthly';
   jenis_kebaktian: string;
   sesi_ibadah: number;
@@ -25,7 +24,6 @@ interface WeeklyEvent {
     tanggal_ibadah: string;
     jenis_kebaktian: string;
   }[];
-// Tambahkan properti Ibadah sesuai penggunaan
 }
 
 interface SingleEvent {
@@ -36,32 +34,21 @@ interface SingleEvent {
   weeklyEventId: string | null;
 }
 
-interface IbadahRow {
-  tanggal_ibadah: string;
-  jenis_kebaktian: string;
-}
-
-
 interface ConfirmationModalData extends CustomConfirmation {
     onDismiss?: () => void;
     confirmLabel?: string;
     cancelLabel?: string;
 }
 
-// --- Tipe Data Lainnya ---
 
-// List Jemaat Unik (untuk status overall, edit form, dan draft)
 interface UniqueJemaat extends JemaatClient {
-  id: string; // id_jemaat
+  id: string; 
 }
 
-// Baris Data Kehadiran (untuk tabel dan detail drawer - Attendance Instance)
 interface JemaatRow extends JemaatWithAttendanceInfo {
-  id: string; // id_jemaat-tanggal (ID unik per record kehadiran)
-  // Semua properti dari JemaatClient juga ada di sini
+  id: string; 
 }
 
-// Tipe Response dari API (Gunakan alias)
 interface JemaatAPIResponse extends FullJemaatAPIResponse {
   error?: string;
   weeklyEvents?: WeeklyEvent[];
@@ -113,7 +100,6 @@ interface CustomConfirmation {
     showCancelButton?: boolean;
 }
 
-// Komponen Modal yang dimuat secara dinamis
 const DynamicDocumentPreviewModal = dynamic(() => import('../components/DocumentPreviewModal'), {
     loading: () => null, 
     ssr: false, 
@@ -128,7 +114,6 @@ const DynamicEventManagementModal = dynamic(() => import('../components/EventMan
     ssr: false,
 });
 
-// --- UTILITY FUNCTIONS & CONSTANTS ---
 const MONTHLY_OPTIONS = Array.from({ length: 12 }, (_, i) => ({
     value: `${i + 1}m`,
     label: `${i + 1} Bulan`,
@@ -186,39 +171,22 @@ export const isImageUrlOrBase64 = (data: string): boolean => {
            data.includes('picsum.photos');
 };
 
-/**
- * PERBAIKAN: Fungsi ini sekarang mengambil SESI UNIK (jenis_kebaktian) dari data kehadiran 
- * yang sudah diambil dari backend, BUKAN lagi hardcode.
- */
 const getAvailableSessionNames = (allUniqueSessions: Set<string>): string[] => {
-    // Mengembalikan semua sesi unik yang ada di data kehadiran (yang sudah disinkronkan dengan jenis_kebaktian)
     const sessions = [...allUniqueSessions].filter(s => s && s.trim() !== "");
     return sessions.sort();
 };
 
-/**
- * Memastikan event 'KESELURUHAN DATA HARI INI' selalu ada 
- * dan event dihasilkan berdasarkan sesi unik yang ada di database.
- */
 const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: Set<string>): string[] => {
-    // Ambil semua sesi unik yang ada di database (kehadiranSesi)
     const defaultEventsFromDatabase = getAvailableSessionNames(allUniqueSessions);
     const combinedEvents = [...defaultEventsFromDatabase];
-    
-    // Sort dan filter duplikat
     const uniqueEvents = [...new Set(combinedEvents)].filter(e => e.trim() !== "" && e !== "KESELURUHAN DATA HARI INI");
-
-    // Memastikan "KESELURUHAN DATA HARI INI" selalu ada di awal
     const finalEvents = [
         "KESELURUHAN DATA HARI INI", 
         ...uniqueEvents.sort()
     ].filter((v, i, a) => a.indexOf(v) === i && v.trim() !== ""); 
-    
-    // Kembalikan event yang ada (minimal event keseluruhan)
     return finalEvents.length > 0 ? finalEvents : ["KESELURUHAN DATA HARI INI"];
 };
 
-// **Logika Integrasi Event Berkala (Caching)**
 const integrateWeeklyEvents = (
   weeklyEvents: WeeklyEvent[], 
   existingEvents: EventsCache
@@ -226,14 +194,9 @@ const integrateWeeklyEvents = (
     const updatedEvents = { ...existingEvents };
 
     weeklyEvents.forEach((event) => {
-        // Gunakan daftar Ibadah yang dihasilkan dari database
         (event.Ibadah ?? []).forEach((ibadah) => {
             const dayKey = getDayKey(new Date(ibadah.tanggal_ibadah));
-            
             updatedEvents[dayKey] ??= ["KESELURUHAN DATA HARI INI"];
-
-
-            // Selalu gunakan jenis_kebaktian dari baris Ibadah tersebut
             if (!updatedEvents[dayKey].includes(ibadah.jenis_kebaktian)) {
                 updatedEvents[dayKey].push(ibadah.jenis_kebaktian);
             }
@@ -256,21 +219,19 @@ const getDatesWithEventsInMonth = (
     const date = new Date(currentYear, month, day);
     const dayKey = getDayKey(date);
     
-    // HANYA proses tanggal yang sudah lewat atau hari ini
+
     if (new Date(date).setHours(0, 0, 0, 0) <= todayStart) { 
       
-      // Event list untuk tanggal ini: ambil dari cache atau array kosong
+     
       const currentEventList = currentEvents[dayKey] ?? []; 
       
-      // Selalu tambahkan tanggal yang sudah lewat/sekarang, meskipun event list kosong.
+
       dates.push({ date, key: dayKey, events: currentEventList });
     }
   }
   return dates; 
 };
 
-// getNextDayOfWeek removed because it was unused to avoid lint/type warnings.
-// --- Helper untuk in-memory storage ---
 const memoryStorage: { 
   selectedDates: string[], 
   selectedEventsByDate: SelectedEventsByDate, 
@@ -281,15 +242,6 @@ const memoryStorage: {
   events: {}
 };
 
-const loadSelection = () => {
-  const rawDates = memoryStorage.selectedDates;
-  const dates = rawDates
-    .map((d: string) => new Date(d))
-    .filter((date: Date) => !isNaN(date.getTime()));
-  
-  const events = memoryStorage.selectedEventsByDate;
-  return { dates, events };
-};
 
 const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
   const datesToStore = dates.map(getDayKey); 
@@ -297,7 +249,7 @@ const saveSelection = (dates: Date[], events: SelectedEventsByDate) => {
   memoryStorage.selectedEventsByDate = events;
 };
 
-// --- LOGIKA KALENDER ---
+
 interface CalendarSectionProps {
     year: number;
     setYear: React.Dispatch<React.SetStateAction<number>>;
@@ -317,7 +269,6 @@ const CalendarSection = ({
     actualAttendanceDates 
 }: CalendarSectionProps) => {
 
-    // --- NEW RESPONSIVE LOGIC ---
     const [isMobileView, setIsMobileView] = useState(false);
     
     useEffect(() => {
@@ -330,7 +281,6 @@ const CalendarSection = ({
         window.addEventListener('resize', checkScreenSize);
         return () => window.removeEventListener('resize', checkScreenSize);
     }, []);
-    // --- END NEW RESPONSIVE LOGIC ---
 
     const handlePrevMonth = useCallback(() => { 
         const newMonth = (startMonth - 1 + 12) % 12;
@@ -395,12 +345,12 @@ const CalendarSection = ({
                 </button>
             </div>
             
-            {/* Apply grid changes based on screen size: grid-cols-1 on mobile, md:grid-cols-3 on desktop */}
+           
             <div className={`grid grid-cols-1 ${isMobileView ? 'gap-0' : 'md:grid-cols-3 gap-4'}`}>
               {monthsToDisplay.map((monthIndex) => {
                 const daysInMonth = getDaysInMonth(monthIndex, year);
                 const firstDay = getFirstDayOfMonth(monthIndex, year);
-                // Menyesuaikan startDayOffset untuk memulai Senin (0=Minggu, 1=Senin)
+               
                 const startDayOffset = firstDay === 0 ? 6 : firstDay - 1; 
                 const daysArray: (number | null)[] = [
                   ...Array(startDayOffset).fill(null) as (number | null)[],
@@ -429,22 +379,22 @@ const CalendarSection = ({
                         const dayKey = getDayKey(thisDate);
                         const isSelected = selectedKeys.has(dayKey);
                         const dateTimestamp = new Date(thisDate).setHours(0, 0, 0, 0);
-                        const isFutureDay = dateTimestamp > todayStart; // Keep for visual cue
+                        const isFutureDay = dateTimestamp > todayStart; 
                         
                         const hasAttendanceData = attendanceSet.has(dayKey);
                         
                         let dayClass = "relative p-1.5 rounded-full transition-all duration-150 text-xs md:text-sm cursor-pointer";
                         
                         if (isSelected) {
-                          // Tetap tampilkan warna biru jika terpilih
+                         
                           dayClass += " bg-indigo-600 text-white font-bold shadow-md"; 
                         } else { 
-                          // All others
+        
                           dayClass += " text-gray-700 hover:bg-indigo-200";
                         }
                         
                         if (isFutureDay && !isSelected) {
-                            // Soften future dates but keep them clickable
+                           
                             dayClass += " text-indigo-400 font-normal hover:bg-indigo-100";
                         }
 
@@ -452,12 +402,12 @@ const CalendarSection = ({
                           <div 
                             key={i} 
                             className={dayClass} 
-                            // NEW: Allow all clicks
+     
                             onClick={() => handleSelectDate(day, monthIndex)} 
                             role="button"
                           >
                             {day}
-                            {/* 💡 Titik hanya muncul jika ADA data kehadiran DAN TIDAK terpilih */}
+                            
                             {hasAttendanceData && !isSelected && ( 
                               <div className={`absolute bottom-0 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-red-600`}></div>
                             )}
@@ -565,7 +515,7 @@ const SelectedEventsSection = ({
                                     >
                                         {ev}
                                         {isPeriodical && (
-                                            <span className="absolute top-[-4px] right-[-4px] text-[8px] bg-purple-600 text-white px-1 rounded-full font-bold">R</span>
+                                            <span className="absolute -top-1 -right-1 text-[8px] bg-purple-600 text-white px-1 rounded-full font-bold">R</span>
                                         )}
                                     </button>
                                     
@@ -576,7 +526,7 @@ const SelectedEventsSection = ({
                                                     e.stopPropagation(); 
                                                     handleOpenEditEvent(key, ev);
                                                 }}
-                                                className="absolute top-[-8px] left-[-8px] bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-blue-700 transition" 
+                                                className="absolute -top-2 -left-2 bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-blue-700 transition" 
                                                 title="Edit Event"
                                             >
                                                 <Pencil size={8} />
@@ -587,7 +537,7 @@ const SelectedEventsSection = ({
                                                     e.stopPropagation(); 
                                                     handleDeleteEvent(key, ev);
                                                 }}
-                                                className="absolute top-[-8px] right-[-8px] bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-red-700 transition" 
+                                                className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] p-0 leading-none hover:bg-red-700 transition" 
                                                 title="Hapus Event"
                                             >
                                                 <X size={10} />
@@ -627,7 +577,7 @@ const ConfirmationModal = ({ data }: { data: ConfirmationModalData | null }) => 
 
     return (
         <div 
-            className="fixed inset-0 bg-black/60 flex items-center justify-center z-[100] p-4"
+            className="fixed inset-0 bg-black/60 flex items-center justify-center z-100 p-4"
             onClick={closeDialog} // Klik area luar (overlay) untuk menutup
         >
             <div 
@@ -708,17 +658,6 @@ export default function DatabasePage() {
   const [viewMode, setViewMode] = useState<ViewMode>('event_per_table');
   
   const [confirmationModal, setConfirmationModal] = useState<CustomConfirmation | null>(null);
-
-  const showConfirmation = useCallback((
-    title: string, 
-    message: string, 
-    onConfirm: () => void, 
-    showCancelButton = false, 
-    onCancel: () => void = () => setConfirmationModal(null)
-  ) => {
-    setConfirmationModal({ isOpen: true, title, message, onConfirm, onCancel, showCancelButton });
-  }, []);
-
 
   const showAlert = useCallback((title: string, message: string) => {
       // PERBAIKAN: Menampilkan alert menggunakan ConfirmationModal (bukan window.alert)
@@ -1419,8 +1358,7 @@ export default function DatabasePage() {
             setWeeklyEvents(fetchedWeeklyEvents);
         }
 
-        const allUniqueSessions = new Set(attendanceRecords.map(j => j.kehadiranSesi));
-        const newEventsCache = integrateWeeklyEvents(fetchedWeeklyEvents, memoryStorage.events, allUniqueSessions);
+        const newEventsCache = integrateWeeklyEvents(fetchedWeeklyEvents, memoryStorage.events);
         setEvents(newEventsCache);
         memoryStorage.events = newEventsCache;
         
@@ -1471,7 +1409,7 @@ export default function DatabasePage() {
         showAlert("Gagal Menyimpan Event", (error as Error).message);
         setShowEventModal(false);
     }
-  }, [eventModalData, showAlert, attendanceRecords]);
+  }, [eventModalData, showAlert]);
 
  const handleEventAction = useCallback(async () => {
   const { type } = eventModalData;
@@ -1550,7 +1488,10 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       setConfirmationModal(null);
       showAlert("Sukses", `Event "${eventName}" berhasil dihapus.`);
     } catch (err) {
-      showAlert("Error", "Gagal memproses penghapusan.");
+      // Menggunakan err untuk menampilkan pesan yang lebih informatif
+      const errorMessage = err instanceof Error ? err.message : "Gagal memproses penghapusan.";
+      showAlert("Error", errorMessage);
+      console.error("Delete Error:", err); // Opsional: untuk debugging di konsol
     }
   };
 
@@ -1563,9 +1504,10 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       confirmLabel: "Hapus Seluruh Jadwal",
       cancelLabel: "Hanya Hari Ini",
       showCancelButton: true,
-      onConfirm: () => executeDelete("all-periodical", targetWeekly.id),
-      onCancel: () => executeDelete("single-periodical", targetWeekly.id)
-    } as any);
+      onConfirm: () => { void executeDelete("all-periodical", targetWeekly.id); },
+      onCancel: () => { void executeDelete("single-periodical", targetWeekly.id); },
+      onDismiss: () => setConfirmationModal(null)
+    } as ConfirmationModalData);
   } else {
     // Event satuan biasa
     setConfirmationModal({
@@ -1575,9 +1517,10 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       confirmLabel: "Hapus",
       cancelLabel: "Batal",
       showCancelButton: true,
-      onConfirm: () => executeDelete("once", eventName),
-      onCancel: () => setConfirmationModal(null)
-    } as any);
+      onConfirm: () => { void executeDelete("once", eventName); },
+      onCancel: () => setConfirmationModal(null),
+      onDismiss: () => setConfirmationModal(null)
+    } as ConfirmationModalData);
   }
 }, [weeklyEvents, router, showAlert]);
 
@@ -1587,8 +1530,12 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
   
   // 1. Cari record Ibadah yang spesifik di tanggal dan nama tersebut
   // Kita mencari di semua weeklyEvents maupun singleEvents
-  let targetIbadah: any = null;
-  let parentWeeklyId: string | null = null;
+  let targetIbadah: {
+    id?: string;
+    jenis_kebaktian: string;
+    tanggal_ibadah: string;
+  } | undefined = undefined;
+  let parentWeeklyId: string | undefined = undefined;
 
   // Cari di dalam weekly events
   weeklyEvents.forEach(we => {
@@ -1606,14 +1553,16 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
   // Anda mungkin perlu menyimpan singleEvents di state jika ingin lebih akurat
   
   if (!parentWeeklyId) {
-    // Anggap sebagai event satuan (Once)
+    // Pastikan kita memberikan nilai fallback jika targetIbadah tidak ditemukan
+    // atau gunakan type assertion jika Anda yakin datanya ada
+    const safeIbadah = targetIbadah as { id?: string; jenis_kebaktian: string; tanggal_ibadah: string } | undefined;
+
     setEventModalData({ 
-      type: 'edit-single', 
-      dateKey, 
-      oldName: eventName, 
-      newName: eventName,
-      // Penting: backend butuh ID ini jika tersedia
-      weeklyEventId: targetIbadah?.id_ibadah || null 
+        type: 'edit-single', 
+        dateKey, 
+        oldName: eventName, 
+        newName: eventName,
+        weeklyEventId: safeIbadah?.id 
     });
     setShowEventModal(true);
   } else {
@@ -1647,9 +1596,9 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
         setShowEventModal(true);
         setConfirmationModal(null);
       }
-    } as any);
+    } as ConfirmationModalData);
   }
-}, [weeklyEvents, setConfirmationModal]);
+}, [weeklyEvents]);
 
 
   const handleSaveEdit = useCallback(() => {
@@ -2209,7 +2158,7 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
   if (isLoading) {
     return (
       <div className="flex min-h-screen bg-gray-50">
-        <main className="flex-grow p-8 max-w-7xl mx-auto w-full flex justify-center items-center">
+        <main className="grow p-8 max-w-7xl mx-auto w-full flex justify-center items-center">
           <Loader2 size={32} className="animate-spin text-indigo-600 mr-2" />
           <p className="text-xl text-indigo-600">Memuat data jemaat...</p>
         </main>
@@ -2236,7 +2185,7 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       </div>
       
       {/* Main Content - PERBAIKAN KRITIS: Tambahkan lg:ml-64 untuk mengimbangi sidebar w-64 */}
-      <main className={`flex-grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
+      <main className={`grow p-4 md:p-8 w-full transition-all duration-300 lg:ml-64 overflow-y-auto`}> 
       
         {/* Hamburger Menu for Mobile */}
         <div className="lg:hidden flex justify-start mb-4">
@@ -2308,7 +2257,7 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
               <select 
                 value={filterStatusKehadiran} 
                 onChange={e => setFilterStatusKehadiran(e.target.value as StatusKehadiran | "")}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none grow sm:grow-0 min-w-[150px]"
               >
                 <option value="">Semua Status Kehadiran</option>
                 <option value="Aktif">Aktif</option>
@@ -2319,7 +2268,7 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
               <select 
                 value={filterJabatan} 
                 onChange={e => setFilterJabatan(e.target.value)}
-                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none grow sm:grow-0 min-w-[150px]"
               >
                 <option value="">Semua Jabatan</option>
                 {uniqueJabatan.map((jab) => (
@@ -2331,7 +2280,7 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
                   <select 
                     value={filterKehadiranSesi} 
                     onChange={e => setFilterKehadiranSesi(e.target.value)}
-                    className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none flex-grow sm:flex-grow-0 min-w-[150px]"
+                    className="border-2 border-gray-300 rounded-lg px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none grow sm:grow-0 min-w-[150px]"
                   >
                     <option value="">Semua Jenis Ibadah</option>
                     {uniqueKehadiranSesiByDate.map((sesi) => (
@@ -2340,7 +2289,7 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
                   </select>
               )}
               
-              <div className="flex-grow flex justify-end gap-2 mt-2 sm:mt-0">
+              <div className="grow flex justify-end gap-2 mt-2 sm:mt-0">
                 {!editMode ? (
                   <button 
                     onClick={() => setEditMode(true)}
@@ -2401,15 +2350,15 @@ const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
                             <table className="min-w-full divide-y divide-gray-200">
                                 <thead className="bg-indigo-50"> 
                                 <tr>
-                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[40px]">No</th>
-                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[80px]">ID</th>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-20">No</th>
+                                    <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-20">ID</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[60px]">Foto</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Nama</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[150px]">Status Kehadiran</th> 
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Jabatan</th>
                                     <th className="px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase min-w-[180px]">Jenis Ibadah/Kebaktian</th>
                                     {/* <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[100px]">Dokumen</th>  */}
-                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-[80px]">Aksi</th>
+                                    <th className="px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase min-w-20">Aksi</th>
                                 </tr>
                                 </thead>
                                 <tbody className="bg-white divide-y divide-gray-200">
