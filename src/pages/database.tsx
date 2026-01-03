@@ -1485,67 +1485,58 @@ export default function DatabasePage() {
   }
 }, [eventModalData, router, showAlert]);
 const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
-      if (eventName === "KESELURUHAN DATA HARI INI") return; 
-      
-      const isPeriodicalEvent = weeklyEvents.find(
-        e => e.title === eventName &&
-            (e.repetition_type === "Weekly" || e.repetition_type === "Monthly")
-      );
+  if (eventName === "KESELURUHAN DATA HARI INI") return;
 
-      const onConfirm = () => {
-          setEvents(prevEvents => {
-              const updatedEvents = {
-                  ...prevEvents,
-                  [dateKey]: (prevEvents[dateKey] ?? []).filter(e => e !== eventName)
-              };
-              memoryStorage.events = updatedEvents;
-              return updatedEvents;
-          });
-          
-          setSelectedEventsByDate(prevSelected => {
-              const newSelected = {
-                  ...prevSelected,
-                  [dateKey]: (prevSelected[dateKey] ?? []).filter(e => e !== eventName)
-              };
-              saveSelection(selectedDates, newSelected);
-              return newSelected;
-          });
-          setConfirmationModal(null);
-          showAlert("Sukses Hapus Satuan", `Event "${eventName}" berhasil dihapus HANYA di tanggal ini.`);
-      };
+  // Cari apakah event ini bagian dari jadwal rutin
+  const targetWeekly = weeklyEvents.find(e =>
+    e.Ibadah?.some(i => i.jenis_kebaktian === eventName && getDayKey(new Date(i.tanggal_ibadah)) === dateKey)
+  );
+
+  const executeDelete = async (type: string, idParam: string) => {
+    try {
+      const encodedId = encodeURIComponent(idParam);
+      const url = `/api/weekly-events?type=${type}&id=${encodedId}&dateKey=${dateKey}`;
       
-      const onCancel = () => {
-          setEventModalData({
-              type: 'edit-periodical-confirm',
-              dateKey,
-              oldName: eventName,
-              newName: '',
-              periodicalDayOfWeek: null,
-              periodicalPeriod: '',
-          });
-          setShowEventModal(true);
-          setConfirmationModal(null);
-      }
-      
-      if (isPeriodicalEvent) {
-          showConfirmation(
-              "Konfirmasi Penghapusan Event Berkala",
-              `Event "${eventName}" adalah event berkala. Apakah Anda ingin menghapus HANYA untuk tanggal ini? (Pilih 'Batal' untuk menghapus SEMUA event di database dan tanggal setelahnya).`,
-              onConfirm,
-              true,
-              onCancel
-          );
-      } else {
-          showConfirmation(
-              "Konfirmasi Penghapusan",
-              `Apakah Anda yakin ingin menghapus Event "${eventName}" HANYA untuk tanggal ini?`,
-              onConfirm,
-              true,
-              () => setConfirmationModal(null) 
-          );
-      }
-      
-  }, [selectedDates, showConfirmation, showAlert, weeklyEvents]);
+      const res = await fetch(url, { method: "DELETE" });
+      if (!res.ok) throw new Error("Gagal menghapus event");
+
+      // Sinkronisasi ulang data dari database
+      await router.replace(router.asPath);
+      memoryStorage.events = {}; 
+      setConfirmationModal(null);
+      showAlert("Sukses", `Event "${eventName}" berhasil dihapus.`);
+    } catch (err) {
+      showAlert("Error", "Gagal memproses penghapusan.");
+    }
+  };
+
+  if (targetWeekly) {
+    // Tampilkan pilihan dialog seperti saat Edit
+    setConfirmationModal({
+      isOpen: true,
+      title: "Hapus Event Rutin",
+      message: `"${eventName}" adalah event rutin. Pilih cakupan penghapusan:`,
+      confirmLabel: "Hapus Seluruh Jadwal",
+      cancelLabel: "Hanya Hari Ini",
+      showCancelButton: true,
+      onConfirm: () => executeDelete("all-periodical", targetWeekly.id),
+      onCancel: () => executeDelete("single-periodical", targetWeekly.id)
+    } as any);
+  } else {
+    // Event satuan biasa
+    setConfirmationModal({
+      isOpen: true,
+      title: "Konfirmasi Hapus",
+      message: `Hapus event "${eventName}" pada tanggal ini?`,
+      confirmLabel: "Hapus",
+      cancelLabel: "Batal",
+      showCancelButton: true,
+      onConfirm: () => executeDelete("once", eventName),
+      onCancel: () => setConfirmationModal(null)
+    } as any);
+  }
+}, [weeklyEvents, router, showAlert]);
+
 
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
   if (eventName === "KESELURUHAN DATA HARI INI") return;

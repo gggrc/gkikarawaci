@@ -266,21 +266,50 @@ export async function PUT(req: Request) {
 /* =======================
    DELETE
 ======================= */
-
 export async function DELETE(req: Request) {
   try {
     const { searchParams } = new URL(req.url);
-    const id = searchParams.get("id");
+    const type = searchParams.get("type"); // "single-periodical" atau "all-periodical"
+    const id = searchParams.get("id"); // weeklyEventId
+    const dateKey = searchParams.get("dateKey");
 
-    if (!id) {
-      return NextResponse.json({ error: "Missing id" }, { status: 400 });
+    if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
+
+    // HAPUS SELURUH RANGKAIAN JADWAL
+    if (type === "all-periodical") {
+      await prisma.weeklyEvent.delete({ 
+        where: { id: id } 
+      });
+      return NextResponse.json({ success: true });
     }
 
-    await prisma.weeklyEvent.delete({ where: { id } });
-    return NextResponse.json({ success: true });
+    // HAPUS HANYA DI TANGGAL TERTENTU
+    if (type === "single-periodical" && dateKey) {
+      await prisma.ibadah.deleteMany({
+        where: {
+          weeklyEventId: id,
+          tanggal_ibadah: new Date(dateKey),
+        },
+      });
+      return NextResponse.json({ success: true });
+    }
+
+    // HAPUS EVENT SATUAN (ONCE)
+    if (type === "once") {
+      await prisma.ibadah.deleteMany({
+        where: {
+          jenis_kebaktian: decodeURIComponent(id),
+          tanggal_ibadah: dateKey ? new Date(dateKey) : undefined,
+          weeklyEventId: null,
+        },
+      });
+      return NextResponse.json({ success: true });
+    }
+
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (err) {
     console.error("DELETE error:", err);
-    return NextResponse.json({ error: "Delete failed" }, { status: 500 });
+    return NextResponse.json({ error: "Gagal menghapus data" }, { status: 500 });
   }
 }
 
