@@ -187,38 +187,25 @@ const populateEventsForDate = (dateKey: string, date: Date, allUniqueSessions: S
 // **Logika Integrasi Event Berkala (Caching)**
 const integrateWeeklyEvents = (
   weeklyEvents: WeeklyEvent[], 
-  existingEvents: EventsCache, 
-  allUniqueSessions: Set<string>
+  existingEvents: EventsCache
 ): EventsCache => {
     const updatedEvents = { ...existingEvents };
 
-    for (const event of weeklyEvents) {
-        const eventName = event.title;
-        const lowerEventName = eventName.toLowerCase();
-
-        // ✅ Loop lewat semua tanggal Ibadah yang dikembalikan dari API
-        for (const ibadah of event.Ibadah ?? []) {
-            const ibadahDate = new Date(ibadah.tanggal_ibadah);
-            const dayKey = getDayKey(ibadahDate);
-
-            // Gunakan `populateEventsForDate` untuk mendapatkan list awal (termasuk sesi unik dari data kehadiran)
-            const initialEvents = updatedEvents[dayKey] ?? populateEventsForDate(dayKey, ibadahDate, allUniqueSessions);
-            const eventExists = initialEvents.some(e => e.toLowerCase() === lowerEventName);
-
-            if (!eventExists) {
-                updatedEvents[dayKey] = [
-                    "KESELURUHAN DATA HARI INI",
-                    ...initialEvents.filter(e => e !== "KESELURUHAN DATA HARI INI"),
-                    eventName
-                ].filter((v, i, a) => a.indexOf(v) === i);
-            } else {
-                // perbaiki capitalization
-                updatedEvents[dayKey] = initialEvents.map(e =>
-                    e.toLowerCase() === lowerEventName ? eventName : e
-                );
+    weeklyEvents.forEach((event) => {
+        // Gunakan daftar Ibadah yang dihasilkan dari database
+        (event.Ibadah || []).forEach((ibadah) => {
+            const dayKey = getDayKey(new Date(ibadah.tanggal_ibadah));
+            
+            if (!updatedEvents[dayKey]) {
+                updatedEvents[dayKey] = ["KESELURUHAN DATA HARI INI"];
             }
-        }
-    }
+
+            // Selalu gunakan jenis_kebaktian dari baris Ibadah tersebut
+            if (!updatedEvents[dayKey].includes(ibadah.jenis_kebaktian)) {
+                updatedEvents[dayKey].push(ibadah.jenis_kebaktian);
+            }
+        });
+    });
 
     return updatedEvents;
 };
@@ -756,171 +743,120 @@ export default function DatabasePage() {
   }, [router, selectedDatesOnly]);
   
   useEffect(() => {
-    const initialSelection = loadSelection();
-    setSelectedDates(initialSelection.dates);
-    setSelectedEventsByDate(initialSelection.events);
-    setEvents(memoryStorage.events || {});
-  }, []);
+  const fetchData = async () => {
+    setIsLoading(true);
 
-  useEffect(() => {
-    // 💡 FUNGSI INI MENGAMBIL DATA UTAMA DARI TABEL KEHADIRAN & JEMAAT
-    const fetchData = async () => {
-      setIsLoading(true);
-      try {
-        const [jemaatRes, weeklyEventsRes] = await Promise.all([
-          fetch("/api/jemaat"), // Data Jemaat dan Kehadiran
-          fetch("/api/weekly-events"), // Data Event Berkala (DITAMBAHKAN)
-        ]);
+    try {
+      const [jemaatRes, weeklyEventsRes] = await Promise.all([
+        fetch("/api/jemaat"),
+        fetch("/api/weekly-events"),
+      ]);
 
-        // --- 1. PROSES DATA JEMAAT/KEHADIRAN ---
-        const data: unknown = await jemaatRes.json();
-        const apiResponse = data as JemaatAPIResponse;
-        
-        if (apiResponse.error) {
-          console.error("API Jemaat Error Body:", apiResponse.error);
-          showAlert(
-            "Gagal Mengambil Data Jemaat", 
-            `Terjadi kesalahan pada server/database: ${apiResponse.error}`
-          );
-          throw new Error(apiResponse.error);
-        }
-        if (!jemaatRes.ok) {
-          throw new Error(`Gagal fetch data jemaat. Status: ${jemaatRes.status}`);
-        }
+      // ===============================
+      // 1. DATA JEMAAT & KEHADIRAN
+      // ===============================
+      const jemaatJson: JemaatAPIResponse = await jemaatRes.json();
 
-        const fetchedUniqueJemaat = apiResponse.jemaatData || [];
-        setUniqueJemaatList(fetchedUniqueJemaat);
-        setDraftUniqueJemaatList(fetchedUniqueJemaat.map(j => ({ ...j })));
-        setAttendanceRecords((apiResponse.fullAttendanceRecords || []) as JemaatRow[]);
-        const fetchedAttendanceDates = apiResponse.attendanceDates || [];
-        setActualAttendanceDates(fetchedAttendanceDates); 
-        
-        // Ambil semua sesi unik dari data kehadiran (ini adalah jenis_kebaktian yang sudah di-join)
-        const allUniqueSessions = new Set<string>(apiResponse.fullAttendanceRecords?.map(j => j.kehadiranSesi).filter(s => s) ?? []);
-
-        // --- 2. PROSES DATA WEEKLY EVENTS ---
-        let fetchedWeeklyEvents: WeeklyEvent[] = [];
-        let fetchedSingleEvents: SingleEvent[] = [];
-
-        if (weeklyEventsRes.ok) {
-          const weeklyData = (await weeklyEventsRes.json()) as WeeklyEventAPIResponse;
-
-          fetchedWeeklyEvents = Array.isArray(weeklyData.weeklyEvents)
-            ? weeklyData.weeklyEvents
-            : [];
-
-          fetchedSingleEvents = Array.isArray(weeklyData.singleEvents)
-            ? weeklyData.singleEvents
-            : [];
-
-          setWeeklyEvents(fetchedWeeklyEvents);
-        } else {
-          const errorData = (await weeklyEventsRes.json().catch(() => ({
-            error: "Unknown weekly-events API error."
-          }))) as { error?: string };
-
-          console.error("API Weekly Events Error:", errorData);
-
-          showAlert(
-            "Peringatan Data Event",
-            `Gagal memuat event berkala: ${errorData.error ?? "Unknown error"}`
-          );
-        }
-
-        // --- 3. INTEGRASI DAN CACHE EVENT ---
-        const initialEvents: EventsCache = {};
-
-        fetchedAttendanceDates.forEach((dateKey: string) => {
-            const date = new Date(dateKey);
-            // Gunakan sesi unik sebagai base event list
-            initialEvents[dateKey] = populateEventsForDate(dateKey, date, allUniqueSessions); 
-        });
-        
-        // **Menggunakan Logika Integrasi yang Benar**
-        // 🟧 1. Convert single events → calendar mapping
-        fetchedSingleEvents.forEach((item) => {
-            const key = getDayKey(new Date(item.tanggal_ibadah));
-
-            initialEvents[key] = initialEvents[key] ?? [];
-
-            // hindari duplikasi
-            if (!initialEvents[key].includes(item.jenis_kebaktian)) {
-                initialEvents[key].push(item.jenis_kebaktian);
-            }
-        });
-
-        // === helper weekly generator ===
-        function generateWeeklyOccurrences(startDate: Date, endDate: Date | null, dayOfWeek: number) {
-          const dates: string[] = [];
-          const cursor = new Date(startDate);
-
-          while (cursor.getDay() !== dayOfWeek) {
-            cursor.setDate(cursor.getDate() + 1);
-          }
-
-          while (!endDate || cursor <= endDate) {
-            dates.push(getDayKey(new Date(cursor)));
-            cursor.setDate(cursor.getDate() + 7);
-          }
-
-          return dates;
-        }
-
-        // 🟦 2. Integrasi event berkala dengan metode yang benar
-        fetchedWeeklyEvents.forEach((ev) => {
-          const start = new Date(ev.start_date);
-          const end = ev.end_date ? new Date(ev.end_date) : null;
-
-          if (ev.repetition_type === "Weekly") {
-            const weeklyDay = new Date(ev.start_date).getDay();
-            const occ = generateWeeklyOccurrences(start, end, weeklyDay);
-
-            occ.forEach((key) => {
-              initialEvents[key] = initialEvents[key] ?? [];
-              if (!initialEvents[key].includes(ev.title)) {
-                initialEvents[key].push(ev.title);
-              }
-            });
-
-            return;
-          }
-
-          // Monthly event = berdasarkan tanggal start
-          if (ev.repetition_type === "Monthly") {
-            const cursor = new Date(start);
-
-            while (!end || cursor <= end) {
-              const key = getDayKey(cursor);
-              initialEvents[key] = initialEvents[key] ?? [];
-              if (!initialEvents[key].includes(ev.title)) {
-                initialEvents[key].push(ev.title);
-              }
-              cursor.setMonth(cursor.getMonth() + 1);
-            }
-          }
-        });
-
-        // 🟩 3. Set final events
-        setEvents(initialEvents);
-        memoryStorage.events = initialEvents;
-
-        
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : "Terjadi kesalahan saat mengambil data (unknown error).";
-        console.error("Error fetch data:", errorMessage);
-        setUniqueJemaatList([]);
-        setDraftUniqueJemaatList([]);
-        setAttendanceRecords([]);
-        setActualAttendanceDates([]); 
-        setWeeklyEvents([]); 
-        showAlert("Fatal Error", errorMessage);
-      } finally {
-        setIsLoading(false);
+      if (!jemaatRes.ok || jemaatJson.error) {
+        throw new Error(jemaatJson.error ?? "Gagal mengambil data jemaat");
       }
-    };
 
-    void fetchData();
-  }, [showAlert]); 
+      const attendanceRecords = jemaatJson.fullAttendanceRecords || [];
+      const attendanceDates = jemaatJson.attendanceDates || [];
+
+      setAttendanceRecords(attendanceRecords as JemaatRow[]);
+      setActualAttendanceDates(attendanceDates);
+
+      // Sesi unik dari data kehadiran untuk default populate
+      const allUniqueSessions = new Set<string>(
+        attendanceRecords
+          .map(j => j.kehadiranSesi)
+          .filter(Boolean)
+      );
+
+      // ===============================
+      // 2. DATA EVENT (SINGLE & WEEKLY)
+      // ===============================
+      let weeklyEvents: WeeklyEvent[] = [];
+      let singleEvents: SingleEvent[] = [];
+
+      if (weeklyEventsRes.ok) {
+        const weeklyJson: WeeklyEventAPIResponse = await weeklyEventsRes.json();
+        weeklyEvents = weeklyJson.weeklyEvents ?? [];
+        singleEvents = weeklyJson.singleEvents ?? [];
+        setWeeklyEvents(weeklyEvents);
+      }
+
+      // ===============================
+      // 3. INISIALISASI EVENTS CACHE
+      // ===============================
+      const eventsCache: EventsCache = {};
+
+      // Inisialisasi tanggal yang memiliki data kehadiran
+      attendanceDates.forEach(dateKey => {
+        const date = new Date(dateKey);
+        eventsCache[dateKey] = populateEventsForDate(
+          dateKey,
+          date,
+          allUniqueSessions
+        );
+      });
+
+      // ===============================
+      // 4. MAPPING DATA DARI DATABASE (Source of Truth)
+      // ===============================
+      
+      // A. Masukkan Single Events (Ibadah lepas)
+      singleEvents.forEach(item => {
+        const key = getDayKey(new Date(item.tanggal_ibadah));
+        eventsCache[key] = eventsCache[key] ?? ["KESELURUHAN DATA HARI INI"];
+
+        // Prioritaskan kolom jenis_kebaktian dari database
+        if (!eventsCache[key].includes(item.jenis_kebaktian)) {
+          eventsCache[key].push(item.jenis_kebaktian);
+        }
+      });
+
+      // B. Masukkan Weekly/Monthly Events berdasarkan data baris Ibadah
+      // Kita tidak lagi menggunakan generator manual di sini agar hasil edit satuan 
+      // di Supabase (tabel Ibadah) langsung tercermin di UI.
+      weeklyEvents.forEach(ev => {
+        (ev.Ibadah || []).forEach((ibadah: any) => {
+          const key = getDayKey(new Date(ibadah.tanggal_ibadah));
+          eventsCache[key] = eventsCache[key] ?? ["KESELURUHAN DATA HARI INI"];
+          
+          // Tambahkan jenis_kebaktian spesifik dari baris ibadah ini
+          if (!eventsCache[key].includes(ibadah.jenis_kebaktian)) {
+            eventsCache[key].push(ibadah.jenis_kebaktian);
+          }
+        });
+      });
+
+      // ===============================
+      // 5. FINAL SET STATE + CACHE
+      // ===============================
+      setEvents(eventsCache);
+      memoryStorage.events = eventsCache;
+
+    } catch (err) {
+      console.error("Fetch Data Error:", err);
+      showAlert(
+        "Gagal Memuat Data",
+        err instanceof Error ? err.message : "Unknown error"
+      );
+
+      setAttendanceRecords([]);
+      setActualAttendanceDates([]);
+      setWeeklyEvents([]);
+      setEvents({});
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  void fetchData();
+// Pemicu refresh ketika router.replace(router.asPath) dipanggil setelah PUT
+}, [router.asPath, showAlert]);
 
   // Perbarui useEffect untuk Caching/Integrating Events yang tampil di kalender
   useEffect(() => {
@@ -1505,77 +1441,50 @@ export default function DatabasePage() {
     }
   }, [eventModalData, showAlert, attendanceRecords]);
 
-  const handleEventAction = useCallback(async () => {
+ const handleEventAction = useCallback(async () => {
   const { type, dateKey, oldName, newName, weeklyEventId } = eventModalData;
   const newNameTrim = newName?.trim();
   
   if (!newNameTrim || !oldName) return;
 
   try {
-    // 1. UPDATE DATABASE VIA API
-    let endpoint = "/api/weekly-events";
-    let method = "PUT";
     let bodyData: any = { newTitle: newNameTrim };
 
-    if (type === 'add-periodical' && oldName) {
+    // Identifikasi scope pengeditan
+    if (type === 'add-periodical' && weeklyEventId) {
       bodyData = { ...bodyData, type: "periodical", weeklyEventId };
-    } else if (type === 'edit-periodical-confirm' && dateKey) {
-      const targetEvent = weeklyEvents.find(e => e.title === oldName);
-      if (!targetEvent) return;
-      bodyData = { ...bodyData, type: "single-periodical", weeklyEventId: targetEvent.id, dateKey };
+    } else if (type === 'edit-periodical-confirm' && dateKey && weeklyEventId) {
+      bodyData = { ...bodyData, type: "single-periodical", weeklyEventId, dateKey };
     } else if (type === 'edit-single' && dateKey) {
       bodyData = { ...bodyData, type: "single", dateKey, oldTitle: oldName };
     }
 
-    const res = await fetch(endpoint, {
-      method,
+    const res = await fetch("/api/weekly-events", {
+      method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(bodyData),
     });
 
     if (!res.ok) throw new Error("Gagal menyimpan ke database");
 
-    // 2. UPDATE STATE LOKAL (Agar tidak berubah kembali saat navigasi)
-    // Update cache event (digunakan oleh kalender dan daftar event)
-    if (dateKey) {
-      setEvents(prev => {
-        const updated = { ...prev };
-        if (updated[dateKey]) {
-          updated[dateKey] = updated[dateKey].map(ev => ev === oldName ? newNameTrim : ev);
-        }
-        memoryStorage.events = updated; // Update memoryStorage agar persisten selama sesi
-        return updated;
-      });
-
-      // Update event yang sedang dipilih (digunakan oleh tabel jemaat)
-      setSelectedEventsByDate(prev => {
-        const updated = { ...prev };
-        if (updated[dateKey]) {
-          updated[dateKey] = updated[dateKey].map(ev => ev === oldName ? newNameTrim : ev);
-        }
-        saveSelection(selectedDates, updated); // Simpan ke memoryStorage
-        return updated;
-      });
-    }
-
-    // 3. PAKSA REFRESH DATA DARI SERVER (PENTING!)
-    // Memanggil router.replace atau reload memastikan data ditarik ulang dari Supabase
-    // Jika Anda ingin lebih halus, panggil ulang fungsi fetchData() yang ada di useEffect utama.
-    showAlert("Sukses", "Perubahan berhasil disimpan.");
-    
-    // Gunakan router.replace untuk memicu re-render halaman dengan data terbaru
-    router.replace(router.asPath); 
-
-  } catch (err) {
-    console.error("Update Error:", err);
-    showAlert("Error", "Gagal memperbarui data. Silakan coba lagi.");
-  } finally {
+    // 1. Reset state modal agar bersih untuk pengeditan berikutnya
     setShowEventModal(false);
     setEventModalData({});
-  }
-}, [eventModalData, weeklyEvents, router, showAlert, selectedDates]);
 
-  const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
+    // 2. Paksa refresh router agar data terbaru ditarik dari server (GET /api/weekly-events)
+    // Ini memastikan source of truth kembali ke database
+    await router.replace(router.asPath);
+    
+    // 3. Bersihkan cache manual agar tidak terjadi tabrakan data lama saat klik edit lagi
+    memoryStorage.events = {}; 
+    
+    showAlert("Sukses", "Perubahan berhasil disimpan permanen.");
+  } catch (err) {
+    console.error("Update Error:", err);
+    showAlert("Error", "Gagal memperbarui data.");
+  }
+}, [eventModalData, router, showAlert]);
+const handleDeleteEvent = useCallback((dateKey: string, eventName: string) => {
       if (eventName === "KESELURUHAN DATA HARI INI") return; 
       
       const isPeriodicalEvent = weeklyEvents.find(
@@ -1641,60 +1550,53 @@ export default function DatabasePage() {
   const handleOpenEditEvent = useCallback((dateKey: string, eventName: string) => {
   if (eventName === "KESELURUHAN DATA HARI INI") return;
   
-  const isPeriodicalEvent = weeklyEvents.find(
-    e => e.title === eventName && (e.repetition_type === "Weekly" || e.repetition_type === "Monthly")
+  // Cari data event di state weeklyEvents untuk mendapatkan ID dan tipe aslinya
+  const targetWeekly = weeklyEvents.find(e => 
+    e.Ibadah?.some(i => i.jenis_kebaktian === eventName && getDayKey(new Date(i.tanggal_ibadah)) === dateKey)
   );
-  
-  // Jika Event Satuan Biasa
-  if (!isPeriodicalEvent) {
+
+  if (!targetWeekly) {
+    // Jika tidak ditemukan di weekly, anggap sebagai event satuan (Once)
     setEventModalData({ 
       type: 'edit-single', 
       dateKey, 
       oldName: eventName, 
-      newName: eventName,
+      newName: eventName // Selalu inisialisasi dengan nama saat ini
     });
     setShowEventModal(true);
-    return;
-  }
-
-  // Jika Event Berkala
-  const onEditAll = () => {
-    setEventModalData({
-      type: 'add-periodical', 
-      dateKey,
-      oldName: eventName,
-      newName: eventName, 
-      periodicalDayOfWeek: isPeriodicalEvent.repetition_type === "Monthly" ? "Per Tanggal" : new Date(isPeriodicalEvent.start_date).getDay(),
-      periodicalPeriod: '10y',
-      weeklyEventId: isPeriodicalEvent.id
+  } else {
+    // Jika bagian dari event rutin, tawarkan scope
+    setConfirmationModal({
+      isOpen: true,
+      title: "Edit Event Rutin",
+      message: `Ubah "${eventName}" untuk tanggal ini saja atau seluruh jadwal?`,
+      confirmLabel: "Seluruh Jadwal",
+      cancelLabel: "Hanya Hari Ini",
+      showCancelButton: true,
+      onConfirm: () => {
+        setEventModalData({
+          type: 'add-periodical',
+          dateKey,
+          oldName: eventName,
+          newName: eventName,
+          weeklyEventId: targetWeekly.id
+        });
+        setShowEventModal(true);
+        setConfirmationModal(null);
+      },
+      onCancel: () => {
+        setEventModalData({ 
+          type: 'edit-periodical-confirm', 
+          dateKey, 
+          oldName: eventName, 
+          newName: eventName,
+          weeklyEventId: targetWeekly.id
+        });
+        setShowEventModal(true);
+        setConfirmationModal(null);
+      }
     } as any);
-    setShowEventModal(true);
-    setConfirmationModal(null);
-  };
-  
-  const onEditOnlyThisDate = () => {
-    setEventModalData({ 
-      type: 'edit-periodical-confirm', 
-      dateKey, 
-      oldName: eventName, 
-      newName: eventName,
-    });
-    setShowEventModal(true);
-    setConfirmationModal(null);
-  };
-
-  setConfirmationModal({
-    isOpen: true,
-    title: "Edit Event Rutin",
-    message: `Event "${eventName}" adalah bagian dari jadwal rutin. Pilih cakupan pengeditan:`,
-    onConfirm: onEditAll, 
-    onCancel: onEditOnlyThisDate,
-    showCancelButton: true,
-    confirmLabel: "Ubah Semua Jadwal", 
-    cancelLabel: "Ubah Tanggal Ini Saja",
-    onDismiss: () => setConfirmationModal(null)
-  } as any);
-  
+  }
 }, [weeklyEvents, setConfirmationModal]);
 
 

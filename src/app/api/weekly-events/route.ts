@@ -213,12 +213,21 @@ export async function POST(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const body: unknown = await req.json();
-    if (!isPutBody(body)) {
-      return NextResponse.json({ error: "Invalid PUT body" }, { status: 400 });
+    const body: any = await req.json();
+
+    // UPDATE: Satu tanggal spesifik dari event rutin
+    if (body.type === "single-periodical") {
+      await prisma.ibadah.updateMany({
+        where: {
+          weeklyEventId: body.weeklyEventId,
+          tanggal_ibadah: new Date(body.dateKey),
+        },
+        data: { jenis_kebaktian: body.newTitle },
+      });
+      return NextResponse.json({ success: true });
     }
 
-    // ===== SINGLE EVENT =====
+    // UPDATE: Event satuan (Once)
     if (body.type === "single") {
       await prisma.ibadah.updateMany({
         where: {
@@ -228,41 +237,32 @@ export async function PUT(req: Request) {
         },
         data: { jenis_kebaktian: body.newTitle },
       });
-
       return NextResponse.json({ success: true });
     }
 
-    // ===== SINGLE DATE OF PERIODICAL =====
-    if (body.type === "single-periodical") {
-      await prisma.ibadah.updateMany({
-        where: {
-          weeklyEventId: body.weeklyEventId,
-          tanggal_ibadah: new Date(body.dateKey),
+    // UPDATE: Seluruh jadwal (Induk WeeklyEvent dan semua Ibadah di bawahnya)
+    if (body.type === "periodical") {
+      await prisma.weeklyEvent.update({
+        where: { id: body.weeklyEventId },
+        data: { 
+          title: body.newTitle,
+          jenis_kebaktian: body.newTitle 
         },
+      });
+
+      await prisma.ibadah.updateMany({
+        where: { weeklyEventId: body.weeklyEventId },
         data: { jenis_kebaktian: body.newTitle },
       });
 
       return NextResponse.json({ success: true });
     }
 
-    // ===== PERIODICAL ALL =====
-    await prisma.weeklyEvent.update({
-      where: { id: body.weeklyEventId },
-      data: { title: body.newTitle },
-    });
-
-    await prisma.ibadah.updateMany({
-      where: { weeklyEventId: body.weeklyEventId },
-      data: { jenis_kebaktian: body.newTitle },
-    });
-
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ error: "Invalid action type" }, { status: 400 });
   } catch (err) {
-    console.error("PUT error:", err);
-    return NextResponse.json({ error: "PUT failed" }, { status: 500 });
+    return NextResponse.json({ error: "Server gagal memproses update" }, { status: 500 });
   }
 }
-
 /* =======================
    DELETE
 ======================= */
