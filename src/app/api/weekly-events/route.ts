@@ -230,9 +230,15 @@ export async function POST(req: Request) {
 
 export async function PUT(req: Request) {
   try {
-    const body: any = await req.json();
+    const body: unknown = await req.json();
 
-    // UPDATE: Satu tanggal spesifik dari event rutin
+    if (!isPutBody(body)) {
+      return NextResponse.json(
+        { error: "Invalid request body" },
+        { status: 400 }
+      );
+    }
+
     if (body.type === "single-periodical") {
       await prisma.ibadah.updateMany({
         where: {
@@ -244,7 +250,6 @@ export async function PUT(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    // UPDATE: Event satuan (Once)
     if (body.type === "single") {
       await prisma.ibadah.updateMany({
         where: {
@@ -257,13 +262,12 @@ export async function PUT(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    // UPDATE: Seluruh jadwal (Induk WeeklyEvent dan semua Ibadah di bawahnya)
     if (body.type === "periodical") {
       await prisma.weeklyEvent.update({
         where: { id: body.weeklyEventId },
-        data: { 
+        data: {
           title: body.newTitle,
-          jenis_kebaktian: body.newTitle 
+          jenis_kebaktian: body.newTitle,
         },
       });
 
@@ -275,11 +279,16 @@ export async function PUT(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-    return NextResponse.json({ error: "Invalid action type" }, { status: 400 });
+    return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
   } catch (err) {
-    return NextResponse.json({ error: "Server gagal memproses update" }, { status: 500 });
+    console.error(err);
+    return NextResponse.json(
+      { error: "Server gagal memproses update" },
+      { status: 500 }
+    );
   }
 }
+
 /* =======================
    DELETE
 ======================= */

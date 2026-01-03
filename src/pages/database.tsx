@@ -21,7 +21,11 @@ interface WeeklyEvent {
   repetition_type: 'Once' | 'Weekly' | 'Monthly';
   jenis_kebaktian: string;
   sesi_ibadah: number;
-  Ibadah?: { tanggal_ibadah: string }[]; // Tambahkan properti Ibadah sesuai penggunaan
+  Ibadah?: {
+    tanggal_ibadah: string;
+    jenis_kebaktian: string;
+  }[];
+// Tambahkan properti Ibadah sesuai penggunaan
 }
 
 interface SingleEvent {
@@ -32,6 +36,17 @@ interface SingleEvent {
   weeklyEventId: string | null;
 }
 
+interface IbadahRow {
+  tanggal_ibadah: string;
+  jenis_kebaktian: string;
+}
+
+
+interface ConfirmationModalData extends CustomConfirmation {
+    onDismiss?: () => void;
+    confirmLabel?: string;
+    cancelLabel?: string;
+}
 
 // --- Tipe Data Lainnya ---
 
@@ -69,6 +84,25 @@ type WeeklyEventAPIResponse = {
   weeklyEvents: WeeklyEvent[];
   singleEvents: SingleEvent[];
 };
+
+type UpdateEventPayload =
+  | {
+      newTitle: string;
+      type: "periodical";
+      weeklyEventId: string;
+    }
+  | {
+      newTitle: string;
+      type: "single-periodical";
+      weeklyEventId: string;
+      dateKey: string;
+    }
+  | {
+      newTitle: string;
+      type: "single";
+      dateKey: string;
+      oldTitle: string;
+    };
 
 interface CustomConfirmation {
     isOpen: boolean;
@@ -193,12 +227,11 @@ const integrateWeeklyEvents = (
 
     weeklyEvents.forEach((event) => {
         // Gunakan daftar Ibadah yang dihasilkan dari database
-        (event.Ibadah || []).forEach((ibadah) => {
+        (event.Ibadah ?? []).forEach((ibadah) => {
             const dayKey = getDayKey(new Date(ibadah.tanggal_ibadah));
             
-            if (!updatedEvents[dayKey]) {
-                updatedEvents[dayKey] = ["KESELURUHAN DATA HARI INI"];
-            }
+            updatedEvents[dayKey] ??= ["KESELURUHAN DATA HARI INI"];
+
 
             // Selalu gunakan jenis_kebaktian dari baris Ibadah tersebut
             if (!updatedEvents[dayKey].includes(ibadah.jenis_kebaktian)) {
@@ -582,8 +615,7 @@ const SelectedEventsSection = ({
 };
 
 // Komponen Modal Kustom untuk Konfirmasi/Alert
-// Komponen Modal Kustom untuk Konfirmasi/Alert
-const ConfirmationModal = ({ data }: { data: any | null }) => {
+const ConfirmationModal = ({ data }: { data: ConfirmationModalData | null }) => {
     if (!data?.isOpen) return null;
 
     // Memanggil fungsi penutup yang dikirim dari DatabasePage
@@ -621,7 +653,7 @@ const ConfirmationModal = ({ data }: { data: any | null }) => {
                             onClick={data.onConfirm}
                             className="w-full px-4 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition font-semibold shadow-md"
                         >
-                            {data.confirmLabel || "Oke"}
+                            {data.confirmLabel ?? "Oke"}
                         </button>
                         
                         {data.showCancelButton && (
@@ -629,7 +661,7 @@ const ConfirmationModal = ({ data }: { data: any | null }) => {
                                 onClick={data.onCancel}
                                 className="w-full px-4 py-3 border-2 border-indigo-600 text-indigo-600 rounded-lg hover:bg-indigo-50 transition font-semibold"
                             >
-                                {data.cancelLabel || "Batal"}
+                                {data.cancelLabel ?? "Batal"}
                             </button>
                         )}
                     </div>
@@ -755,7 +787,7 @@ export default function DatabasePage() {
       // ===============================
       // 1. DATA JEMAAT & KEHADIRAN
       // ===============================
-      const jemaatJson: JemaatAPIResponse = await jemaatRes.json();
+      const jemaatJson = await jemaatRes.json() as JemaatAPIResponse;
 
       if (!jemaatRes.ok || jemaatJson.error) {
         throw new Error(jemaatJson.error ?? "Gagal mengambil data jemaat");
@@ -781,7 +813,7 @@ export default function DatabasePage() {
       let singleEvents: SingleEvent[] = [];
 
       if (weeklyEventsRes.ok) {
-        const weeklyJson: WeeklyEventAPIResponse = await weeklyEventsRes.json();
+        const weeklyJson = await weeklyEventsRes.json() as WeeklyEventAPIResponse;
         weeklyEvents = weeklyJson.weeklyEvents ?? [];
         singleEvents = weeklyJson.singleEvents ?? [];
         setWeeklyEvents(weeklyEvents);
@@ -821,7 +853,7 @@ export default function DatabasePage() {
       // Kita tidak lagi menggunakan generator manual di sini agar hasil edit satuan 
       // di Supabase (tabel Ibadah) langsung tercermin di UI.
       weeklyEvents.forEach(ev => {
-        (ev.Ibadah || []).forEach((ibadah: any) => {
+        (ev.Ibadah ?? []).forEach((ibadah) => {
           const key = getDayKey(new Date(ibadah.tanggal_ibadah));
           eventsCache[key] = eventsCache[key] ?? ["KESELURUHAN DATA HARI INI"];
           
@@ -1462,7 +1494,8 @@ export default function DatabasePage() {
   if (!newNameTrim || !oldName) return;
 
   try {
-    let bodyData: any = { newTitle: newNameTrim };
+    let bodyData: UpdateEventPayload = { newTitle: newNameTrim } as UpdateEventPayload;
+
 
     if (type === 'add-periodical' && weeklyEventId) {
       // Edit seluruh jadwal rutin
