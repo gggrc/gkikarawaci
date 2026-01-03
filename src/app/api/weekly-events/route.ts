@@ -239,10 +239,7 @@ export async function PUT(req: Request) {
       );
     }
 
-<<<<<<< HEAD
-=======
     // Update satu hari pada jadwal rutin
->>>>>>> 0cc1cd1a45d0cec169bc077631aa9f011a07b9a2
     if (body.type === "single-periodical") {
       await prisma.ibadah.updateMany({
         where: {
@@ -257,10 +254,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-<<<<<<< HEAD
-=======
     // Update event satuan (Fleksibel untuk data SQL)
->>>>>>> 0cc1cd1a45d0cec169bc077631aa9f011a07b9a2
     if (body.type === "single") {
       await prisma.ibadah.updateMany({
         where: {
@@ -275,10 +269,7 @@ export async function PUT(req: Request) {
       return NextResponse.json({ success: true });
     }
 
-<<<<<<< HEAD
-=======
     // Update induk (Diterapkan ke semua anak)
->>>>>>> 0cc1cd1a45d0cec169bc077631aa9f011a07b9a2
     if (body.type === "periodical") {
       await prisma.weeklyEvent.update({
         where: { id: body.weeklyEventId },
@@ -294,13 +285,8 @@ export async function PUT(req: Request) {
       });
       return NextResponse.json({ success: true });
     }
-<<<<<<< HEAD
-    return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
-
-=======
 
     return NextResponse.json({ error: "Invalid action" }, { status: 400 });
->>>>>>> 0cc1cd1a45d0cec169bc077631aa9f011a07b9a2
   } catch (err) {
     console.error(err);
     return NextResponse.json(

@@ -6,7 +6,6 @@ import "@/styles/globals.css";
 function MyApp({ Component, pageProps }: AppProps) {
   return (
     <ClerkProvider {...pageProps}>
-      {/* SyncUser diletakkan di sini agar berjalan otomatis saat user terdeteksi login */}
       <SyncUser />
       <Component {...pageProps} />
     </ClerkProvider>
